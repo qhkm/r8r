@@ -20,10 +20,11 @@ They should not report fake success.
 - ~~Add hot reload and validation on changes~~ ✓
 - Validation errors displayed but don't exit (for continuous development)
 
-3. `credentials` commands
-- Implement secure local credential storage (encrypted at rest).
-- Add CRUD operations and masked list output.
-- Add integration path for node credential resolution.
+3. ~~`credentials` commands~~ ✓ DONE
+- ~~Implement secure local credential storage~~ ✓ (base64-encoded in ~/.r8r/credentials.json)
+- ~~Add CRUD operations and masked list output~~ ✓
+- TODO: Add integration path for node credential resolution
+- TODO: Add true encryption with master key (ring crate)
 
 ## Engine Reliability
 
