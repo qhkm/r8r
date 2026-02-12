@@ -5,12 +5,15 @@
 These commands are intentionally present but not implemented yet.
 They should not report fake success.
 
-1. `server` runtime
-- Implement Axum HTTP server and real endpoints:
-  - `GET /api/workflows`
-  - `POST /api/workflows/:id/execute`
-  - `GET /api/executions/:id`
-- Wire scheduler/trigger lifecycle into server startup/shutdown.
+1. ~~`server` runtime~~ ✓ DONE
+- ~~Implement Axum HTTP server and real endpoints~~ ✓
+  - GET /api/health
+  - GET /api/workflows
+  - GET /api/workflows/:name
+  - POST /api/workflows/:name/execute
+  - GET /api/executions/:id
+  - GET /api/executions/:id/trace
+- TODO: Wire scheduler/trigger lifecycle into server startup/shutdown.
 
 2. `dev` mode
 - Implement file watching for workflow YAML.
