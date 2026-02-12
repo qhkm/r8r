@@ -51,6 +51,10 @@ rhai = "1"
 # Template rendering
 regex-lite = "0.1"
 
+# File watching
+notify = "8"
+notify-debouncer-mini = "0.6"
+
 # Utilities
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }

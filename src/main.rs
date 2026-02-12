@@ -773,10 +773,87 @@ async fn shutdown_signal() {
 }
 
 async fn cmd_dev(file: &str) -> anyhow::Result<()> {
-    anyhow::bail!(
-        "Development mode is not implemented yet (requested file: {}).",
-        file
-    )
+    use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
+    use std::path::Path;
+    use std::time::Duration;
+
+    let path = Path::new(file);
+    if !path.exists() {
+        anyhow::bail!("File not found: {}", file);
+    }
+
+    let canonical_path = path.canonicalize()?;
+    let watch_dir = canonical_path.parent().unwrap_or(Path::new("."));
+
+    println!("r8r dev mode");
+    println!("Watching: {}", canonical_path.display());
+    println!("Press Ctrl+C to stop\n");
+
+    // Initial validation
+    validate_workflow_file(&canonical_path);
+
+    // Set up file watcher with tokio channel
+    let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+    let target_path = canonical_path.clone();
+
+    // Wrap std channel for notify
+    let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+
+    let mut debouncer = new_debouncer(Duration::from_millis(500), notify_tx)?;
+    debouncer
+        .watcher()
+        .watch(watch_dir, RecursiveMode::NonRecursive)?;
+
+    // Spawn blocking task to bridge std channel to tokio channel
+    let bridge_target = target_path.clone();
+    let bridge_tx = tx.clone();
+    std::thread::spawn(move || {
+        while let Ok(result) = notify_rx.recv() {
+            if let Ok(events) = result {
+                for event in events {
+                    if event.path == bridge_target {
+                        let _ = bridge_tx.blocking_send(());
+                    }
+                }
+            }
+        }
+    });
+
+    // Watch for changes
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                println!("\nStopping dev mode...");
+                break;
+            }
+            Some(_) = rx.recv() => {
+                println!("\n--- File changed: {} ---", chrono::Local::now().format("%H:%M:%S"));
+                validate_workflow_file(&target_path);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_workflow_file(path: &std::path::Path) {
+    use r8r::workflow::{parse_workflow_file, validate_workflow};
+
+    match parse_workflow_file(path) {
+        Ok(workflow) => match validate_workflow(&workflow) {
+            Ok(()) => {
+                println!("✓ Workflow '{}' is valid", workflow.name);
+                println!("  Nodes: {}", workflow.nodes.len());
+                println!("  Triggers: {}", workflow.triggers.len());
+            }
+            Err(e) => {
+                eprintln!("✗ Validation error in '{}': {}", workflow.name, e);
+            }
+        },
+        Err(e) => {
+            eprintln!("✗ Parse error: {}", e);
+        }
+    }
 }
 
 // ============================================================================
