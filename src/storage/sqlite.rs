@@ -21,10 +21,10 @@ pub struct SqliteStorage {
 impl SqliteStorage {
     /// Open or create a database at the given path.
     pub fn open(path: &Path) -> Result<Self> {
-        let conn = Connection::open(path)?;
+        let mut conn = Connection::open(path)?;
 
         // Initialize schema synchronously before wrapping in async mutex
-        Self::init_schema_sync(&conn)?;
+        Self::init_schema_sync(&mut conn)?;
 
         let storage = Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -34,10 +34,10 @@ impl SqliteStorage {
 
     /// Open an in-memory database (for testing).
     pub fn open_in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory()?;
+        let mut conn = Connection::open_in_memory()?;
 
         // Initialize schema synchronously before wrapping in async mutex
-        Self::init_schema_sync(&conn)?;
+        Self::init_schema_sync(&mut conn)?;
 
         let storage = Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -45,7 +45,7 @@ impl SqliteStorage {
         Ok(storage)
     }
 
-    fn init_schema_sync(conn: &Connection) -> Result<()> {
+    fn init_schema_sync(conn: &mut Connection) -> Result<()> {
         conn.execute_batch(
             r#"
             PRAGMA foreign_keys = ON;
@@ -69,7 +69,7 @@ impl SqliteStorage {
                 created_by TEXT,
                 changelog TEXT,
                 checksum TEXT NOT NULL,
-                FOREIGN KEY (workflow_id) REFERENCES workflows(id),
+                FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE,
                 UNIQUE(workflow_id, version)
             );
 
@@ -84,7 +84,7 @@ impl SqliteStorage {
                 started_at TEXT NOT NULL,
                 finished_at TEXT,
                 error TEXT,
-                FOREIGN KEY (workflow_id) REFERENCES workflows(id)
+                FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS node_executions (
@@ -97,7 +97,7 @@ impl SqliteStorage {
                 started_at TEXT NOT NULL,
                 finished_at TEXT,
                 error TEXT,
-                FOREIGN KEY (execution_id) REFERENCES executions(id)
+                FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
             );
 
             CREATE INDEX IF NOT EXISTS idx_workflow_versions_workflow
@@ -108,6 +108,156 @@ impl SqliteStorage {
             CREATE INDEX IF NOT EXISTS idx_executions_workflow_name ON executions(workflow_name);
             CREATE INDEX IF NOT EXISTS idx_node_executions_execution ON node_executions(execution_id);
             "#,
+        )?;
+
+        Self::migrate_foreign_keys_to_cascade(conn)?;
+        Self::repair_orphans(conn)?;
+        Ok(())
+    }
+
+    fn has_cascade_fk(
+        conn: &Connection,
+        table: &str,
+        from_column: &str,
+        parent_table: &str,
+    ) -> Result<bool> {
+        let sql = format!("PRAGMA foreign_key_list({})", table);
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query([])?;
+
+        while let Some(row) = rows.next()? {
+            let referenced_table: String = row.get(2)?;
+            let from: String = row.get(3)?;
+            let on_delete: String = row.get(6)?;
+            if referenced_table == parent_table && from == from_column {
+                return Ok(on_delete.eq_ignore_ascii_case("CASCADE"));
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn migrate_foreign_keys_to_cascade(conn: &mut Connection) -> Result<()> {
+        let executions_has_cascade =
+            Self::has_cascade_fk(conn, "executions", "workflow_id", "workflows")?;
+        let node_exec_has_cascade =
+            Self::has_cascade_fk(conn, "node_executions", "execution_id", "executions")?;
+        let versions_has_cascade =
+            Self::has_cascade_fk(conn, "workflow_versions", "workflow_id", "workflows")?;
+
+        if executions_has_cascade && node_exec_has_cascade && versions_has_cascade {
+            return Ok(());
+        }
+
+        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+        let migration_result = (|| -> Result<()> {
+            let tx = conn.transaction()?;
+
+            tx.execute_batch(
+                r#"
+                DROP TABLE IF EXISTS node_executions_old;
+                DROP TABLE IF EXISTS executions_old;
+                DROP TABLE IF EXISTS workflow_versions_old;
+
+                ALTER TABLE node_executions RENAME TO node_executions_old;
+                ALTER TABLE executions RENAME TO executions_old;
+                ALTER TABLE workflow_versions RENAME TO workflow_versions_old;
+
+                CREATE TABLE workflow_versions (
+                    id TEXT PRIMARY KEY,
+                    workflow_id TEXT NOT NULL,
+                    workflow_name TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    definition TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    created_by TEXT,
+                    changelog TEXT,
+                    checksum TEXT NOT NULL,
+                    FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE,
+                    UNIQUE(workflow_id, version)
+                );
+
+                CREATE TABLE executions (
+                    id TEXT PRIMARY KEY,
+                    workflow_id TEXT NOT NULL,
+                    workflow_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    trigger_type TEXT NOT NULL,
+                    input TEXT NOT NULL,
+                    output TEXT,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    error TEXT,
+                    FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE node_executions (
+                    id TEXT PRIMARY KEY,
+                    execution_id TEXT NOT NULL,
+                    node_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    input TEXT NOT NULL,
+                    output TEXT,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    error TEXT,
+                    FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
+                );
+
+                INSERT INTO workflow_versions
+                    (id, workflow_id, workflow_name, version, definition, created_at, created_by, changelog, checksum)
+                SELECT v.id, v.workflow_id, v.workflow_name, v.version, v.definition, v.created_at, v.created_by, v.changelog, v.checksum
+                FROM workflow_versions_old v
+                JOIN workflows w ON w.id = v.workflow_id;
+
+                INSERT INTO executions
+                    (id, workflow_id, workflow_name, status, trigger_type, input, output, started_at, finished_at, error)
+                SELECT e.id, e.workflow_id, e.workflow_name, e.status, e.trigger_type, e.input, e.output, e.started_at, e.finished_at, e.error
+                FROM executions_old e
+                JOIN workflows w ON w.id = e.workflow_id;
+
+                INSERT INTO node_executions
+                    (id, execution_id, node_id, status, input, output, started_at, finished_at, error)
+                SELECT n.id, n.execution_id, n.node_id, n.status, n.input, n.output, n.started_at, n.finished_at, n.error
+                FROM node_executions_old n
+                JOIN executions e ON e.id = n.execution_id;
+
+                DROP TABLE workflow_versions_old;
+                DROP TABLE node_executions_old;
+                DROP TABLE executions_old;
+
+                CREATE INDEX IF NOT EXISTS idx_workflow_versions_workflow
+                    ON workflow_versions(workflow_id, version DESC);
+                CREATE INDEX IF NOT EXISTS idx_workflow_versions_name
+                    ON workflow_versions(workflow_name, version DESC);
+                CREATE INDEX IF NOT EXISTS idx_executions_workflow ON executions(workflow_id);
+                CREATE INDEX IF NOT EXISTS idx_executions_workflow_name ON executions(workflow_name);
+                CREATE INDEX IF NOT EXISTS idx_node_executions_execution ON node_executions(execution_id);
+                "#,
+            )?;
+
+            tx.commit()?;
+            Ok(())
+        })();
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        migration_result
+    }
+
+    fn repair_orphans(conn: &Connection) -> Result<()> {
+        conn.execute(
+            "DELETE FROM node_executions
+             WHERE execution_id NOT IN (SELECT id FROM executions)",
+            [],
+        )?;
+        conn.execute(
+            "DELETE FROM executions
+             WHERE workflow_id NOT IN (SELECT id FROM workflows)",
+            [],
+        )?;
+        conn.execute(
+            "DELETE FROM workflow_versions
+             WHERE workflow_id NOT IN (SELECT id FROM workflows)",
+            [],
         )?;
         Ok(())
     }
@@ -255,6 +405,66 @@ impl SqliteStorage {
         let conn = self.conn.lock().await;
         conn.execute("DELETE FROM workflows WHERE name = ?1", [name])?;
         Ok(())
+    }
+
+    pub async fn check_health(&self) -> Result<DatabaseHealth> {
+        let conn = self.conn.lock().await;
+
+        let foreign_keys_enabled: i64 =
+            conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+        let integrity_check: String =
+            conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+
+        let mut violations_stmt = conn.prepare("PRAGMA foreign_key_check")?;
+        let violations_iter = violations_stmt.query_map([], |row| {
+            let table: String = row.get(0)?;
+            let rowid: Option<i64> = row.get(1)?;
+            let parent: String = row.get(2)?;
+            let fk_id: i64 = row.get(3)?;
+            Ok(format!(
+                "table={} rowid={} parent={} fk_id={}",
+                table,
+                rowid
+                    .map(|r| r.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                parent,
+                fk_id
+            ))
+        })?;
+        let foreign_key_violations = violations_iter.collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let orphaned_executions: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM executions e
+             LEFT JOIN workflows w ON w.id = e.workflow_id
+             WHERE w.id IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let orphaned_node_executions: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM node_executions n
+             LEFT JOIN executions e ON e.id = n.execution_id
+             WHERE e.id IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let orphaned_workflow_versions: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM workflow_versions v
+             LEFT JOIN workflows w ON w.id = v.workflow_id
+             WHERE w.id IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+
+        Ok(DatabaseHealth {
+            foreign_keys_enabled: foreign_keys_enabled == 1,
+            integrity_check,
+            foreign_key_violations,
+            orphaned_executions: orphaned_executions.max(0) as u64,
+            orphaned_node_executions: orphaned_node_executions.max(0) as u64,
+            orphaned_workflow_versions: orphaned_workflow_versions.max(0) as u64,
+        })
     }
 
     pub async fn list_workflow_versions(
@@ -831,5 +1041,69 @@ mod tests {
         updated_node.finished_at = Some(Utc::now());
         updated_node.output = Some(serde_json::json!({"ok": true}));
         storage.save_node_execution(&updated_node).await.unwrap();
+
+        let health = storage.check_health().await.unwrap();
+        assert!(health.foreign_keys_enabled);
+        assert_eq!(health.integrity_check.to_lowercase(), "ok");
+        assert!(health.foreign_key_violations.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_cascade_delete_cleanup() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let now = Utc::now();
+
+        let workflow = StoredWorkflow {
+            id: "wf-cascade".to_string(),
+            name: "cascade-workflow".to_string(),
+            definition:
+                "name: cascade-workflow\nnodes:\n  - id: n1\n    type: transform\n    config:\n      expression: '1'"
+                    .to_string(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+        storage.save_workflow(&workflow).await.unwrap();
+
+        let execution = Execution {
+            id: "exec-cascade".to_string(),
+            workflow_id: "wf-cascade".to_string(),
+            workflow_name: "cascade-workflow".to_string(),
+            status: ExecutionStatus::Running,
+            trigger_type: "manual".to_string(),
+            input: serde_json::json!({"x": 1}),
+            output: None,
+            started_at: Utc::now(),
+            finished_at: None,
+            error: None,
+        };
+        storage.save_execution(&execution).await.unwrap();
+
+        let node_exec = NodeExecution {
+            id: "node-cascade".to_string(),
+            execution_id: "exec-cascade".to_string(),
+            node_id: "n1".to_string(),
+            status: ExecutionStatus::Running,
+            input: serde_json::json!({"x": 1}),
+            output: None,
+            started_at: Utc::now(),
+            finished_at: None,
+            error: None,
+        };
+        storage.save_node_execution(&node_exec).await.unwrap();
+
+        storage.delete_workflow("cascade-workflow").await.unwrap();
+
+        assert!(storage.get_execution("exec-cascade").await.unwrap().is_none());
+        assert!(storage
+            .get_node_executions("exec-cascade")
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(storage
+            .list_workflow_versions("cascade-workflow")
+            .await
+            .unwrap()
+            .is_empty());
     }
 }
