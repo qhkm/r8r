@@ -863,24 +863,76 @@ fn validate_workflow_file(path: &std::path::Path) {
 async fn cmd_credentials_set(
     service: &str,
     key: Option<&str>,
-    _value: Option<&str>,
+    value: Option<&str>,
 ) -> anyhow::Result<()> {
-    anyhow::bail!(
-        "Credential storage is not implemented yet (service='{}', key={:?}).",
-        service,
-        key
-    )
+    use r8r::credentials::CredentialStore;
+    use std::io::{self, BufRead};
+
+    // Get value from argument or stdin
+    let credential_value = match value {
+        Some(v) => v.to_string(),
+        None => {
+            eprintln!("Enter credential value (or pipe from stdin):");
+            let stdin = io::stdin();
+            let mut line = String::new();
+            stdin.lock().read_line(&mut line)?;
+            line.trim().to_string()
+        }
+    };
+
+    if credential_value.is_empty() {
+        anyhow::bail!("Credential value cannot be empty");
+    }
+
+    let mut store = CredentialStore::load()?;
+    store.set(service, key, &credential_value)?;
+
+    println!("✓ Credential '{}' saved", service);
+    if let Some(k) = key {
+        println!("  Key: {}", k);
+    }
+
+    Ok(())
 }
 
 async fn cmd_credentials_list() -> anyhow::Result<()> {
-    anyhow::bail!("Credential listing is not implemented yet.")
+    use r8r::credentials::CredentialStore;
+
+    let store = CredentialStore::load()?;
+    let credentials = store.list();
+
+    if credentials.is_empty() {
+        println!("No credentials stored.");
+        println!();
+        println!("Add one with: r8r credentials set <service> -v <value>");
+        return Ok(());
+    }
+
+    println!("{:<20} {:<15} {:<20}", "SERVICE", "KEY", "UPDATED");
+    println!("{}", "-".repeat(55));
+
+    for cred in credentials {
+        let key_display = cred.key.as_deref().unwrap_or("-");
+        let updated = cred.updated_at.format("%Y-%m-%d %H:%M");
+        println!("{:<20} {:<15} {:<20}", cred.service, key_display, updated);
+    }
+
+    Ok(())
 }
 
 async fn cmd_credentials_delete(service: &str) -> anyhow::Result<()> {
-    anyhow::bail!(
-        "Credential deletion is not implemented yet (service='{}').",
-        service
-    )
+    use r8r::credentials::CredentialStore;
+
+    let mut store = CredentialStore::load()?;
+    let deleted = store.delete(service)?;
+
+    if deleted {
+        println!("✓ Credential '{}' deleted", service);
+    } else {
+        println!("Credential '{}' not found", service);
+    }
+
+    Ok(())
 }
 
 async fn cmd_db_check() -> anyhow::Result<()> {

@@ -55,6 +55,9 @@ regex-lite = "0.1"
 notify = "8"
 notify-debouncer-mini = "0.6"
 
+# Encoding
+base64 = "0.22"
+
 # Utilities
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
