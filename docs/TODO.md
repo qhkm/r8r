@@ -15,10 +15,10 @@ They should not report fake success.
   - GET /api/executions/:id/trace
 - TODO: Wire scheduler/trigger lifecycle into server startup/shutdown.
 
-2. `dev` mode
-- Implement file watching for workflow YAML.
-- Add hot reload and validation on changes.
-- Add clear non-zero exit behavior for invalid workflows.
+2. ~~`dev` mode~~ ✓ DONE
+- ~~Implement file watching for workflow YAML~~ ✓
+- ~~Add hot reload and validation on changes~~ ✓
+- Validation errors displayed but don't exit (for continuous development)
 
 3. `credentials` commands
 - Implement secure local credential storage (encrypted at rest).
