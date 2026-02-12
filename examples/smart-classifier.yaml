@@ -1,0 +1,39 @@
+# Smart Classifier - Demonstrates agent node (ZeptoClaw integration)
+name: smart-classifier
+description: Classify items using AI (requires ZeptoClaw running)
+version: 1
+
+triggers:
+  - type: manual
+
+inputs:
+  items:
+    type: array
+    description: List of items to classify
+    required: true
+
+nodes:
+  - id: classify
+    type: agent
+    config:
+      prompt: |
+        Classify the following item into one of these categories:
+        - electronics
+        - clothing
+        - food
+        - other
+
+        Item: {{ input }}
+
+        Respond with JSON: {"category": "...", "confidence": 0.0-1.0}
+      response_format: json
+      timeout_seconds: 30
+    for_each: true
+
+  - id: group-by-category
+    type: transform
+    config:
+      expression: |
+        // Group classified items by category
+        "grouped results"
+    depends_on: [classify]

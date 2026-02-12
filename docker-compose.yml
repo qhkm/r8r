@@ -1,0 +1,48 @@
+# r8r Docker Compose
+#
+# Usage:
+#   docker compose up -d        # Start r8r server
+#   docker compose logs -f      # View logs
+#   docker compose down         # Stop
+#
+# Data persisted in named volume: r8r-data
+
+services:
+  r8r:
+    build: .
+    image: r8r:latest
+    container_name: r8r
+    ports:
+      - "8080:8080"
+    volumes:
+      - r8r-data:/data
+      # Optional: mount workflows directory for development
+      # - ./workflows:/workflows:ro
+    environment:
+      - RUST_LOG=r8r=info
+      - R8R_DB=/data/r8r.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "r8r", "workflows", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # MCP Server (stdio transport - for development/testing)
+  # Uncomment to run MCP server separately
+  # r8r-mcp:
+  #   build: .
+  #   image: r8r:latest
+  #   container_name: r8r-mcp
+  #   command: ["r8r-mcp", "--db", "/data/r8r.db"]
+  #   volumes:
+  #     - r8r-data:/data
+  #   environment:
+  #     - RUST_LOG=r8r=debug
+  #   stdin_open: true
+  #   tty: true
+
+volumes:
+  r8r-data:
+    name: r8r-data

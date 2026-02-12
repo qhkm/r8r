@@ -1,0 +1,65 @@
+# Test Phase 2 Data Manipulation Nodes
+name: test-phase2-nodes
+description: Test filter, sort, limit, aggregate nodes
+version: 1
+
+triggers:
+  - type: manual
+
+nodes:
+  # Create test data using Rhai array/object syntax
+  - id: create_data
+    type: transform
+    config:
+      expression: |
+        let data = [];
+        data.push(#{ name: "Alice", age: 30, dept: "engineering", salary: 80000 });
+        data.push(#{ name: "Bob", age: 25, dept: "sales", salary: 60000 });
+        data.push(#{ name: "Carol", age: 35, dept: "engineering", salary: 95000 });
+        data.push(#{ name: "Dave", age: 28, dept: "sales", salary: 55000 });
+        data.push(#{ name: "Eve", age: 32, dept: "engineering", salary: 85000 });
+        data
+
+  # Test FILTER node - only engineering dept
+  - id: test_filter
+    type: filter
+    config:
+      field: "nodes.create_data.output"
+      conditions:
+        - field: dept
+          operator: equals
+          value: engineering
+    depends_on: [create_data]
+
+  # Test SORT node - by salary descending
+  - id: test_sort
+    type: sort
+    config:
+      field: "nodes.test_filter.output"
+      by:
+        - field: salary
+          order: desc
+    depends_on: [test_filter]
+
+  # Test LIMIT node - top 2
+  - id: test_limit
+    type: limit
+    config:
+      field: "nodes.test_sort.output"
+      limit: 2
+    depends_on: [test_sort]
+
+  # Test AGGREGATE node - first item from limited results
+  - id: test_aggregate
+    type: aggregate
+    config:
+      mode: first
+      field: "nodes.test_limit.output"
+    depends_on: [test_limit]
+
+  # Final output - show the top earner
+  - id: output
+    type: transform
+    config:
+      expression: '"Phase 2 nodes test completed - workflow successful"'
+    depends_on: [test_aggregate]

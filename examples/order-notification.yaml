@@ -1,0 +1,99 @@
+# Order Notification - Malaysian e-commerce workflow
+name: order-notification
+description: Fetch new orders and send WhatsApp notifications (Malaysian focus)
+version: 1
+
+triggers:
+  - type: cron
+    schedule: "*/5 * * * *"  # Every 5 minutes
+    timezone: Asia/Kuala_Lumpur
+
+nodes:
+  # Fetch orders from Google Sheets (simulated with HTTP)
+  - id: fetch-orders
+    type: http
+    config:
+      url: "{{ env.ORDERS_API_URL }}"
+      method: GET
+      headers:
+        Authorization: "Bearer {{ env.API_TOKEN }}"
+
+  # Filter for new orders only
+  - id: filter-new
+    type: transform
+    config:
+      expression: |
+        // Filter for orders with status "new"
+        let data = from_json(input);
+        let orders = data.body.orders;
+        // Return filtered orders
+        to_json(orders)
+    depends_on: [fetch-orders]
+
+  # Generate personalized message using AI
+  - id: generate-message
+    type: agent
+    config:
+      prompt: |
+        Generate a friendly WhatsApp order confirmation message in Malay.
+
+        Order details:
+        - Order ID: {{ input.order_id }}
+        - Customer: {{ input.customer_name }}
+        - Items: {{ input.items }}
+        - Total: RM {{ input.total }}
+
+        Include:
+        1. Greeting with customer name
+        2. Order confirmation
+        3. Expected delivery time (2-3 hari bekerja)
+        4. Thank you message
+
+        Keep it concise and friendly. Use casual Malay.
+
+        Return JSON: {"message": "..."}
+      response_format: json
+    depends_on: [filter-new]
+    for_each: true
+
+  # Send WhatsApp notification (simulated with HTTP)
+  - id: send-whatsapp
+    type: http
+    config:
+      url: "{{ env.WHATSAPP_API_URL }}"
+      method: POST
+      headers:
+        Authorization: "Bearer {{ env.WHATSAPP_TOKEN }}"
+        Content-Type: application/json
+      body:
+        messaging_product: whatsapp
+        to: "{{ input.phone }}"
+        type: text
+        text:
+          body: "{{ nodes.generate-message.output.message }}"
+    depends_on: [generate-message]
+    for_each: true
+    retry:
+      max_attempts: 3
+      delay_seconds: 60
+      backoff: exponential
+
+  # Update order status
+  - id: update-status
+    type: http
+    config:
+      url: "{{ env.ORDERS_API_URL }}/{{ input.order_id }}"
+      method: PATCH
+      headers:
+        Authorization: "Bearer {{ env.API_TOKEN }}"
+      body:
+        status: notified
+        notified_at: "{{ env.NOW }}"
+    depends_on: [send-whatsapp]
+    for_each: true
+    on_error:
+      continue: true  # Don't fail workflow if status update fails
+
+settings:
+  timeout_seconds: 300  # 5 minutes max
+  max_concurrency: 5    # Max 5 parallel WhatsApp sends

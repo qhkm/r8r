@@ -1,0 +1,28 @@
+# Hello World - Simple workflow example
+name: hello-world
+description: A simple workflow that demonstrates basic r8r features
+version: 1
+
+triggers:
+  - type: manual
+
+nodes:
+  - id: greet
+    type: transform
+    config:
+      expression: '"Hello, r8r!"'
+
+  - id: fetch-quote
+    type: http
+    config:
+      url: https://api.quotable.io/random
+      method: GET
+    depends_on: [greet]
+
+  - id: format-output
+    type: transform
+    config:
+      expression: |
+        let result = `Greeting: ${input}\nQuote fetched successfully`;
+        result
+    depends_on: [fetch-quote]

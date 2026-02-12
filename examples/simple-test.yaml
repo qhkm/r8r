@@ -1,0 +1,25 @@
+# Simple Test - No external dependencies
+name: simple-test
+description: A simple workflow for testing (no external calls)
+version: 1
+
+triggers:
+  - type: manual
+
+nodes:
+  - id: step1
+    type: transform
+    config:
+      expression: '"Step 1: Starting workflow"'
+
+  - id: step2
+    type: transform
+    config:
+      expression: '"Step 2: Processing data"'
+    depends_on: [step1]
+
+  - id: step3
+    type: transform
+    config:
+      expression: '"Step 3: Workflow complete!"'
+    depends_on: [step2]
