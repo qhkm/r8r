@@ -113,6 +113,34 @@ pub struct DatabaseHealth {
     pub orphaned_workflow_versions: u64,
 }
 
+/// Query filters for execution history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionQuery {
+    pub workflow_name: Option<String>,
+    pub status: Option<ExecutionStatus>,
+    pub trigger_type: Option<String>,
+    pub search: Option<String>,
+    pub started_after: Option<DateTime<Utc>>,
+    pub started_before: Option<DateTime<Utc>>,
+    pub limit: usize,
+    pub offset: usize,
+}
+
+impl Default for ExecutionQuery {
+    fn default() -> Self {
+        Self {
+            workflow_name: None,
+            status: None,
+            trigger_type: None,
+            search: None,
+            started_after: None,
+            started_before: None,
+            limit: 50,
+            offset: 0,
+        }
+    }
+}
+
 /// Execution summary for agent responses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionSummary {

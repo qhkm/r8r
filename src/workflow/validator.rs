@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::types::Workflow;
+use super::types::{OnErrorAction, Workflow};
 use crate::error::{Error, Result};
 
 /// Validate a workflow definition.
@@ -62,6 +62,17 @@ pub fn validate_workflow(workflow: &Workflow) -> Result<()> {
 
         // Check fallback nodes exist
         if let Some(error_config) = &node.on_error {
+            if let Some(action) = &error_config.action {
+                if matches!(action, OnErrorAction::Fallback)
+                    && error_config.fallback_value.is_none()
+                {
+                    return Err(Error::Validation(format!(
+                        "Node '{}' has on_error.action=fallback but missing fallback_value",
+                        node.id
+                    )));
+                }
+            }
+
             if let Some(fallback) = &error_config.fallback_node {
                 if !ids.contains(fallback) {
                     return Err(Error::Validation(format!(
@@ -230,5 +241,22 @@ nodes:
 "#;
         let workflow = parse_workflow(yaml).unwrap();
         assert!(validate_workflow(&workflow).is_ok());
+    }
+
+    #[test]
+    fn test_validate_fallback_action_requires_value() {
+        let yaml = r#"
+name: fallback-workflow
+nodes:
+  - id: risky
+    type: transform
+    config:
+      expression: "1 +"
+    on_error:
+      action: fallback
+"#;
+        let workflow = parse_workflow(yaml).unwrap();
+        let err = validate_workflow(&workflow).unwrap_err();
+        assert!(err.to_string().contains("fallback_value"));
     }
 }

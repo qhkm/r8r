@@ -36,9 +36,13 @@ Completed in this phase:
 - Workflow version history support (`r8r workflows history`).
 - Execution replay support (`r8r workflows replay`).
 - Execution trace retrieval support (`r8r workflows trace`).
+- Cascading foreign keys for workflow/execution/version relationships.
+- One-time startup migration to rebuild legacy non-cascade FK tables.
+- One-time orphan-row repair during storage initialization.
+- Database health command (`r8r db check`).
+- Inline per-node fallback actions (`on_error.action: fallback` + `fallback_value`).
+- Search/filter execution history API (`query_executions`) + CLI (`r8r workflows search`).
 
 Remaining:
 1. Resume from failed node checkpoint (partial re-run).
 2. Streaming executor for very large datasets (chunked processing).
-3. Inline per-node fallback actions beyond `continue_on_error`.
-4. Search/filter API for execution history.

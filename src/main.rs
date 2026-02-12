@@ -35,6 +35,11 @@ enum Commands {
         #[command(subcommand)]
         action: CredentialActions,
     },
+    /// Database maintenance and checks
+    Db {
+        #[command(subcommand)]
+        action: DbActions,
+    },
 }
 
 #[derive(Subcommand)]
@@ -64,6 +69,33 @@ enum WorkflowActions {
         /// Number of recent executions to show
         #[arg(short, long, default_value = "10")]
         limit: usize,
+    },
+    /// Search execution history with filters
+    Search {
+        /// Workflow name (optional)
+        #[arg(long)]
+        workflow: Option<String>,
+        /// Status filter: pending|running|completed|failed|cancelled
+        #[arg(long)]
+        status: Option<String>,
+        /// Trigger type filter (manual|replay|...)
+        #[arg(long)]
+        trigger: Option<String>,
+        /// Search text in input/output/error
+        #[arg(long)]
+        search: Option<String>,
+        /// RFC3339 timestamp lower bound
+        #[arg(long)]
+        started_after: Option<String>,
+        /// RFC3339 timestamp upper bound
+        #[arg(long)]
+        started_before: Option<String>,
+        /// Page size
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Offset for pagination
+        #[arg(long, default_value = "0")]
+        offset: usize,
     },
     /// Replay a previous execution
     Replay {
@@ -146,6 +178,12 @@ enum CredentialActions {
     },
 }
 
+#[derive(Subcommand)]
+enum DbActions {
+    /// Run integrity and foreign-key health checks
+    Check,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize logging
@@ -166,6 +204,28 @@ async fn main() -> anyhow::Result<()> {
                 cmd_workflows_run(&name, input.as_deref(), wait).await?
             }
             WorkflowActions::Logs { name, limit } => cmd_workflows_logs(&name, limit).await?,
+            WorkflowActions::Search {
+                workflow,
+                status,
+                trigger,
+                search,
+                started_after,
+                started_before,
+                limit,
+                offset,
+            } => {
+                cmd_workflows_search(
+                    workflow.as_deref(),
+                    status.as_deref(),
+                    trigger.as_deref(),
+                    search.as_deref(),
+                    started_after.as_deref(),
+                    started_before.as_deref(),
+                    limit,
+                    offset,
+                )
+                .await?
+            }
             WorkflowActions::Replay {
                 execution_id,
                 input,
@@ -193,6 +253,9 @@ async fn main() -> anyhow::Result<()> {
             } => cmd_credentials_set(&service, key.as_deref(), value.as_deref()).await?,
             CredentialActions::List => cmd_credentials_list().await?,
             CredentialActions::Delete { service } => cmd_credentials_delete(&service).await?,
+        },
+        Commands::Db { action } => match action {
+            DbActions::Check => cmd_db_check().await?,
         },
     }
 
@@ -342,6 +405,90 @@ async fn cmd_workflows_logs(name: &str, limit: usize) -> anyhow::Result<()> {
         println!(
             "{:<36} {:<12} {:<10} {:<20}",
             exec.id,
+            exec.status.to_string(),
+            exec.trigger_type,
+            exec.started_at.format("%Y-%m-%d %H:%M:%S")
+        );
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_workflows_search(
+    workflow: Option<&str>,
+    status: Option<&str>,
+    trigger: Option<&str>,
+    search: Option<&str>,
+    started_after: Option<&str>,
+    started_before: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> anyhow::Result<()> {
+    use chrono::{DateTime, Utc};
+    use r8r::storage::{ExecutionQuery, ExecutionStatus};
+
+    let storage = get_storage()?;
+
+    let status_filter = if let Some(status) = status {
+        Some(status.parse::<ExecutionStatus>().map_err(|_| {
+            anyhow::anyhow!(
+                "Invalid status '{}'. Expected pending|running|completed|failed|cancelled",
+                status
+            )
+        })?)
+    } else {
+        None
+    };
+
+    let started_after_filter = if let Some(raw) = started_after {
+        Some(
+            DateTime::parse_from_rfc3339(raw)
+                .map_err(|e| anyhow::anyhow!("Invalid --started-after '{}': {}", raw, e))?
+                .with_timezone(&Utc),
+        )
+    } else {
+        None
+    };
+
+    let started_before_filter = if let Some(raw) = started_before {
+        Some(
+            DateTime::parse_from_rfc3339(raw)
+                .map_err(|e| anyhow::anyhow!("Invalid --started-before '{}': {}", raw, e))?
+                .with_timezone(&Utc),
+        )
+    } else {
+        None
+    };
+
+    let query = ExecutionQuery {
+        workflow_name: workflow.map(|s| s.to_string()),
+        status: status_filter,
+        trigger_type: trigger.map(|s| s.to_string()),
+        search: search.map(|s| s.to_string()),
+        started_after: started_after_filter,
+        started_before: started_before_filter,
+        limit,
+        offset,
+    };
+
+    let executions = storage.query_executions(&query).await?;
+    if executions.is_empty() {
+        println!("No executions found for the provided filters.");
+        return Ok(());
+    }
+
+    println!(
+        "{:<36} {:<20} {:<10} {:<10} {:<20}",
+        "EXECUTION ID", "WORKFLOW", "STATUS", "TRIGGER", "STARTED"
+    );
+    println!("{}", "-".repeat(104));
+
+    for exec in executions {
+        println!(
+            "{:<36} {:<20} {:<10} {:<10} {:<20}",
+            exec.id,
+            exec.workflow_name,
             exec.status.to_string(),
             exec.trigger_type,
             exec.started_at.format("%Y-%m-%d %H:%M:%S")
@@ -584,25 +731,45 @@ async fn cmd_workflows_export_all(output_dir: &str) -> anyhow::Result<()> {
 // Server Commands
 // ============================================================================
 
-async fn cmd_server(port: u16, no_ui: bool) -> anyhow::Result<()> {
-    println!("Starting r8r server mode on port {}...", port);
-    if no_ui {
-        println!("Web UI disabled (API only)");
-    }
+async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
+    use r8r::api::{create_router, AppState};
+    use r8r::nodes::NodeRegistry;
+    use std::sync::Arc;
 
-    println!("Warning: server mode is currently a placeholder (no HTTP listener started yet).");
+    let storage = get_storage()?;
+    let registry = Arc::new(NodeRegistry::default());
+
+    let state = AppState { storage, registry };
+    let app = create_router(state);
+
+    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    println!("r8r server running on http://0.0.0.0:{}", port);
     println!();
-    println!("Planned API endpoints:");
+    println!("API endpoints:");
+    println!("  GET  /api/health");
     println!("  GET  /api/workflows");
-    println!("  POST /api/workflows/:id/execute");
+    println!("  GET  /api/workflows/:name");
+    println!("  POST /api/workflows/:name/execute");
     println!("  GET  /api/executions/:id");
+    println!("  GET  /api/executions/:id/trace");
     println!();
+    println!("Press Ctrl+C to stop");
 
-    // Placeholder mode: block until Ctrl+C so behavior is explicit and stable.
-    tokio::signal::ctrl_c().await?;
-    println!("Shutting down...");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
+    println!("Server stopped.");
     Ok(())
+}
+
+async fn shutdown_signal() {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Failed to install Ctrl+C handler");
+    println!("\nShutting down gracefully...");
 }
 
 async fn cmd_dev(file: &str) -> anyhow::Result<()> {
@@ -637,6 +804,48 @@ async fn cmd_credentials_delete(service: &str) -> anyhow::Result<()> {
         "Credential deletion is not implemented yet (service='{}').",
         service
     )
+}
+
+async fn cmd_db_check() -> anyhow::Result<()> {
+    let storage = get_storage()?;
+    let health = storage.check_health().await?;
+
+    println!(
+        "Foreign keys: {}",
+        if health.foreign_keys_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!("Integrity check: {}", health.integrity_check);
+    println!(
+        "Foreign key violations: {}",
+        health.foreign_key_violations.len()
+    );
+    for violation in &health.foreign_key_violations {
+        println!("  - {}", violation);
+    }
+    println!(
+        "Orphan rows: executions={} node_executions={} workflow_versions={}",
+        health.orphaned_executions,
+        health.orphaned_node_executions,
+        health.orphaned_workflow_versions
+    );
+
+    let healthy = health.foreign_keys_enabled
+        && health.integrity_check.eq_ignore_ascii_case("ok")
+        && health.foreign_key_violations.is_empty()
+        && health.orphaned_executions == 0
+        && health.orphaned_node_executions == 0
+        && health.orphaned_workflow_versions == 0;
+
+    if healthy {
+        println!("✓ Database health check passed");
+        Ok(())
+    } else {
+        anyhow::bail!("Database health check failed")
+    }
 }
 
 // ============================================================================

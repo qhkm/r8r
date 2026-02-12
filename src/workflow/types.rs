@@ -191,9 +191,31 @@ pub struct ErrorConfig {
     #[serde(default, rename = "continue")]
     pub continue_on_error: bool,
 
+    /// Error action for this node: fail | continue | skip | fallback
+    #[serde(default)]
+    pub action: Option<OnErrorAction>,
+
+    /// Inline fallback output value when action is `fallback`
+    #[serde(default)]
+    pub fallback_value: Option<serde_json::Value>,
+
     /// Fallback node to run on error
     #[serde(default)]
     pub fallback_node: Option<String>,
+}
+
+/// Inline error actions for node failures.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnErrorAction {
+    /// Fail execution immediately
+    Fail,
+    /// Continue execution with null output
+    Continue,
+    /// Skip node output (null) and continue
+    Skip,
+    /// Use `fallback_value` as node output and continue
+    Fallback,
 }
 
 /// Global workflow settings.

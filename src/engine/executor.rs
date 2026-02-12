@@ -11,7 +11,9 @@ use tracing::{debug, error, info, warn};
 use crate::error::{Error, Result};
 use crate::nodes::{Node, NodeContext, NodeRegistry, NodeResult};
 use crate::storage::{Execution, ExecutionStatus, NodeExecution, SqliteStorage};
-use crate::workflow::{parse_workflow, BackoffType, Node as WorkflowNode, RetryConfig, Workflow};
+use crate::workflow::{
+    parse_workflow, BackoffType, Node as WorkflowNode, OnErrorAction, RetryConfig, Workflow,
+};
 
 /// Workflow executor.
 pub struct Executor {
@@ -145,15 +147,16 @@ impl Executor {
                     }
                     Ok(true) => {}
                     Err(e) => {
-                        if continue_on_error(node) {
+                        if let Some(recovery_output) = on_error_recovery_output(node) {
                             warn!(
-                                "Node '{}' condition evaluation failed (continuing): {}",
+                                "Node '{}' condition evaluation failed (recovering): {}",
                                 node_id, e
                             );
-                            ctx.add_output(node_id, Value::Null);
-                            last_output = Value::Null;
+                            ctx.add_output(node_id, recovery_output.clone());
+                            last_output = recovery_output.clone();
 
                             node_exec.status = ExecutionStatus::Failed;
+                            node_exec.output = Some(recovery_output);
                             node_exec.error = Some(e.to_string());
                             node_exec.finished_at = Some(Utc::now());
                             self.storage.save_node_execution(&node_exec).await?;
@@ -180,12 +183,13 @@ impl Executor {
                         node_id
                     );
 
-                    if continue_on_error(node) {
+                    if let Some(recovery_output) = on_error_recovery_output(node) {
                         warn!("{}", message);
-                        ctx.add_output(node_id, Value::Null);
-                        last_output = Value::Null;
+                        ctx.add_output(node_id, recovery_output.clone());
+                        last_output = recovery_output.clone();
 
                         node_exec.status = ExecutionStatus::Failed;
+                        node_exec.output = Some(recovery_output);
                         node_exec.error = Some(message);
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
@@ -242,9 +246,9 @@ impl Executor {
                             results[idx] = data;
                         }
                         Ok((idx, Err(e))) => {
-                            if continue_on_error(node) {
-                                warn!("Node '{}' item {} failed (continuing): {}", node_id, idx, e);
-                                results[idx] = Value::Null;
+                            if let Some(recovery_output) = on_error_recovery_output(node) {
+                                warn!("Node '{}' item {} failed (recovering): {}", node_id, idx, e);
+                                results[idx] = recovery_output;
                             } else {
                                 error!("Node '{}' item {} failed: {}", node_id, idx, e);
                                 failed = true;
@@ -332,12 +336,13 @@ impl Executor {
                         self.storage.save_node_execution(&node_exec).await?;
                     }
                     Err(e) => {
-                        if continue_on_error(node) {
-                            warn!("Node '{}' failed (continuing): {}", node_id, e);
-                            ctx.add_output(node_id, Value::Null);
-                            last_output = Value::Null;
+                        if let Some(recovery_output) = on_error_recovery_output(node) {
+                            warn!("Node '{}' failed (recovering): {}", node_id, e);
+                            ctx.add_output(node_id, recovery_output.clone());
+                            last_output = recovery_output.clone();
 
                             node_exec.status = ExecutionStatus::Failed;
+                            node_exec.output = Some(recovery_output);
                             node_exec.error = Some(e.to_string());
                             node_exec.finished_at = Some(Utc::now());
                             self.storage.save_node_execution(&node_exec).await?;
@@ -411,11 +416,22 @@ impl Executor {
     }
 }
 
-fn continue_on_error(node: &WorkflowNode) -> bool {
-    node.on_error
-        .as_ref()
-        .map(|c| c.continue_on_error)
-        .unwrap_or(false)
+fn on_error_recovery_output(node: &WorkflowNode) -> Option<Value> {
+    let config = node.on_error.as_ref()?;
+
+    if let Some(action) = &config.action {
+        return match action {
+            OnErrorAction::Fail => None,
+            OnErrorAction::Continue | OnErrorAction::Skip => Some(Value::Null),
+            OnErrorAction::Fallback => Some(config.fallback_value.clone().unwrap_or(Value::Null)),
+        };
+    }
+
+    if config.continue_on_error {
+        Some(Value::Null)
+    } else {
+        None
+    }
 }
 
 fn timeout_error_message(timeout_seconds: u64) -> String {
@@ -649,5 +665,59 @@ nodes:
 
         assert_eq!(replayed.trigger_type, "replay");
         assert_eq!(replayed.status, ExecutionStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_on_error_fallback_value() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: fallback-workflow
+nodes:
+  - id: risky
+    type: transform
+    config:
+      expression: "1 +"
+    on_error:
+      action: fallback
+      fallback_value:
+        source: "cached"
+        items: []
+"#;
+
+        let workflow = parse_workflow(yaml).unwrap();
+        let now = Utc::now();
+        storage
+            .save_workflow(&StoredWorkflow {
+                id: "wf-fallback".to_string(),
+                name: workflow.name.clone(),
+                definition: yaml.to_string(),
+                enabled: true,
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-fallback", "manual", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+        assert_eq!(
+            execution.output,
+            Some(serde_json::json!({"source": "cached", "items": []}))
+        );
+
+        let node_execs = storage.get_node_executions(&execution.id).await.unwrap();
+        assert_eq!(node_execs.len(), 1);
+        assert_eq!(node_execs[0].status, ExecutionStatus::Failed);
+        assert_eq!(
+            node_execs[0].output,
+            Some(serde_json::json!({"source": "cached", "items": []}))
+        );
     }
 }

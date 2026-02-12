@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, types::Value as SqlValue, Connection, OptionalExtension};
 use tokio::sync::Mutex;
 
 use super::models::*;
@@ -661,37 +661,70 @@ impl SqliteStorage {
         workflow_name: &str,
         limit: usize,
     ) -> Result<Vec<Execution>> {
+        let query = ExecutionQuery {
+            workflow_name: Some(workflow_name.to_string()),
+            limit,
+            ..ExecutionQuery::default()
+        };
+        self.query_executions(&query).await
+    }
+
+    pub async fn query_executions(&self, query: &ExecutionQuery) -> Result<Vec<Execution>> {
         let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare(
+
+        let mut sql = String::from(
             "SELECT id, workflow_id, workflow_name, status, trigger_type, input, output, started_at, finished_at, error
-             FROM executions WHERE workflow_name = ?1 ORDER BY started_at DESC LIMIT ?2",
-        )?;
+             FROM executions WHERE 1=1",
+        );
+        let mut bind: Vec<SqlValue> = Vec::new();
 
+        if let Some(workflow_name) = &query.workflow_name {
+            sql.push_str(" AND workflow_name = ?");
+            bind.push(SqlValue::Text(workflow_name.clone()));
+        }
+
+        if let Some(status) = &query.status {
+            sql.push_str(" AND status = ?");
+            bind.push(SqlValue::Text(status.to_string()));
+        }
+
+        if let Some(trigger_type) = &query.trigger_type {
+            sql.push_str(" AND trigger_type = ?");
+            bind.push(SqlValue::Text(trigger_type.clone()));
+        }
+
+        if let Some(started_after) = &query.started_after {
+            sql.push_str(" AND started_at >= ?");
+            bind.push(SqlValue::Text(started_after.to_rfc3339()));
+        }
+
+        if let Some(started_before) = &query.started_before {
+            sql.push_str(" AND started_at <= ?");
+            bind.push(SqlValue::Text(started_before.to_rfc3339()));
+        }
+
+        if let Some(search) = &query.search {
+            sql.push_str(
+                " AND (input LIKE ? OR COALESCE(output, '') LIKE ? OR COALESCE(error, '') LIKE ?)",
+            );
+            let pattern = format!("%{}%", search);
+            bind.push(SqlValue::Text(pattern.clone()));
+            bind.push(SqlValue::Text(pattern.clone()));
+            bind.push(SqlValue::Text(pattern));
+        }
+
+        sql.push_str(" ORDER BY started_at DESC LIMIT ? OFFSET ?");
+        let limit = if query.limit == 0 {
+            50
+        } else {
+            query.limit.min(1000)
+        };
+        bind.push(SqlValue::Integer(limit as i64));
+        bind.push(SqlValue::Integer(query.offset as i64));
+
+        let mut stmt = conn.prepare(&sql)?;
         let executions = stmt
-            .query_map(params![workflow_name, limit], |row| {
-                let status_str: String = row.get(3)?;
-                let status = status_str.parse().unwrap_or(ExecutionStatus::Failed);
-                let input_str: String = row.get(5)?;
-                let output_str: Option<String> = row.get(6)?;
-
-                Ok(Execution {
-                    id: row.get(0)?,
-                    workflow_id: row.get(1)?,
-                    workflow_name: row.get(2)?,
-                    status,
-                    trigger_type: row.get(4)?,
-                    input: serde_json::from_str(&input_str).unwrap_or(serde_json::Value::Null),
-                    output: output_str.and_then(|s| serde_json::from_str(&s).ok()),
-                    started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
-                    finished_at: row
-                        .get::<_, Option<String>>(8)?
-                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-                        .map(|t| t.with_timezone(&Utc)),
-                    error: row.get(9)?,
-                })
-            })?
+            .query_map(params_from_iter(bind.iter()), Self::row_to_execution)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(executions)
@@ -793,6 +826,31 @@ impl SqliteStorage {
             created_by: row.get(6)?,
             changelog: row.get(7)?,
             checksum: row.get(8)?,
+        })
+    }
+
+    fn row_to_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<Execution> {
+        let status_str: String = row.get(3)?;
+        let status = status_str.parse().unwrap_or(ExecutionStatus::Failed);
+        let input_str: String = row.get(5)?;
+        let output_str: Option<String> = row.get(6)?;
+
+        Ok(Execution {
+            id: row.get(0)?,
+            workflow_id: row.get(1)?,
+            workflow_name: row.get(2)?,
+            status,
+            trigger_type: row.get(4)?,
+            input: serde_json::from_str(&input_str).unwrap_or(serde_json::Value::Null),
+            output: output_str.and_then(|s| serde_json::from_str(&s).ok()),
+            started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
+                .unwrap()
+                .with_timezone(&Utc),
+            finished_at: row
+                .get::<_, Option<String>>(8)?
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                .map(|t| t.with_timezone(&Utc)),
+            error: row.get(9)?,
         })
     }
 
@@ -972,6 +1030,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_query_executions_filters() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let now = Utc::now();
+
+        let workflow = StoredWorkflow {
+            id: "wf-q".to_string(),
+            name: "query-workflow".to_string(),
+            definition:
+                "name: query-workflow\nnodes:\n  - id: n1\n    type: transform\n    config:\n      expression: '1'"
+                    .to_string(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+        storage.save_workflow(&workflow).await.unwrap();
+
+        let exec1 = Execution {
+            id: "exec-q1".to_string(),
+            workflow_id: "wf-q".to_string(),
+            workflow_name: "query-workflow".to_string(),
+            status: ExecutionStatus::Completed,
+            trigger_type: "manual".to_string(),
+            input: serde_json::json!({"note": "alpha"}),
+            output: Some(serde_json::json!({"result": "ok"})),
+            started_at: Utc::now(),
+            finished_at: Some(Utc::now()),
+            error: None,
+        };
+        storage.save_execution(&exec1).await.unwrap();
+
+        let exec2 = Execution {
+            id: "exec-q2".to_string(),
+            workflow_id: "wf-q".to_string(),
+            workflow_name: "query-workflow".to_string(),
+            status: ExecutionStatus::Failed,
+            trigger_type: "replay".to_string(),
+            input: serde_json::json!({"note": "beta"}),
+            output: None,
+            started_at: Utc::now(),
+            finished_at: Some(Utc::now()),
+            error: Some("boom".to_string()),
+        };
+        storage.save_execution(&exec2).await.unwrap();
+
+        let only_failed = storage
+            .query_executions(&ExecutionQuery {
+                workflow_name: Some("query-workflow".to_string()),
+                status: Some(ExecutionStatus::Failed),
+                ..ExecutionQuery::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(only_failed.len(), 1);
+        assert_eq!(only_failed[0].id, "exec-q2");
+
+        let search_boom = storage
+            .query_executions(&ExecutionQuery {
+                workflow_name: Some("query-workflow".to_string()),
+                search: Some("boom".to_string()),
+                ..ExecutionQuery::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(search_boom.len(), 1);
+        assert_eq!(search_boom[0].id, "exec-q2");
+    }
+
+    #[tokio::test]
     async fn test_foreign_keys_safe_updates() {
         let storage = SqliteStorage::open_in_memory().unwrap();
         {
@@ -1094,7 +1220,11 @@ mod tests {
 
         storage.delete_workflow("cascade-workflow").await.unwrap();
 
-        assert!(storage.get_execution("exec-cascade").await.unwrap().is_none());
+        assert!(storage
+            .get_execution("exec-cascade")
+            .await
+            .unwrap()
+            .is_none());
         assert!(storage
             .get_node_executions("exec-cascade")
             .await

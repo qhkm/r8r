@@ -13,6 +13,7 @@ use super::{
 use crate::error::{Error, Result};
 
 /// Registry of available node types.
+#[derive(Clone)]
 pub struct NodeRegistry {
     nodes: HashMap<String, Arc<dyn Node>>,
 }
