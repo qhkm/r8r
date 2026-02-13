@@ -1,80 +1,96 @@
-# r8r TODO
+# r8r Roadmap
 
-## CLI Placeholders
+## Completed
 
-These commands are intentionally present but not implemented yet.
-They should not report fake success.
+### Core Engine
+- [x] Workflow execution with dependency resolution
+- [x] Node types: http, transform, agent, subworkflow, debug, variables, template, circuit_breaker
+- [x] Conditional execution (`condition` field)
+- [x] Retry with backoff strategies (fixed, linear, exponential)
+- [x] Error handling with fallback values
+- [x] For-each iteration with chunked processing
+- [x] Workflow timeout enforcement
+- [x] Max concurrency limits
 
-1. ~~`server` runtime~~ ✓ DONE
-- ~~Implement Axum HTTP server and real endpoints~~ ✓
-  - GET /api/health
-  - GET /api/workflows
-  - GET /api/workflows/:name
-  - POST /api/workflows/:name/execute
-  - GET /api/executions/:id
-  - GET /api/executions/:id/trace
-- ~~Wire scheduler/trigger lifecycle into server startup/shutdown~~ ✓ DONE
-  - Scheduler loads all enabled workflows with cron triggers on startup
-  - Cron jobs execute workflows automatically
-  - Graceful shutdown stops all scheduled jobs
+### Storage & Versioning
+- [x] SQLite storage with WAL mode
+- [x] Workflow version history
+- [x] Execution trace storage
+- [x] Workflow rollback support
+- [x] Execution replay from version
+- [x] Resume from failed node
+- [x] Dead Letter Queue for failed executions
 
-2. ~~`dev` mode~~ ✓ DONE
-- ~~Implement file watching for workflow YAML~~ ✓
-- ~~Add hot reload and validation on changes~~ ✓
-- Validation errors displayed but don't exit (for continuous development)
+### Triggers
+- [x] Cron scheduling
+- [x] Webhook endpoints with signature verification
+- [x] Manual/API triggers
 
-3. ~~`credentials` commands~~ ✓ DONE
-- ~~Implement secure local credential storage~~ ✓ (base64-encoded in ~/.r8r/credentials.json)
-- ~~Add CRUD operations and masked list output~~ ✓
-- ~~Add integration path for node credential resolution~~ ✓ DONE
-  - Credentials loaded from store during workflow execution
-  - HTTP node supports `credential` and `auth_type` config fields
-  - Auth types: bearer, basic, api_key, header:<name>
-- ~~Add true encryption with master key (ring crate)~~ ✓ DONE
-  - AES-256-GCM encryption for credential values
-  - PBKDF2 key derivation from user password (100k iterations)
-  - Master key stored encrypted in ~/.r8r/master.key
-  - Backward compatible with legacy base64 credentials
-  - Migration support: `migrate_to_encrypted()` method
+### Security
+- [x] Credential encryption (AES-256-GCM)
+- [x] SSRF protection for HTTP node
+- [x] Webhook signature verification (GitHub, Stripe, Slack)
+- [x] Rate limiting per workflow
+- [x] Input validation with JSON Schema
+- [x] Health endpoint authentication
 
-## Engine Reliability
+### Observability
+- [x] Prometheus metrics
+- [x] OpenTelemetry tracing
+- [x] Structured access logging
+- [x] Request ID propagation
 
-1. ~~Apply `condition`, `retry`, `timeout_seconds`, and `max_concurrency` semantics.~~ ✓ DONE
-2. ~~Ensure `for_each` non-array input fails deterministically (or is explicitly skipped) and always finalizes node execution state.~~ ✓ DONE
-3. ~~Add regression tests for failure paths and retry behavior.~~ ✓ DONE (24 executor tests)
+### API & Integration
+- [x] REST API server
+- [x] MCP server for AI tool integration
+- [x] WebSocket monitoring
+- [x] OpenAPI specification
 
-## Improvements Over n8n
+## In Progress
 
-Completed in this phase:
-- Workflow version snapshots on each definition change (`workflow_versions` table).
-- Workflow rollback support (`r8r workflows rollback`).
-- Workflow version history support (`r8r workflows history`).
-- Execution replay support (`r8r workflows replay`).
-- Execution trace retrieval support (`r8r workflows trace`).
-- Cascading foreign keys for workflow/execution/version relationships.
-- One-time startup migration to rebuild legacy non-cascade FK tables.
-- One-time orphan-row repair during storage initialization.
-- Database health command (`r8r db check`).
-- Inline per-node fallback actions (`on_error.action: fallback` + `fallback_value`).
-- Search/filter execution history API (`query_executions`) + CLI (`r8r workflows search`).
+### Event Triggers
+- [ ] Redis pub/sub event source
+- [ ] Kafka consumer trigger
+- [ ] SQS/SNS triggers
 
-Remaining:
-1. ~~Resume from failed node checkpoint (partial re-run).~~ ✓ DONE (`r8r workflows resume <execution_id>`)
-2. ~~Streaming executor for very large datasets (chunked processing).~~ ✓ DONE (`settings.chunk_size`)
+## Planned
 
-## Trigger System
+### Node Types
+- [ ] `email` - Send emails via SMTP/API
+- [ ] `slack` - Slack messaging
+- [ ] `database` - SQL query execution
+- [ ] `s3` - S3 object operations
+- [ ] `wait` - Delay/sleep node
+- [ ] `switch` - Multi-branch routing
 
-1. ~~Cron trigger~~ ✓ DONE (via Scheduler)
-   - Automatically registers cron jobs on server startup
-   - Executes workflows on schedule
-   - Graceful shutdown
+### Workflow Features
+- [ ] Workflow import/export CLI
+- [ ] Workflow templates/blueprints
+- [ ] Parameterized workflows
+- [ ] Workflow dependencies (DAG of workflows)
 
-2. ~~Webhook trigger~~ ✓ DONE
-   - Dynamic route registration based on workflow definitions
-   - Supports GET/POST/PUT/DELETE/PATCH methods
-   - Custom path support: `/webhooks/{workflow_name}` or custom
-   - Request body, headers, and method passed as workflow input
+### UI & Developer Experience
+- [ ] Web dashboard for monitoring
+- [ ] Visual workflow editor
+- [ ] CLI autocomplete
 
-3. Event trigger - TODO
-   - Redis pub/sub or similar message queue
-   - Event filtering based on trigger config
+### Scalability
+- [ ] Distributed execution (multiple workers)
+- [ ] PostgreSQL storage backend
+- [ ] Redis-based job queue
+
+### Enterprise Features
+- [ ] Multi-tenancy
+- [ ] RBAC (Role-Based Access Control)
+- [ ] Audit logging
+- [ ] SSO integration
+
+## Contributing
+
+We welcome contributions! Pick an item from "Planned" and open an issue to discuss before starting work.
+
+Priority areas:
+1. New node types (especially `email`, `slack`, `database`)
+2. Event trigger sources
+3. Documentation improvements
+4. Test coverage
