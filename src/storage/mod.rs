@@ -4,6 +4,6 @@ mod dlq;
 mod models;
 mod sqlite;
 
-pub use dlq::{DeadLetterEntry, DlqStats, DlqStatus};
+pub use dlq::{DeadLetterEntry, DlqStats, DlqStatus, NewDlqEntry};
 pub use models::*;
 pub use sqlite::SqliteStorage;

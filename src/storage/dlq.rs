@@ -27,6 +27,19 @@ pub struct DeadLetterEntry {
     pub status: DlqStatus,
 }
 
+/// Parameters for creating a new DLQ entry.
+#[derive(Debug, Clone)]
+pub struct NewDlqEntry<'a> {
+    pub execution_id: &'a str,
+    pub workflow_id: &'a str,
+    pub workflow_name: &'a str,
+    pub trigger_type: &'a str,
+    pub input: &'a Value,
+    pub error: &'a str,
+    pub failed_node_id: Option<&'a str>,
+    pub max_retries: u32,
+}
+
 /// Status of a dead letter queue entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -91,25 +104,15 @@ impl SqliteStorage {
         Ok(())
     }
 
-    pub async fn add_to_dlq(
-        &self,
-        execution_id: &str,
-        workflow_id: &str,
-        workflow_name: &str,
-        trigger_type: &str,
-        input: &Value,
-        error: &str,
-        failed_node_id: Option<&str>,
-        max_retries: u32,
-    ) -> Result<String> {
+    pub async fn add_to_dlq(&self, entry: NewDlqEntry<'_>) -> Result<String> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
-        let input_json = serde_json::to_string(input)?;
-        
+        let input_json = serde_json::to_string(entry.input)?;
+
         let conn = self.conn.lock().await;
         conn.execute(
             "INSERT INTO dead_letter_queue (id, execution_id, workflow_id, workflow_name, trigger_type, input, error, failed_node_id, retry_count, max_retries, created_at, updated_at, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?10, 'pending')",
-            params![id, execution_id, workflow_id, workflow_name, trigger_type, input_json, error, failed_node_id, max_retries, now],
+            params![id, entry.execution_id, entry.workflow_id, entry.workflow_name, entry.trigger_type, input_json, entry.error, entry.failed_node_id, entry.max_retries, now],
         )?;
         Ok(id)
     }
@@ -217,7 +220,19 @@ mod tests {
     async fn test_dlq_add_and_get() {
         let storage = SqliteStorage::open_in_memory().unwrap();
         storage.init_dlq().await.unwrap();
-        let id = storage.add_to_dlq("exec-1", "wf-1", "test-workflow", "api", &serde_json::json!({"key": "value"}), "Test error", Some("node-1"), 3).await.unwrap();
+        let id = storage
+            .add_to_dlq(NewDlqEntry {
+                execution_id: "exec-1",
+                workflow_id: "wf-1",
+                workflow_name: "test-workflow",
+                trigger_type: "api",
+                input: &serde_json::json!({"key": "value"}),
+                error: "Test error",
+                failed_node_id: Some("node-1"),
+                max_retries: 3,
+            })
+            .await
+            .unwrap();
         let entry = storage.get_dlq_entry(&id).await.unwrap().unwrap();
         assert_eq!(entry.execution_id, "exec-1");
         assert_eq!(entry.workflow_name, "test-workflow");
@@ -228,7 +243,19 @@ mod tests {
     async fn test_dlq_status_transitions() {
         let storage = SqliteStorage::open_in_memory().unwrap();
         storage.init_dlq().await.unwrap();
-        let id = storage.add_to_dlq("exec-1", "wf-1", "test", "api", &serde_json::json!({}), "Error", None, 3).await.unwrap();
+        let id = storage
+            .add_to_dlq(NewDlqEntry {
+                execution_id: "exec-1",
+                workflow_id: "wf-1",
+                workflow_name: "test",
+                trigger_type: "api",
+                input: &serde_json::json!({}),
+                error: "Error",
+                failed_node_id: None,
+                max_retries: 3,
+            })
+            .await
+            .unwrap();
         storage.schedule_dlq_retry(&id, Utc::now()).await.unwrap();
         let entry = storage.get_dlq_entry(&id).await.unwrap().unwrap();
         assert_eq!(entry.status, DlqStatus::Scheduled);
@@ -241,8 +268,32 @@ mod tests {
     async fn test_dlq_stats() {
         let storage = SqliteStorage::open_in_memory().unwrap();
         storage.init_dlq().await.unwrap();
-        let id1 = storage.add_to_dlq("exec-1", "wf-1", "test", "api", &serde_json::json!({}), "Error", None, 3).await.unwrap();
-        let id2 = storage.add_to_dlq("exec-2", "wf-1", "test", "api", &serde_json::json!({}), "Error", None, 3).await.unwrap();
+        let id1 = storage
+            .add_to_dlq(NewDlqEntry {
+                execution_id: "exec-1",
+                workflow_id: "wf-1",
+                workflow_name: "test",
+                trigger_type: "api",
+                input: &serde_json::json!({}),
+                error: "Error",
+                failed_node_id: None,
+                max_retries: 3,
+            })
+            .await
+            .unwrap();
+        let id2 = storage
+            .add_to_dlq(NewDlqEntry {
+                execution_id: "exec-2",
+                workflow_id: "wf-1",
+                workflow_name: "test",
+                trigger_type: "api",
+                input: &serde_json::json!({}),
+                error: "Error",
+                failed_node_id: None,
+                max_retries: 3,
+            })
+            .await
+            .unwrap();
         storage.resolve_dlq_entry(&id1).await.unwrap();
         storage.discard_dlq_entry(&id2).await.unwrap();
         let stats = storage.get_dlq_stats().await.unwrap();
