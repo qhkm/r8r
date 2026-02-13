@@ -4,7 +4,7 @@
 
 ### Core Engine
 - [x] Workflow execution with dependency resolution
-- [x] Node types: http, transform, agent, subworkflow, debug, variables, template, circuit_breaker
+- [x] Node types: http, transform, agent, subworkflow, debug, variables, template, circuit_breaker, wait, switch, filter, sort, limit, set, aggregate, split, crypto, datetime, dedupe, summarize, if
 - [x] Conditional execution (`condition` field)
 - [x] Retry with backoff strategies (fixed, linear, exponential)
 - [x] Error handling with fallback values
@@ -25,6 +25,7 @@
 - [x] Cron scheduling
 - [x] Webhook endpoints with signature verification
 - [x] Manual/API triggers
+- [x] Redis pub/sub event source
 
 ### Security
 - [x] Credential encryption (AES-256-GCM)
@@ -45,11 +46,11 @@
 - [x] MCP server for AI tool integration
 - [x] WebSocket monitoring
 - [x] OpenAPI specification
+- [x] Workflow import/export CLI
 
 ## In Progress
 
 ### Event Triggers
-- [ ] Redis pub/sub event source
 - [ ] Kafka consumer trigger
 - [ ] SQS/SNS triggers
 
@@ -58,21 +59,21 @@
 ### Node Types
 - [ ] `email` - Send emails via SMTP/API
 - [ ] `slack` - Slack messaging
+- [ ] `discord` - Discord messaging
 - [ ] `database` - SQL query execution
 - [ ] `s3` - S3 object operations
-- [ ] `wait` - Delay/sleep node
-- [ ] `switch` - Multi-branch routing
+- [ ] `google-sheets` - Google Sheets integration
+- [ ] `telegram` - Telegram Bot API
 
 ### Workflow Features
-- [ ] Workflow import/export CLI
 - [ ] Workflow templates/blueprints
 - [ ] Parameterized workflows
 - [ ] Workflow dependencies (DAG of workflows)
 
 ### UI & Developer Experience
-- [ ] Web dashboard for monitoring
-- [ ] Visual workflow editor
-- [ ] CLI autocomplete
+- [x] Web dashboard for monitoring
+- [x] Visual workflow editor
+- [x] CLI autocomplete
 
 ### Scalability
 - [ ] Distributed execution (multiple workers)

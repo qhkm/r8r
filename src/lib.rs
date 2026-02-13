@@ -39,6 +39,7 @@
 pub mod api;
 pub mod config;
 pub mod credentials;
+pub mod dashboard;
 pub mod engine;
 pub mod error;
 pub mod mcp;

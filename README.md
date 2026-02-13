@@ -139,8 +139,13 @@ nodes:
 | `transform` | Data transformation (Rhai expressions) |
 | `agent` | LLM/AI agent invocation |
 | `subworkflow` | Nested workflow execution |
+| `email` | Send emails (SMTP, SendGrid, Resend, Mailgun) |
+| `slack` | Slack messaging |
+| `database` | SQL query execution (SQLite, PostgreSQL, MySQL) |
+| `s3` | S3 object storage operations |
+| `switch` | Multi-branch routing |
+| `wait` | Delay/sleep node |
 | `variables` | Workflow state management |
-| `template` | Text templating |
 | `circuit_breaker` | Fault tolerance |
 | `debug` | Development logging |
 

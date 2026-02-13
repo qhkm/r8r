@@ -1,4 +1,5 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::{generate, Shell};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
@@ -39,6 +40,12 @@ enum Commands {
     Db {
         #[command(subcommand)]
         action: DbActions,
+    },
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: CompletionShell,
     },
 }
 
@@ -263,8 +270,47 @@ async fn main() -> anyhow::Result<()> {
         Commands::Db { action } => match action {
             DbActions::Check => cmd_db_check().await?,
         },
+        Commands::Completions { shell } => {
+            cmd_completions(shell)?;
+        }
     }
 
+    Ok(())
+}
+
+/// Shell completion variants
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+enum CompletionShell {
+    /// Bash shell
+    Bash,
+    /// Zsh shell
+    Zsh,
+    /// Fish shell
+    Fish,
+    /// PowerShell
+    PowerShell,
+    /// Elvish shell
+    Elvish,
+}
+
+impl From<CompletionShell> for Shell {
+    fn from(shell: CompletionShell) -> Self {
+        match shell {
+            CompletionShell::Bash => Shell::Bash,
+            CompletionShell::Zsh => Shell::Zsh,
+            CompletionShell::Fish => Shell::Fish,
+            CompletionShell::PowerShell => Shell::PowerShell,
+            CompletionShell::Elvish => Shell::Elvish,
+        }
+    }
+}
+
+/// Generate shell completions
+fn cmd_completions(shell: CompletionShell) -> anyhow::Result<()> {
+    let mut cmd = Cli::command();
+    let name = cmd.get_name().to_string();
+    let shell: Shell = shell.into();
+    generate(shell, &mut cmd, name, &mut std::io::stdout());
     Ok(())
 }
 
@@ -846,7 +892,7 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
 
     // Build app with both regular and monitored routes
     // Each router needs its state consumed to become Router<()>
-    let app = api_routes
+    let mut app = api_routes
         .with_state(state.clone())
         .merge(monitored_routes.with_state(monitored_state))
         .merge(webhook_routes.with_state(state))
@@ -854,6 +900,12 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         .layer(create_concurrency_limit())
         .layer(TraceLayer::new_for_http())
         .layer(create_cors_layer());
+    
+    // Add dashboard routes if UI is enabled
+    if !_no_ui {
+        use r8r::dashboard::create_dashboard_routes;
+        app = app.merge(create_dashboard_routes());
+    }
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -873,6 +925,9 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     println!("  WS   /api/monitor (live execution monitoring)");
     println!();
     println!("Webhooks: /webhooks/:workflow_name (see workflow definitions)");
+    if !_no_ui {
+        println!("Dashboard: http://0.0.0.0:{}/ (Web UI)", port);
+    }
     println!();
     println!("Press Ctrl+C to stop");
 
