@@ -8,7 +8,10 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://github.com/qhkm/r8r"><img src="https://img.shields.io/badge/rust-1.70+-orange.svg" alt="Rust"></a>
+  <img src="https://img.shields.io/badge/status-beta-yellow.svg" alt="Status: Beta">
 </p>
+
+> ⚠️ **Beta Software**: r8r is under active development. APIs may change between versions. Not recommended for production workloads yet. We welcome feedback and contributions!
 
 ---
 
