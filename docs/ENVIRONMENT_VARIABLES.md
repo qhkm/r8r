@@ -115,6 +115,48 @@ export R8R_MAX_REQUEST_BODY_BYTES=10485760  # 10 MiB
 
 ---
 
+## Request Tracing
+
+### `R8R_TRUST_REQUEST_ID`
+
+**Default**: `false`
+
+**Description**: When set to `true`, trust incoming `X-Request-ID` headers from clients. When `false` (default), a new UUID is always generated for each request. Enable only behind a trusted proxy that sets this header.
+
+**Example**:
+```bash
+# Trust X-Request-ID from load balancer
+export R8R_TRUST_REQUEST_ID=true
+```
+
+### `R8R_ACCESS_LOG`
+
+**Default**: `true`
+
+**Description**: Enable structured JSON access logging for all requests. Logs include method, path, status, duration, request ID, user agent, and client IP.
+
+**Example**:
+```bash
+# Disable access logging (not recommended)
+export R8R_ACCESS_LOG=false
+```
+
+### `R8R_HEALTH_API_KEY`
+
+**Default**: None (no authentication required)
+
+**Description**: When set, requires authentication for `/api/health` and `/api/metrics` endpoints. Clients must provide the key via `Authorization: Bearer <key>` or `Authorization: ApiKey <key>` header.
+
+**Security Note**: Use a strong random value. Prevents health endpoint enumeration and information disclosure to unauthorized parties.
+
+**Example**:
+```bash
+# Require authentication for health endpoints
+export R8R_HEALTH_API_KEY=$(openssl rand -hex 32)
+```
+
+---
+
 ## CORS Configuration
 
 ### `R8R_CORS_ORIGINS`
@@ -267,6 +309,8 @@ Before deploying r8r to production, ensure:
 - [ ] `R8R_CORS_ORIGINS` lists only your actual domains
 - [ ] `R8R_ALLOW_INTERNAL_URLS` is NOT set (defaults to false)
 - [ ] `R8R_ALLOWED_ENV_VARS` only includes necessary variables
+- [ ] `R8R_HEALTH_API_KEY` is set if health endpoints should be protected
+- [ ] `R8R_TRUST_REQUEST_ID` is only enabled behind a trusted proxy
 - [ ] `RUST_LOG` is set to an appropriate level (info or warn)
 - [ ] Database file has proper permissions (readable only by r8r user)
 - [ ] Credentials file (`credentials.json`) has proper permissions
@@ -285,9 +329,14 @@ export R8R_DATABASE_PATH=/var/lib/r8r/r8r.db
 
 # Security (generate with: openssl rand -hex 32)
 export R8R_MONITOR_TOKEN="your-64-character-hex-token-here"
+export R8R_HEALTH_API_KEY="your-health-api-key-here"
 
 # CORS - only allow your actual domains
 export R8R_CORS_ORIGINS="https://workflows.example.com"
+
+# Request Tracing
+export R8R_TRUST_REQUEST_ID=true  # Enable if behind trusted proxy
+export R8R_ACCESS_LOG=true
 
 # API Limits
 export R8R_MAX_CONCURRENT_REQUESTS=200
@@ -297,7 +346,7 @@ export R8R_MAX_REQUEST_BODY_BYTES=5242880  # 5 MiB
 export R8R_ALLOWED_ENV_VARS="API_BASE_URL,WEBHOOK_SECRET"
 
 # Logging
-export RUST_LOG="r8r=info,warn"
+export RUST_LOG="r8r=info,r8r::access=info,warn"
 ```
 
 ---

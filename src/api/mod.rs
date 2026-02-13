@@ -1,9 +1,14 @@
 //! HTTP API server for r8r.
 
+mod middleware;
 mod openapi;
 mod webhook;
 mod websocket;
 
+pub use middleware::{
+    access_log_middleware, health_auth_middleware, request_id_middleware, HealthAuthConfig,
+    RequestId, REQUEST_ID_HEADER,
+};
 pub use openapi::generate_openapi_spec;
 pub use webhook::{compute_signature, verify_signature, SignatureConfig, SignatureScheme};
 
@@ -164,11 +169,28 @@ pub fn create_monitored_routes() -> Router<MonitoredAppState> {
 }
 
 /// Create the complete API router with state.
+///
+/// Middleware stack (bottom to top execution order):
+/// 1. CORS - Handle cross-origin requests
+/// 2. Request ID - Generate/propagate X-Request-ID
+/// 3. Access Log - Log requests in structured JSON format
+/// 4. Health Auth - Optional authentication for health endpoints
+/// 5. Tracing - OpenTelemetry-compatible request tracing
+/// 6. Concurrency - Limit concurrent requests
+/// 7. Body Limit - Limit request body size
 pub fn create_router(state: AppState) -> Router {
+    let health_auth_config = HealthAuthConfig::default();
+
     create_api_routes()
         .layer(create_request_body_limit())
         .layer(create_concurrency_limit())
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn_with_state(
+            health_auth_config,
+            health_auth_middleware,
+        ))
+        .layer(axum::middleware::from_fn(access_log_middleware))
+        .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(create_cors_layer())
         .with_state(state)
 }
@@ -322,9 +344,16 @@ struct ExecuteResponse {
 async fn execute_workflow(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    request_id: Option<axum::Extension<RequestId>>,
     Json(request): Json<ExecuteRequest>,
 ) -> impl IntoResponse {
     let _wait_requested = request.wait;
+    let correlation_id = request_id.map(|r| r.0 .0.clone());
+
+    // Log execution start with correlation
+    if let Some(ref id) = correlation_id {
+        tracing::info!(request_id = %id, workflow = %name, "Starting workflow execution");
+    }
 
     // Get workflow
     let stored = match state.storage.get_workflow(&name).await {
