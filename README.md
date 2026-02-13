@@ -26,8 +26,8 @@ Agent writes YAML → r8r
 | Traditional Tools | r8r |
 |------------------|-----|
 | 🖱️ Visual drag-and-drop | 📝 LLM-friendly YAML |
-| 🐘 Heavy (500MB+ RAM) | 🦀 Lightweight (~30MB) |
-| 🐌 Slow startup | ⚡ <100ms cold start |
+| 🐘 Heavy (500MB+ RAM) | 🦀 Lightweight (~15MB RAM) |
+| 🐌 Slow startup | ⚡ ~50ms cold start |
 | 🔒 Locked in database | 📂 Git-friendly files |
 | 🧑 Built for humans | 🤖 Built for agents |
 
@@ -76,9 +76,10 @@ Your AI agent can now:
 | **Primary User** | AI agents & developers | Human operators |
 | **Interface** | CLI, API, MCP | Visual drag-and-drop |
 | **Language** | Rust | TypeScript |
-| **Memory** | ~30 MB | ~500 MB+ |
-| **Startup** | <100ms | Seconds |
-| **Storage** | SQLite (portable) | PostgreSQL/MySQL |
+| **Binary Size** | 24 MB | ~200 MB+ |
+| **Memory (idle)** | ~15 MB | ~500 MB+ |
+| **Startup** | ~50ms | Seconds |
+| **Storage** | SQLite (embedded) | PostgreSQL/MySQL |
 | **Workflows** | YAML files (git-friendly) | Database blobs |
 | **MCP Support** | ✅ Built-in | ❌ None |
 | **Price** | Free forever | Free (limited) |
