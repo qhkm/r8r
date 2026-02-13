@@ -41,6 +41,8 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # Database
 rusqlite = { version = "0.31", features = ["bundled"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.24"
 
 # Cron scheduling
 tokio-cron-scheduler = "0.13"
@@ -79,6 +81,10 @@ thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-opentelemetry = "0.28"
+opentelemetry = "0.27"
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.27", features = ["tonic"] }
 async-trait = "0.1"
 dirs = "5"
 

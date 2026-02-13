@@ -185,6 +185,59 @@ export R8R_CORS_ALLOW_ALL=true
 
 ---
 
+## OpenTelemetry Tracing
+
+### `R8R_OTEL_ENABLED`
+
+**Default**: `false`
+
+**Description**: Enable OpenTelemetry distributed tracing. When enabled, traces are exported to an OTLP-compatible collector.
+
+**Example**:
+```bash
+export R8R_OTEL_ENABLED=true
+```
+
+### `R8R_OTEL_ENDPOINT`
+
+**Default**: `http://localhost:4317`
+
+**Description**: OTLP endpoint URL for trace export. Supports gRPC endpoints.
+
+**Example**:
+```bash
+# Jaeger
+export R8R_OTEL_ENDPOINT=http://jaeger:4317
+
+# Grafana Tempo
+export R8R_OTEL_ENDPOINT=http://tempo:4317
+```
+
+### `R8R_OTEL_SERVICE_NAME`
+
+**Default**: `r8r`
+
+**Description**: Service name for identifying traces in the collector.
+
+**Example**:
+```bash
+export R8R_OTEL_SERVICE_NAME=r8r-production
+```
+
+### `R8R_OTEL_SAMPLE_RATE`
+
+**Default**: `1.0`
+
+**Description**: Sampling rate for traces (0.0 to 1.0). Use lower values in high-traffic environments.
+
+**Example**:
+```bash
+# Sample 10% of traces
+export R8R_OTEL_SAMPLE_RATE=0.1
+```
+
+---
+
 ## Database Settings
 
 ### `R8R_DATABASE_PATH`
@@ -197,6 +250,29 @@ export R8R_CORS_ALLOW_ALL=true
 ```bash
 # Custom database location
 export R8R_DATABASE_PATH=/data/r8r/production.db
+```
+
+### `R8R_DB_POOL_SIZE`
+
+**Default**: `4`
+
+**Description**: Number of connections in the optional connection pool. Only used when explicitly using `ConnectionPool` instead of `SqliteStorage`.
+
+**Example**:
+```bash
+# Increase pool size for high-concurrency workloads
+export R8R_DB_POOL_SIZE=8
+```
+
+### `R8R_DB_POOL_TIMEOUT_SECS`
+
+**Default**: `30`
+
+**Description**: Timeout in seconds for acquiring a connection from the pool.
+
+**Example**:
+```bash
+export R8R_DB_POOL_TIMEOUT_SECS=10
 ```
 
 ---

@@ -45,6 +45,7 @@ pub mod mcp;
 pub mod metrics;
 pub mod nodes;
 pub mod storage;
+pub mod telemetry;
 pub mod triggers;
 pub mod validation;
 pub mod workflow;
