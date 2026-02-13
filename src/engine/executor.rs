@@ -35,6 +35,10 @@ impl Executor {
         trigger_type: &str,
         input: Value,
     ) -> Result<Execution> {
+        let workflow_version = self
+            .storage
+            .get_latest_workflow_version_number(workflow_id)
+            .await?;
         let execution_id = uuid::Uuid::new_v4().to_string();
         let started_at = Utc::now();
         let timeout_seconds = workflow.settings.timeout_seconds.max(1);
@@ -50,6 +54,7 @@ impl Executor {
             id: execution_id.clone(),
             workflow_id: workflow_id.to_string(),
             workflow_name: workflow.name.clone(),
+            workflow_version,
             status: ExecutionStatus::Running,
             trigger_type: trigger_type.to_string(),
             input: input.clone(),
@@ -206,10 +211,8 @@ impl Executor {
                     break;
                 };
 
-                let mut results = vec![Value::Null; items.len()];
-                let mut join_set: JoinSet<(usize, Result<Value>)> = JoinSet::new();
                 let max_concurrency = workflow.settings.max_concurrency.max(1);
-                let mut next_index = 0usize;
+                let chunk_size = workflow.settings.chunk_size;
                 let task_template = ForEachTaskTemplate {
                     base_ctx: ctx.clone(),
                     node_impl: node_impl.clone(),
@@ -219,75 +222,21 @@ impl Executor {
                     deadline,
                 };
 
-                while next_index < items.len() && join_set.len() < max_concurrency {
-                    if remaining_until(deadline).is_none() {
-                        failed = true;
-                        error_msg = Some(timeout_error_message(timeout_seconds));
-                        break;
-                    }
+                // Use chunked processing for large datasets
+                let (results, chunk_failed, chunk_error) = process_for_each_items(
+                    items,
+                    &task_template,
+                    max_concurrency,
+                    chunk_size,
+                    timeout_seconds,
+                    node_id,
+                    on_error_recovery_output(node),
+                )
+                .await;
 
-                    spawn_for_each_item(
-                        &mut join_set,
-                        next_index,
-                        items[next_index].clone(),
-                        &task_template,
-                    );
-                    next_index += 1;
-                }
-
-                while !failed {
-                    let joined = join_set.join_next().await;
-                    let Some(joined) = joined else {
-                        break;
-                    };
-
-                    match joined {
-                        Ok((idx, Ok(data))) => {
-                            results[idx] = data;
-                        }
-                        Ok((idx, Err(e))) => {
-                            if let Some(recovery_output) = on_error_recovery_output(node) {
-                                warn!("Node '{}' item {} failed (recovering): {}", node_id, idx, e);
-                                results[idx] = recovery_output;
-                            } else {
-                                error!("Node '{}' item {} failed: {}", node_id, idx, e);
-                                failed = true;
-                                error_msg = Some(format!("{} (at item {})", e, idx));
-                                join_set.abort_all();
-                                while join_set.join_next().await.is_some() {}
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            failed = true;
-                            error_msg =
-                                Some(format!("Node '{}' worker task join failed: {}", node_id, e));
-                            join_set.abort_all();
-                            while join_set.join_next().await.is_some() {}
-                            break;
-                        }
-                    }
-
-                    while !failed && next_index < items.len() && join_set.len() < max_concurrency {
-                        if remaining_until(deadline).is_none() {
-                            failed = true;
-                            error_msg = Some(timeout_error_message(timeout_seconds));
-                            join_set.abort_all();
-                            while join_set.join_next().await.is_some() {}
-                            break;
-                        }
-
-                        spawn_for_each_item(
-                            &mut join_set,
-                            next_index,
-                            items[next_index].clone(),
-                            &task_template,
-                        );
-                        next_index += 1;
-                    }
-                }
-
-                if failed {
+                if chunk_failed {
+                    failed = true;
+                    error_msg = chunk_error;
                     node_exec.status = ExecutionStatus::Failed;
                     node_exec.error = error_msg.clone();
                     node_exec.finished_at = Some(Utc::now());
@@ -400,19 +349,445 @@ impl Executor {
             .await?
             .ok_or_else(|| Error::Execution(format!("Execution not found: {}", execution_id)))?;
 
-        let stored_workflow = self
-            .storage
-            .get_workflow_by_id(&original.workflow_id)
-            .await?
-            .ok_or_else(|| {
-                Error::Execution(format!("Workflow not found for execution {}", execution_id))
-            })?;
-
-        let workflow = parse_workflow(&stored_workflow.definition)?;
+        let (workflow, resolved_version) = self.resolve_workflow_for_execution(&original).await?;
         let input = modified_input.unwrap_or(original.input);
 
-        self.execute(&workflow, &stored_workflow.id, "replay", input)
-            .await
+        let mut replayed = self
+            .execute(&workflow, &original.workflow_id, "replay", input)
+            .await?;
+        if replayed.workflow_version != resolved_version {
+            replayed.workflow_version = resolved_version;
+            self.storage.save_execution(&replayed).await?;
+        }
+
+        Ok(replayed)
+    }
+
+    /// Resume a failed execution from the failed node checkpoint.
+    ///
+    /// This function continues execution from where it failed, restoring
+    /// the context (node outputs) from successfully completed nodes.
+    pub async fn resume(&self, execution_id: &str) -> Result<Execution> {
+        let original = self
+            .storage
+            .get_execution(execution_id)
+            .await?
+            .ok_or_else(|| Error::Execution(format!("Execution not found: {}", execution_id)))?;
+
+        if original.status != ExecutionStatus::Failed {
+            return Err(Error::Execution(format!(
+                "Cannot resume execution '{}': status is '{}', expected 'failed'",
+                execution_id, original.status
+            )));
+        }
+
+        let (workflow, resolved_version) = self.resolve_workflow_for_execution(&original).await?;
+
+        // Get all node executions from the failed run
+        let node_executions = self.storage.get_node_executions(execution_id).await?;
+
+        // Build checkpoint outputs from nodes that produced stable outputs
+        // in the previous execution. This includes:
+        // - completed nodes, and
+        // - recovered failed nodes (on_error continue/skip/fallback) that have output.
+        let mut completed_outputs: std::collections::HashMap<String, Value> =
+            std::collections::HashMap::new();
+        for node_exec in &node_executions {
+            if matches!(
+                node_exec.status,
+                ExecutionStatus::Completed | ExecutionStatus::Failed
+            ) {
+                if let Some(output) = &node_exec.output {
+                    completed_outputs.insert(node_exec.node_id.clone(), output.clone());
+                }
+            }
+        }
+
+        info!(
+            "Resuming execution {} with {} completed nodes",
+            execution_id,
+            completed_outputs.len()
+        );
+
+        // Execute with checkpoint context
+        self.execute_with_checkpoint(
+            &workflow,
+            &original.workflow_id,
+            "resume",
+            original.input,
+            completed_outputs,
+            resolved_version,
+        )
+        .await
+    }
+
+    /// Execute a workflow with pre-existing checkpoint context.
+    ///
+    /// Skips nodes that already have outputs in the checkpoint and continues
+    /// from where the previous execution left off.
+    async fn execute_with_checkpoint(
+        &self,
+        workflow: &Workflow,
+        workflow_id: &str,
+        trigger_type: &str,
+        input: Value,
+        checkpoint: std::collections::HashMap<String, Value>,
+        workflow_version: Option<u32>,
+    ) -> Result<Execution> {
+        let execution_id = uuid::Uuid::new_v4().to_string();
+        let started_at = Utc::now();
+        let timeout_seconds = workflow.settings.timeout_seconds.max(1);
+        let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
+
+        info!(
+            "Starting resumed execution {} of workflow '{}' (skipping {} completed nodes)",
+            execution_id,
+            workflow.name,
+            checkpoint.len()
+        );
+
+        // Create execution record
+        let mut execution = Execution {
+            id: execution_id.clone(),
+            workflow_id: workflow_id.to_string(),
+            workflow_name: workflow.name.clone(),
+            workflow_version,
+            status: ExecutionStatus::Running,
+            trigger_type: trigger_type.to_string(),
+            input: input.clone(),
+            output: None,
+            started_at,
+            finished_at: None,
+            error: None,
+        };
+
+        self.storage.save_execution(&execution).await?;
+
+        // Create context with checkpoint outputs pre-loaded
+        let mut ctx = NodeContext::new(&execution_id, &workflow.name).with_input(input);
+        for (node_id, output) in &checkpoint {
+            ctx.add_output(node_id, output.clone());
+        }
+
+        // Get topological order
+        let order = workflow.topological_sort();
+        debug!("Execution order: {:?}", order);
+
+        // Execute nodes in order, skipping checkpointed ones
+        let mut last_output = checkpoint.values().last().cloned().unwrap_or(Value::Null);
+        let mut failed = false;
+        let mut error_msg = None;
+
+        for node_id in order {
+            // Skip nodes that were already completed in the checkpoint
+            if checkpoint.contains_key(node_id) {
+                info!("Skipping checkpointed node '{}'", node_id);
+                // Update last_output to the checkpointed value
+                if let Some(output) = checkpoint.get(node_id) {
+                    last_output = output.clone();
+                }
+                continue;
+            }
+
+            if remaining_until(deadline).is_none() {
+                failed = true;
+                error_msg = Some(timeout_error_message(timeout_seconds));
+                break;
+            }
+
+            let node = match workflow.get_node(node_id) {
+                Some(n) => n,
+                None => {
+                    warn!("Node '{}' not found in workflow", node_id);
+                    continue;
+                }
+            };
+
+            let node_impl = match self.registry.get(&node.node_type) {
+                Some(n) => n,
+                None => {
+                    failed = true;
+                    error_msg = Some(format!("Unknown node type: {}", node.node_type));
+                    error!("{}", error_msg.as_deref().unwrap_or("Unknown node type"));
+                    break;
+                }
+            };
+
+            // Gather input from dependencies
+            let node_input = if node.depends_on.is_empty() {
+                ctx.input.clone()
+            } else if node.depends_on.len() == 1 {
+                ctx.get_output(&node.depends_on[0])
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            } else {
+                // Multiple dependencies: merge outputs
+                let mut merged = serde_json::Map::new();
+                for dep in &node.depends_on {
+                    if let Some(output) = ctx.get_output(dep) {
+                        merged.insert(dep.clone(), output.clone());
+                    }
+                }
+                Value::Object(merged)
+            };
+
+            // Create node execution record
+            let mut node_exec = NodeExecution {
+                id: uuid::Uuid::new_v4().to_string(),
+                execution_id: execution_id.clone(),
+                node_id: node_id.to_string(),
+                status: ExecutionStatus::Running,
+                input: node_input.clone(),
+                output: None,
+                started_at: Utc::now(),
+                finished_at: None,
+                error: None,
+            };
+            self.storage.save_node_execution(&node_exec).await?;
+
+            // Evaluate optional condition before execution.
+            if let Some(condition) = &node.condition {
+                match evaluate_condition(condition, &node_input, &ctx) {
+                    Ok(false) => {
+                        info!("Skipping node '{}' due to false condition", node_id);
+                        let skipped_output = Value::Null;
+                        ctx.add_output(node_id, skipped_output.clone());
+                        last_output = skipped_output.clone();
+
+                        node_exec.status = ExecutionStatus::Completed;
+                        node_exec.output = Some(skipped_output);
+                        node_exec.finished_at = Some(Utc::now());
+                        self.storage.save_node_execution(&node_exec).await?;
+                        continue;
+                    }
+                    Ok(true) => {}
+                    Err(e) => {
+                        if let Some(recovery_output) = on_error_recovery_output(node) {
+                            warn!(
+                                "Node '{}' condition evaluation failed (recovering): {}",
+                                node_id, e
+                            );
+                            ctx.add_output(node_id, recovery_output.clone());
+                            last_output = recovery_output.clone();
+
+                            node_exec.status = ExecutionStatus::Failed;
+                            node_exec.output = Some(recovery_output);
+                            node_exec.error = Some(e.to_string());
+                            node_exec.finished_at = Some(Utc::now());
+                            self.storage.save_node_execution(&node_exec).await?;
+                            continue;
+                        }
+
+                        failed = true;
+                        error_msg = Some(e.to_string());
+                        node_exec.status = ExecutionStatus::Failed;
+                        node_exec.error = error_msg.clone();
+                        node_exec.finished_at = Some(Utc::now());
+                        self.storage.save_node_execution(&node_exec).await?;
+                        break;
+                    }
+                }
+            }
+
+            info!("Executing node '{}' [{}]", node_id, node.node_type);
+
+            if node.for_each {
+                let Some(items) = node_input.as_array() else {
+                    let message = format!(
+                        "Node '{}' has for_each=true but input is not an array",
+                        node_id
+                    );
+
+                    if let Some(recovery_output) = on_error_recovery_output(node) {
+                        warn!("{}", message);
+                        ctx.add_output(node_id, recovery_output.clone());
+                        last_output = recovery_output.clone();
+
+                        node_exec.status = ExecutionStatus::Failed;
+                        node_exec.output = Some(recovery_output);
+                        node_exec.error = Some(message);
+                        node_exec.finished_at = Some(Utc::now());
+                        self.storage.save_node_execution(&node_exec).await?;
+                        continue;
+                    }
+
+                    error!("{}", message);
+                    failed = true;
+                    error_msg = Some(message.clone());
+                    node_exec.status = ExecutionStatus::Failed;
+                    node_exec.error = Some(message);
+                    node_exec.finished_at = Some(Utc::now());
+                    self.storage.save_node_execution(&node_exec).await?;
+                    break;
+                };
+
+                let max_concurrency = workflow.settings.max_concurrency.max(1);
+                let chunk_size = workflow.settings.chunk_size;
+                let task_template = ForEachTaskTemplate {
+                    base_ctx: ctx.clone(),
+                    node_impl: node_impl.clone(),
+                    node_type: node.node_type.clone(),
+                    node_config: node.config.clone(),
+                    retry: node.retry.clone(),
+                    deadline,
+                };
+
+                // Use chunked processing for large datasets
+                let (results, chunk_failed, chunk_error) = process_for_each_items(
+                    items,
+                    &task_template,
+                    max_concurrency,
+                    chunk_size,
+                    timeout_seconds,
+                    node_id,
+                    on_error_recovery_output(node),
+                )
+                .await;
+
+                if chunk_failed {
+                    failed = true;
+                    error_msg = chunk_error;
+                    node_exec.status = ExecutionStatus::Failed;
+                    node_exec.error = error_msg.clone();
+                    node_exec.finished_at = Some(Utc::now());
+                    self.storage.save_node_execution(&node_exec).await?;
+                    break;
+                }
+
+                let output = Value::Array(results);
+                ctx.add_output(node_id, output.clone());
+                last_output = output.clone();
+
+                node_exec.status = ExecutionStatus::Completed;
+                node_exec.output = Some(output);
+                node_exec.finished_at = Some(Utc::now());
+                self.storage.save_node_execution(&node_exec).await?;
+            } else {
+                // Regular execution
+                let node_ctx = NodeContext {
+                    input: node_input,
+                    node_outputs: ctx.node_outputs.clone(),
+                    variables: ctx.variables.clone(),
+                    execution_id: ctx.execution_id.clone(),
+                    workflow_name: ctx.workflow_name.clone(),
+                    item_index: None,
+                };
+
+                let result = execute_node_with_retry(
+                    node_impl,
+                    &node.node_type,
+                    &node.config,
+                    &node_ctx,
+                    node.retry.as_ref(),
+                    deadline,
+                )
+                .await;
+
+                match result {
+                    Ok(result) => {
+                        info!("Node '{}' completed successfully", node_id);
+                        ctx.add_output(node_id, result.data.clone());
+                        last_output = result.data.clone();
+
+                        node_exec.status = ExecutionStatus::Completed;
+                        node_exec.output = Some(result.data);
+                        node_exec.finished_at = Some(Utc::now());
+                        self.storage.save_node_execution(&node_exec).await?;
+                    }
+                    Err(e) => {
+                        if let Some(recovery_output) = on_error_recovery_output(node) {
+                            warn!("Node '{}' failed (recovering): {}", node_id, e);
+                            ctx.add_output(node_id, recovery_output.clone());
+                            last_output = recovery_output.clone();
+
+                            node_exec.status = ExecutionStatus::Failed;
+                            node_exec.output = Some(recovery_output);
+                            node_exec.error = Some(e.to_string());
+                            node_exec.finished_at = Some(Utc::now());
+                            self.storage.save_node_execution(&node_exec).await?;
+                        } else {
+                            error!("Node '{}' failed: {}", node_id, e);
+                            failed = true;
+                            error_msg = Some(e.to_string());
+
+                            node_exec.status = ExecutionStatus::Failed;
+                            node_exec.error = Some(e.to_string());
+                            node_exec.finished_at = Some(Utc::now());
+                            self.storage.save_node_execution(&node_exec).await?;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update execution record
+        execution.finished_at = Some(Utc::now());
+        if failed {
+            execution.status = ExecutionStatus::Failed;
+            execution.error = error_msg;
+        } else {
+            execution.status = ExecutionStatus::Completed;
+            execution.output = Some(last_output);
+        }
+
+        self.storage.save_execution(&execution).await?;
+
+        let duration = execution
+            .finished_at
+            .map(|f| f - execution.started_at)
+            .map(|d| d.num_milliseconds())
+            .unwrap_or(0);
+
+        info!(
+            "Resumed execution {} completed with status {} ({}ms)",
+            execution_id, execution.status, duration
+        );
+
+        Ok(execution)
+    }
+
+    async fn resolve_workflow_for_execution(
+        &self,
+        execution: &Execution,
+    ) -> Result<(Workflow, Option<u32>)> {
+        if let Some(version) = execution.workflow_version {
+            let snapshot = self
+                .storage
+                .get_workflow_version_by_id(&execution.workflow_id, version)
+                .await?
+                .ok_or_else(|| {
+                    Error::Execution(format!(
+                        "Workflow snapshot not found for execution {}: {} v{}",
+                        execution.id, execution.workflow_id, version
+                    ))
+                })?;
+            let workflow = parse_workflow(&snapshot.definition)?;
+            return Ok((workflow, Some(snapshot.version)));
+        }
+
+        if let Some(snapshot) = self
+            .storage
+            .get_workflow_version_at_or_before(&execution.workflow_id, execution.started_at)
+            .await?
+        {
+            let workflow = parse_workflow(&snapshot.definition)?;
+            return Ok((workflow, Some(snapshot.version)));
+        }
+
+        let stored_workflow = self
+            .storage
+            .get_workflow_by_id(&execution.workflow_id)
+            .await?
+            .ok_or_else(|| {
+                Error::Execution(format!("Workflow not found for execution {}", execution.id))
+            })?;
+        let workflow = parse_workflow(&stored_workflow.definition)?;
+        let version = self
+            .storage
+            .get_latest_workflow_version_number(&execution.workflow_id)
+            .await?;
+        Ok((workflow, version))
     }
 }
 
@@ -576,11 +951,258 @@ fn spawn_for_each_item(
     });
 }
 
+/// Process for_each items with optional chunking for large datasets.
+///
+/// When `chunk_size` is 0, processes all items at once (default behavior).
+/// When `chunk_size` > 0, processes items in batches, reducing peak memory usage.
+///
+/// Returns (results, failed, error_msg).
+async fn process_for_each_items(
+    items: &[Value],
+    template: &ForEachTaskTemplate,
+    max_concurrency: usize,
+    chunk_size: usize,
+    timeout_seconds: u64,
+    node_id: &str,
+    on_error_recovery: Option<Value>,
+) -> (Vec<Value>, bool, Option<String>) {
+    let total = items.len();
+    if total == 0 {
+        return (Vec::new(), false, None);
+    }
+
+    let mut results = vec![Value::Null; total];
+    let mut failed = false;
+    let mut error_msg: Option<String> = None;
+
+    // Determine effective chunk size (0 = no chunking)
+    let effective_chunk_size = if chunk_size > 0 { chunk_size } else { total };
+
+    // Process in chunks
+    for chunk_start in (0..total).step_by(effective_chunk_size) {
+        if failed {
+            break;
+        }
+
+        let chunk_end = (chunk_start + effective_chunk_size).min(total);
+        let chunk_items = &items[chunk_start..chunk_end];
+
+        if chunk_size > 0 && total > chunk_size {
+            debug!(
+                "Processing chunk {}-{} of {} items for node '{}'",
+                chunk_start, chunk_end, total, node_id
+            );
+        }
+
+        let mut join_set: JoinSet<(usize, Result<Value>)> = JoinSet::new();
+        let mut next_local_index = 0usize;
+
+        // Spawn initial batch up to max_concurrency
+        while next_local_index < chunk_items.len() && join_set.len() < max_concurrency {
+            if remaining_until(template.deadline).is_none() {
+                failed = true;
+                error_msg = Some(timeout_error_message(timeout_seconds));
+                break;
+            }
+
+            let global_index = chunk_start + next_local_index;
+            spawn_for_each_item(
+                &mut join_set,
+                global_index,
+                chunk_items[next_local_index].clone(),
+                template,
+            );
+            next_local_index += 1;
+        }
+
+        // Process results and spawn more as slots free up
+        while !failed {
+            let joined = join_set.join_next().await;
+            let Some(joined) = joined else {
+                break;
+            };
+
+            match joined {
+                Ok((idx, Ok(data))) => {
+                    results[idx] = data;
+                }
+                Ok((idx, Err(e))) => {
+                    if let Some(ref recovery_output) = on_error_recovery {
+                        warn!("Node '{}' item {} failed (recovering): {}", node_id, idx, e);
+                        results[idx] = recovery_output.clone();
+                    } else {
+                        error!("Node '{}' item {} failed: {}", node_id, idx, e);
+                        failed = true;
+                        error_msg = Some(format!("{} (at item {})", e, idx));
+                        join_set.abort_all();
+                        while join_set.join_next().await.is_some() {}
+                        break;
+                    }
+                }
+                Err(e) => {
+                    failed = true;
+                    error_msg = Some(format!("Node '{}' worker task join failed: {}", node_id, e));
+                    join_set.abort_all();
+                    while join_set.join_next().await.is_some() {}
+                    break;
+                }
+            }
+
+            // Spawn more items from this chunk
+            while !failed
+                && next_local_index < chunk_items.len()
+                && join_set.len() < max_concurrency
+            {
+                if remaining_until(template.deadline).is_none() {
+                    failed = true;
+                    error_msg = Some(timeout_error_message(timeout_seconds));
+                    join_set.abort_all();
+                    while join_set.join_next().await.is_some() {}
+                    break;
+                }
+
+                let global_index = chunk_start + next_local_index;
+                spawn_for_each_item(
+                    &mut join_set,
+                    global_index,
+                    chunk_items[next_local_index].clone(),
+                    template,
+                );
+                next_local_index += 1;
+            }
+        }
+    }
+
+    (results, failed, error_msg)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::storage::StoredWorkflow;
     use crate::workflow::parse_workflow;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // ============================================================================
+    // Test Node: Configurable Failing Node
+    // ============================================================================
+
+    /// A test node that fails a configurable number of times before succeeding.
+    struct FailingNode {
+        /// How many times to fail before succeeding (per execution)
+        fail_count: Arc<AtomicUsize>,
+    }
+
+    impl FailingNode {
+        fn new() -> Self {
+            Self {
+                fail_count: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn reset(&self) {
+            self.fail_count.store(0, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Node for FailingNode {
+        fn node_type(&self) -> &str {
+            "failing"
+        }
+
+        async fn execute(&self, config: &Value, _ctx: &NodeContext) -> Result<NodeResult> {
+            let fail_times = config
+                .get("fail_times")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize;
+
+            let current = self.fail_count.fetch_add(1, Ordering::SeqCst);
+
+            if current < fail_times {
+                Err(Error::Execution(format!(
+                    "Simulated failure {}/{}",
+                    current + 1,
+                    fail_times
+                )))
+            } else {
+                Ok(NodeResult::new(serde_json::json!({
+                    "success": true,
+                    "attempts": current + 1
+                })))
+            }
+        }
+
+        fn description(&self) -> &str {
+            "A test node that fails N times before succeeding"
+        }
+    }
+
+    /// A test node that always fails.
+    struct AlwaysFailNode;
+
+    #[async_trait::async_trait]
+    impl Node for AlwaysFailNode {
+        fn node_type(&self) -> &str {
+            "always_fail"
+        }
+
+        async fn execute(&self, _config: &Value, _ctx: &NodeContext) -> Result<NodeResult> {
+            Err(Error::Execution("Always fails".to_string()))
+        }
+
+        fn description(&self) -> &str {
+            "A test node that always fails"
+        }
+    }
+
+    /// A test node that sleeps for a configurable duration.
+    struct SlowNode;
+
+    #[async_trait::async_trait]
+    impl Node for SlowNode {
+        fn node_type(&self) -> &str {
+            "slow"
+        }
+
+        async fn execute(&self, config: &Value, _ctx: &NodeContext) -> Result<NodeResult> {
+            let sleep_ms = config
+                .get("sleep_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(100);
+
+            tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+            Ok(NodeResult::new(serde_json::json!({"slept_ms": sleep_ms})))
+        }
+
+        fn description(&self) -> &str {
+            "A test node that sleeps"
+        }
+    }
+
+    // ============================================================================
+    // Helper Functions
+    // ============================================================================
+
+    async fn save_test_workflow(storage: &SqliteStorage, id: &str, yaml: &str) {
+        let workflow = parse_workflow(yaml).unwrap();
+        let now = Utc::now();
+        storage
+            .save_workflow(&StoredWorkflow {
+                id: id.to_string(),
+                name: workflow.name.clone(),
+                definition: yaml.to_string(),
+                enabled: true,
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
+    }
+
+    // ============================================================================
+    // Basic Execution Tests
+    // ============================================================================
 
     #[tokio::test]
     async fn test_execute_simple_workflow() {
@@ -668,6 +1290,303 @@ nodes:
     }
 
     #[tokio::test]
+    async fn test_replay_uses_original_workflow_version() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        let v1 = r#"
+name: replay-versioned-workflow
+nodes:
+  - id: step
+    type: transform
+    config:
+      expression: '"v1"'
+"#;
+        save_test_workflow(&storage, "wf-replay-versioned", v1).await;
+        let workflow_v1 = parse_workflow(v1).unwrap();
+
+        let first = executor
+            .execute(&workflow_v1, "wf-replay-versioned", "manual", Value::Null)
+            .await
+            .unwrap();
+        assert_eq!(first.status, ExecutionStatus::Completed);
+        assert_eq!(first.output, Some(serde_json::json!("v1")));
+        assert_eq!(first.workflow_version, Some(1));
+
+        let v2 = r#"
+name: replay-versioned-workflow
+nodes:
+  - id: step
+    type: transform
+    config:
+      expression: '"v2"'
+"#;
+        save_test_workflow(&storage, "wf-replay-versioned", v2).await;
+
+        let replayed = executor.replay(&first.id, None).await.unwrap();
+        assert_eq!(replayed.status, ExecutionStatus::Completed);
+        assert_eq!(replayed.output, Some(serde_json::json!("v1")));
+        assert_eq!(replayed.workflow_version, Some(1));
+    }
+
+    // ============================================================================
+    // Retry Behavior Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_retry_with_fixed_backoff_succeeds() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let failing_node = Arc::new(FailingNode::new());
+        let mut registry = NodeRegistry::new();
+        registry.register(failing_node.clone());
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: retry-fixed-workflow
+settings:
+  timeout_seconds: 30
+nodes:
+  - id: retry_node
+    type: failing
+    config:
+      fail_times: 2
+    retry:
+      max_attempts: 3
+      delay_seconds: 1
+      backoff: fixed
+"#;
+
+        save_test_workflow(&storage, "wf-retry-fixed", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+        failing_node.reset();
+
+        let execution = executor
+            .execute(&workflow, "wf-retry-fixed", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+        let output = execution.output.unwrap();
+        assert_eq!(output.get("success"), Some(&serde_json::json!(true)));
+        assert_eq!(output.get("attempts"), Some(&serde_json::json!(3)));
+    }
+
+    #[tokio::test]
+    async fn test_retry_with_linear_backoff_succeeds() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let failing_node = Arc::new(FailingNode::new());
+        let mut registry = NodeRegistry::new();
+        registry.register(failing_node.clone());
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: retry-linear-workflow
+settings:
+  timeout_seconds: 30
+nodes:
+  - id: retry_node
+    type: failing
+    config:
+      fail_times: 1
+    retry:
+      max_attempts: 3
+      delay_seconds: 1
+      backoff: linear
+"#;
+
+        save_test_workflow(&storage, "wf-retry-linear", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+        failing_node.reset();
+
+        let execution = executor
+            .execute(&workflow, "wf-retry-linear", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+        let output = execution.output.unwrap();
+        assert_eq!(output.get("attempts"), Some(&serde_json::json!(2)));
+    }
+
+    #[tokio::test]
+    async fn test_retry_with_exponential_backoff_succeeds() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let failing_node = Arc::new(FailingNode::new());
+        let mut registry = NodeRegistry::new();
+        registry.register(failing_node.clone());
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: retry-exponential-workflow
+settings:
+  timeout_seconds: 60
+nodes:
+  - id: retry_node
+    type: failing
+    config:
+      fail_times: 1
+    retry:
+      max_attempts: 3
+      delay_seconds: 1
+      backoff: exponential
+"#;
+
+        save_test_workflow(&storage, "wf-retry-exp", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+        failing_node.reset();
+
+        let execution = executor
+            .execute(&workflow, "wf-retry-exp", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_retry_exhausted_fails() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut registry = NodeRegistry::new();
+        registry.register(Arc::new(AlwaysFailNode));
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: retry-exhausted-workflow
+settings:
+  timeout_seconds: 30
+nodes:
+  - id: always_fail_node
+    type: always_fail
+    config: {}
+    retry:
+      max_attempts: 3
+      delay_seconds: 1
+      backoff: fixed
+"#;
+
+        save_test_workflow(&storage, "wf-retry-exhausted", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-retry-exhausted", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Failed);
+        assert!(execution.error.is_some());
+        assert!(execution.error.unwrap().contains("Always fails"));
+    }
+
+    #[tokio::test]
+    async fn test_no_retry_fails_immediately() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut registry = NodeRegistry::new();
+        registry.register(Arc::new(AlwaysFailNode));
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: no-retry-workflow
+nodes:
+  - id: fail_node
+    type: always_fail
+    config: {}
+"#;
+
+        save_test_workflow(&storage, "wf-no-retry", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-no-retry", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Failed);
+    }
+
+    // ============================================================================
+    // Timeout Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_workflow_timeout() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut registry = NodeRegistry::new();
+        registry.register(Arc::new(SlowNode));
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: timeout-workflow
+settings:
+  timeout_seconds: 1
+nodes:
+  - id: slow_node
+    type: slow
+    config:
+      sleep_ms: 5000
+"#;
+
+        save_test_workflow(&storage, "wf-timeout", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-timeout", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Failed);
+        assert!(execution.error.is_some());
+        let error = execution.error.unwrap();
+        assert!(
+            error.contains("timed out") || error.contains("timeout"),
+            "Expected timeout error, got: {}",
+            error
+        );
+    }
+
+    #[tokio::test]
+    async fn test_retry_delay_exceeds_timeout() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut registry = NodeRegistry::new();
+        registry.register(Arc::new(AlwaysFailNode));
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: retry-timeout-workflow
+settings:
+  timeout_seconds: 2
+nodes:
+  - id: fail_node
+    type: always_fail
+    config: {}
+    retry:
+      max_attempts: 5
+      delay_seconds: 10
+      backoff: fixed
+"#;
+
+        save_test_workflow(&storage, "wf-retry-timeout", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-retry-timeout", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Failed);
+        let error = execution.error.unwrap();
+        assert!(
+            error.contains("timeout") || error.contains("Always fails"),
+            "Expected timeout or failure error, got: {}",
+            error
+        );
+    }
+
+    // ============================================================================
+    // On-Error / Fallback Tests
+    // ============================================================================
+
+    #[tokio::test]
     async fn test_on_error_fallback_value() {
         let storage = SqliteStorage::open_in_memory().unwrap();
         let registry = NodeRegistry::new();
@@ -719,5 +1638,883 @@ nodes:
             node_execs[0].output,
             Some(serde_json::json!({"source": "cached", "items": []}))
         );
+    }
+
+    #[tokio::test]
+    async fn test_on_error_continue() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut registry = NodeRegistry::new();
+        registry.register(Arc::new(AlwaysFailNode));
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: continue-workflow
+nodes:
+  - id: fail_node
+    type: always_fail
+    config: {}
+    on_error:
+      action: continue
+  - id: next_node
+    type: transform
+    depends_on: [fail_node]
+    config:
+      expression: '"continued"'
+"#;
+
+        save_test_workflow(&storage, "wf-continue", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-continue", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+        assert_eq!(execution.output, Some(serde_json::json!("continued")));
+    }
+
+    #[tokio::test]
+    async fn test_on_error_skip() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut registry = NodeRegistry::new();
+        registry.register(Arc::new(AlwaysFailNode));
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: skip-workflow
+nodes:
+  - id: fail_node
+    type: always_fail
+    config: {}
+    on_error:
+      action: skip
+  - id: next_node
+    type: transform
+    depends_on: [fail_node]
+    config:
+      expression: '"skipped failure"'
+"#;
+
+        save_test_workflow(&storage, "wf-skip", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-skip", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+    }
+
+    // ============================================================================
+    // Condition Evaluation Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_condition_skips_node_when_false() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: condition-workflow
+nodes:
+  - id: conditional_node
+    type: transform
+    condition: "false"
+    config:
+      expression: '"should not run"'
+  - id: final_node
+    type: transform
+    depends_on: [conditional_node]
+    config:
+      expression: '"final"'
+"#;
+
+        save_test_workflow(&storage, "wf-condition", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-condition", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+        assert_eq!(execution.output, Some(serde_json::json!("final")));
+    }
+
+    #[tokio::test]
+    async fn test_condition_runs_node_when_true() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: condition-true-workflow
+nodes:
+  - id: conditional_node
+    type: transform
+    condition: "true"
+    config:
+      expression: '"ran"'
+"#;
+
+        save_test_workflow(&storage, "wf-condition-true", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-condition-true", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+        assert_eq!(execution.output, Some(serde_json::json!("ran")));
+    }
+
+    #[tokio::test]
+    async fn test_condition_evaluation_error_fails() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: condition-error-workflow
+nodes:
+  - id: bad_condition
+    type: transform
+    condition: "invalid_syntax("
+    config:
+      expression: '"should fail"'
+"#;
+
+        save_test_workflow(&storage, "wf-bad-condition", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-bad-condition", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Failed);
+        assert!(execution.error.is_some());
+    }
+
+    // ============================================================================
+    // For-Each Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_for_each_non_array_fails() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: foreach-error-workflow
+nodes:
+  - id: foreach_node
+    type: transform
+    for_each: true
+    config:
+      expression: "input"
+"#;
+
+        save_test_workflow(&storage, "wf-foreach-error", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(
+                &workflow,
+                "wf-foreach-error",
+                "test",
+                serde_json::json!({"not": "an array"}),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Failed);
+        assert!(execution.error.is_some());
+        assert!(execution
+            .error
+            .unwrap()
+            .contains("for_each=true but input is not an array"));
+    }
+
+    #[tokio::test]
+    async fn test_for_each_with_fallback_recovers() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: foreach-fallback-workflow
+nodes:
+  - id: foreach_node
+    type: transform
+    for_each: true
+    config:
+      expression: "input"
+    on_error:
+      action: fallback
+      fallback_value: []
+"#;
+
+        save_test_workflow(&storage, "wf-foreach-fallback", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(
+                &workflow,
+                "wf-foreach-fallback",
+                "test",
+                serde_json::json!({"not": "an array"}),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+        assert_eq!(execution.output, Some(serde_json::json!([])));
+    }
+
+    #[tokio::test]
+    async fn test_for_each_processes_array() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        // Note: input is passed as JSON string, so we need to parse it
+        let yaml = r#"
+name: foreach-success-workflow
+settings:
+  max_concurrency: 2
+nodes:
+  - id: foreach_node
+    type: transform
+    for_each: true
+    config:
+      expression: "from_json(input) * 2"
+"#;
+
+        save_test_workflow(&storage, "wf-foreach-success", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(
+                &workflow,
+                "wf-foreach-success",
+                "test",
+                serde_json::json!([1, 2, 3]),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+        assert_eq!(execution.output, Some(serde_json::json!([2, 4, 6])));
+    }
+
+    #[tokio::test]
+    async fn test_for_each_empty_array_succeeds() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: foreach-empty-workflow
+nodes:
+  - id: foreach_node
+    type: transform
+    for_each: true
+    config:
+      expression: "from_json(input) * 2"
+"#;
+
+        save_test_workflow(&storage, "wf-foreach-empty", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-foreach-empty", "test", serde_json::json!([]))
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+        assert_eq!(execution.output, Some(serde_json::json!([])));
+    }
+
+    // ============================================================================
+    // Backoff Calculation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_retry_delay_fixed() {
+        let config = RetryConfig {
+            max_attempts: 3,
+            delay_seconds: 5,
+            backoff: BackoffType::Fixed,
+        };
+
+        assert_eq!(retry_delay(&config, 1), Duration::from_secs(5));
+        assert_eq!(retry_delay(&config, 2), Duration::from_secs(5));
+        assert_eq!(retry_delay(&config, 3), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_retry_delay_linear() {
+        let config = RetryConfig {
+            max_attempts: 3,
+            delay_seconds: 2,
+            backoff: BackoffType::Linear,
+        };
+
+        assert_eq!(retry_delay(&config, 1), Duration::from_secs(2));
+        assert_eq!(retry_delay(&config, 2), Duration::from_secs(4));
+        assert_eq!(retry_delay(&config, 3), Duration::from_secs(6));
+    }
+
+    #[test]
+    fn test_retry_delay_exponential() {
+        let config = RetryConfig {
+            max_attempts: 4,
+            delay_seconds: 1,
+            backoff: BackoffType::Exponential,
+        };
+
+        assert_eq!(retry_delay(&config, 1), Duration::from_secs(1));
+        assert_eq!(retry_delay(&config, 2), Duration::from_secs(2));
+        assert_eq!(retry_delay(&config, 3), Duration::from_secs(4));
+        assert_eq!(retry_delay(&config, 4), Duration::from_secs(8));
+    }
+
+    // ============================================================================
+    // Unknown Node Type Test
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_unknown_node_type_fails() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: unknown-node-workflow
+nodes:
+  - id: unknown
+    type: nonexistent_node_type
+    config: {}
+"#;
+
+        save_test_workflow(&storage, "wf-unknown", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-unknown", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Failed);
+        assert!(execution.error.is_some());
+        assert!(execution
+            .error
+            .unwrap()
+            .contains("Unknown node type: nonexistent_node_type"));
+    }
+
+    // ============================================================================
+    // Multi-Node Dependency Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_node_chain_propagates_data() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        // Note: input is passed as JSON string, so we parse with from_json()
+        let yaml = r#"
+name: chain-workflow
+nodes:
+  - id: step1
+    type: transform
+    config:
+      expression: "10"
+  - id: step2
+    type: transform
+    depends_on: [step1]
+    config:
+      expression: "from_json(input) * 2"
+  - id: step3
+    type: transform
+    depends_on: [step2]
+    config:
+      expression: "from_json(input) + 5"
+"#;
+
+        save_test_workflow(&storage, "wf-chain", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-chain", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+        assert_eq!(execution.output, Some(serde_json::json!(25))); // (10 * 2) + 5
+    }
+
+    #[tokio::test]
+    async fn test_failure_in_chain_stops_execution() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut registry = NodeRegistry::new();
+        registry.register(Arc::new(AlwaysFailNode));
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: chain-fail-workflow
+nodes:
+  - id: step1
+    type: transform
+    config:
+      expression: "10"
+  - id: step2
+    type: always_fail
+    depends_on: [step1]
+    config: {}
+  - id: step3
+    type: transform
+    depends_on: [step2]
+    config:
+      expression: '"should not reach"'
+"#;
+
+        save_test_workflow(&storage, "wf-chain-fail", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-chain-fail", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Failed);
+
+        // Verify step3 was never executed
+        let node_execs = storage.get_node_executions(&execution.id).await.unwrap();
+        let step3_executed = node_execs.iter().any(|n| n.node_id == "step3");
+        assert!(
+            !step3_executed,
+            "step3 should not have been executed after step2 failed"
+        );
+    }
+
+    // ============================================================================
+    // Resume Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_resume_failed_execution() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let failing_node = Arc::new(FailingNode::new());
+        let mut registry = NodeRegistry::new();
+        registry.register(failing_node.clone());
+        let executor = Executor::new(registry, storage.clone());
+
+        // Create workflow where step2 will fail first time, then succeed
+        let yaml = r#"
+name: resume-workflow
+settings:
+  timeout_seconds: 30
+nodes:
+  - id: step1
+    type: transform
+    config:
+      expression: "100"
+  - id: step2
+    type: failing
+    depends_on: [step1]
+    config:
+      fail_times: 1
+  - id: step3
+    type: transform
+    depends_on: [step2]
+    config:
+      expression: '"final"'
+"#;
+
+        save_test_workflow(&storage, "wf-resume", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        // First execution should fail at step2
+        failing_node.reset();
+        let first_execution = executor
+            .execute(&workflow, "wf-resume", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(first_execution.status, ExecutionStatus::Failed);
+
+        // Verify step1 completed, step2 failed
+        let node_execs = storage
+            .get_node_executions(&first_execution.id)
+            .await
+            .unwrap();
+        let step1_status = node_execs
+            .iter()
+            .find(|n| n.node_id == "step1")
+            .map(|n| &n.status);
+        let step2_status = node_execs
+            .iter()
+            .find(|n| n.node_id == "step2")
+            .map(|n| &n.status);
+        assert_eq!(step1_status, Some(&ExecutionStatus::Completed));
+        assert_eq!(step2_status, Some(&ExecutionStatus::Failed));
+
+        // Now resume - step2 should succeed on retry (fail_times=1 already exhausted)
+        // But wait - the FailingNode counter is global, so it already failed once.
+        // The resume will skip step1 and re-execute step2 which should now succeed.
+        let resumed = executor.resume(&first_execution.id).await.unwrap();
+
+        assert_eq!(resumed.status, ExecutionStatus::Completed);
+        assert_eq!(resumed.trigger_type, "resume");
+        assert_eq!(resumed.output, Some(serde_json::json!("final")));
+    }
+
+    #[tokio::test]
+    async fn test_resume_non_failed_execution_errors() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: success-workflow
+nodes:
+  - id: step1
+    type: transform
+    config:
+      expression: "42"
+"#;
+
+        save_test_workflow(&storage, "wf-success", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-success", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+
+        // Attempting to resume a completed execution should fail
+        let result = executor.resume(&execution.id).await;
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("Cannot resume"),
+            "Expected 'Cannot resume' error, got: {}",
+            error
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resume_uses_original_workflow_version() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut registry = NodeRegistry::new();
+        registry.register(Arc::new(AlwaysFailNode));
+        let executor = Executor::new(registry, storage.clone());
+
+        let v1 = r#"
+name: resume-versioned-workflow
+nodes:
+  - id: step1
+    type: transform
+    config:
+      expression: "1"
+  - id: step2
+    type: always_fail
+    depends_on: [step1]
+    config: {}
+"#;
+        save_test_workflow(&storage, "wf-resume-versioned", v1).await;
+        let workflow_v1 = parse_workflow(v1).unwrap();
+
+        let first = executor
+            .execute(&workflow_v1, "wf-resume-versioned", "manual", Value::Null)
+            .await
+            .unwrap();
+        assert_eq!(first.status, ExecutionStatus::Failed);
+        assert_eq!(first.workflow_version, Some(1));
+
+        // Change the workflow so the failing node would succeed if latest definition were used.
+        let v2 = r#"
+name: resume-versioned-workflow
+nodes:
+  - id: step1
+    type: transform
+    config:
+      expression: "1"
+  - id: step2
+    type: transform
+    depends_on: [step1]
+    config:
+      expression: '"ok"'
+"#;
+        save_test_workflow(&storage, "wf-resume-versioned", v2).await;
+
+        let resumed = executor.resume(&first.id).await.unwrap();
+        assert_eq!(resumed.status, ExecutionStatus::Failed);
+        assert_eq!(resumed.workflow_version, Some(1));
+    }
+
+    // ============================================================================
+    // Chunked/Streaming Processing Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_chunked_for_each_processing() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        // Test with chunk_size=3 processing 10 items
+        let yaml = r#"
+name: chunked-workflow
+settings:
+  max_concurrency: 2
+  chunk_size: 3
+nodes:
+  - id: foreach_node
+    type: transform
+    for_each: true
+    config:
+      expression: "from_json(input) + 1"
+"#;
+
+        save_test_workflow(&storage, "wf-chunked", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        // Create array of 10 items
+        let input = serde_json::json!([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+        let execution = executor
+            .execute(&workflow, "wf-chunked", "test", input)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+        // Each item should be incremented by 1
+        assert_eq!(
+            execution.output,
+            Some(serde_json::json!([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_chunked_processing_with_failure() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut registry = NodeRegistry::new();
+        registry.register(Arc::new(AlwaysFailNode));
+        let executor = Executor::new(registry, storage.clone());
+
+        // Chunk size 2, but the node always fails
+        let yaml = r#"
+name: chunked-fail-workflow
+settings:
+  chunk_size: 2
+nodes:
+  - id: fail_node
+    type: always_fail
+    for_each: true
+    config: {}
+"#;
+
+        save_test_workflow(&storage, "wf-chunked-fail", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let input = serde_json::json!([1, 2, 3, 4]);
+
+        let execution = executor
+            .execute(&workflow, "wf-chunked-fail", "test", input)
+            .await
+            .unwrap();
+
+        // Should fail on first item of first chunk
+        assert_eq!(execution.status, ExecutionStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn test_chunk_size_zero_processes_all_at_once() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        // chunk_size=0 means no chunking (default behavior)
+        let yaml = r#"
+name: no-chunk-workflow
+settings:
+  chunk_size: 0
+  max_concurrency: 10
+nodes:
+  - id: foreach_node
+    type: transform
+    for_each: true
+    config:
+      expression: "from_json(input) * 2"
+"#;
+
+        save_test_workflow(&storage, "wf-no-chunk", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let input = serde_json::json!([1, 2, 3, 4, 5]);
+
+        let execution = executor
+            .execute(&workflow, "wf-no-chunk", "test", input)
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+        assert_eq!(execution.output, Some(serde_json::json!([2, 4, 6, 8, 10])));
+    }
+
+    // ============================================================================
+    // Resume Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_resume_skips_completed_nodes() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut registry = NodeRegistry::new();
+        registry.register(Arc::new(AlwaysFailNode));
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: skip-completed-workflow
+nodes:
+  - id: step1
+    type: transform
+    config:
+      expression: "1"
+  - id: step2
+    type: transform
+    depends_on: [step1]
+    config:
+      expression: "2"
+  - id: step3
+    type: always_fail
+    depends_on: [step2]
+    config: {}
+"#;
+
+        save_test_workflow(&storage, "wf-skip-completed", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        // Execute - should fail at step3
+        let first = executor
+            .execute(&workflow, "wf-skip-completed", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(first.status, ExecutionStatus::Failed);
+
+        // Verify step1 and step2 completed
+        let node_execs = storage.get_node_executions(&first.id).await.unwrap();
+        let completed: Vec<_> = node_execs
+            .iter()
+            .filter(|n| n.status == ExecutionStatus::Completed)
+            .map(|n| n.node_id.as_str())
+            .collect();
+        assert!(completed.contains(&"step1"));
+        assert!(completed.contains(&"step2"));
+
+        // Resume - step1 and step2 should be skipped (from checkpoint)
+        // step3 will still fail but the point is to verify checkpoint works
+        let resumed = executor.resume(&first.id).await.unwrap();
+
+        // Still fails because step3 always fails
+        assert_eq!(resumed.status, ExecutionStatus::Failed);
+
+        // Verify in the new execution, step1 and step2 were NOT re-executed
+        // (they don't appear in node_executions for the resumed run)
+        let resumed_node_execs = storage.get_node_executions(&resumed.id).await.unwrap();
+        let resumed_node_ids: Vec<_> = resumed_node_execs
+            .iter()
+            .map(|n| n.node_id.as_str())
+            .collect();
+
+        // Only step3 should be executed in the resumed run
+        assert!(
+            !resumed_node_ids.contains(&"step1"),
+            "step1 should have been skipped"
+        );
+        assert!(
+            !resumed_node_ids.contains(&"step2"),
+            "step2 should have been skipped"
+        );
+        assert!(
+            resumed_node_ids.contains(&"step3"),
+            "step3 should have been executed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resume_skips_recovered_failed_nodes() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut registry = NodeRegistry::new();
+        registry.register(Arc::new(AlwaysFailNode));
+        let executor = Executor::new(registry, storage.clone());
+
+        let yaml = r#"
+name: resume-recovered-workflow
+nodes:
+  - id: step1
+    type: always_fail
+    config: {}
+    on_error:
+      action: fallback
+      fallback_value: 10
+  - id: step2
+    type: transform
+    depends_on: [step1]
+    config:
+      expression: "from_json(input) + 1"
+  - id: step3
+    type: always_fail
+    depends_on: [step2]
+    config: {}
+"#;
+
+        save_test_workflow(&storage, "wf-resume-recovered", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let first = executor
+            .execute(&workflow, "wf-resume-recovered", "test", Value::Null)
+            .await
+            .unwrap();
+
+        assert_eq!(first.status, ExecutionStatus::Failed);
+
+        let first_node_execs = storage.get_node_executions(&first.id).await.unwrap();
+        let step1_status = first_node_execs
+            .iter()
+            .find(|n| n.node_id == "step1")
+            .map(|n| &n.status);
+        let step1_output = first_node_execs
+            .iter()
+            .find(|n| n.node_id == "step1")
+            .and_then(|n| n.output.as_ref())
+            .cloned();
+        assert_eq!(step1_status, Some(&ExecutionStatus::Failed));
+        assert_eq!(step1_output, Some(serde_json::json!(10)));
+
+        let resumed = executor.resume(&first.id).await.unwrap();
+        assert_eq!(resumed.status, ExecutionStatus::Failed);
+
+        // step1 and step2 should be reused from checkpoint, only failing step3 should run again.
+        let resumed_node_execs = storage.get_node_executions(&resumed.id).await.unwrap();
+        let resumed_node_ids: Vec<_> = resumed_node_execs
+            .iter()
+            .map(|n| n.node_id.as_str())
+            .collect();
+
+        assert!(!resumed_node_ids.contains(&"step1"));
+        assert!(!resumed_node_ids.contains(&"step2"));
+        assert!(resumed_node_ids.contains(&"step3"));
     }
 }

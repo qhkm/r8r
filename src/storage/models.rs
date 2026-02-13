@@ -72,6 +72,7 @@ pub struct Execution {
     pub id: String,
     pub workflow_id: String,
     pub workflow_name: String,
+    pub workflow_version: Option<u32>,
     pub status: ExecutionStatus,
     pub trigger_type: String,
     pub input: serde_json::Value,

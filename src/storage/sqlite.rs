@@ -77,6 +77,7 @@ impl SqliteStorage {
                 id TEXT PRIMARY KEY,
                 workflow_id TEXT NOT NULL,
                 workflow_name TEXT NOT NULL,
+                workflow_version INTEGER,
                 status TEXT NOT NULL,
                 trigger_type TEXT NOT NULL,
                 input TEXT NOT NULL,
@@ -111,6 +112,7 @@ impl SqliteStorage {
         )?;
 
         Self::migrate_foreign_keys_to_cascade(conn)?;
+        Self::ensure_execution_workflow_version_column(conn)?;
         Self::repair_orphans(conn)?;
         Ok(())
     }
@@ -135,6 +137,31 @@ impl SqliteStorage {
         }
 
         Ok(false)
+    }
+
+    fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+        let sql = format!("PRAGMA table_info({})", table);
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query([])?;
+
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            if name == column {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn ensure_execution_workflow_version_column(conn: &Connection) -> Result<()> {
+        if !Self::has_column(conn, "executions", "workflow_version")? {
+            conn.execute(
+                "ALTER TABLE executions ADD COLUMN workflow_version INTEGER",
+                [],
+            )?;
+        }
+        Ok(())
     }
 
     fn migrate_foreign_keys_to_cascade(conn: &mut Connection) -> Result<()> {
@@ -181,6 +208,7 @@ impl SqliteStorage {
                     id TEXT PRIMARY KEY,
                     workflow_id TEXT NOT NULL,
                     workflow_name TEXT NOT NULL,
+                    workflow_version INTEGER,
                     status TEXT NOT NULL,
                     trigger_type TEXT NOT NULL,
                     input TEXT NOT NULL,
@@ -211,8 +239,8 @@ impl SqliteStorage {
                 JOIN workflows w ON w.id = v.workflow_id;
 
                 INSERT INTO executions
-                    (id, workflow_id, workflow_name, status, trigger_type, input, output, started_at, finished_at, error)
-                SELECT e.id, e.workflow_id, e.workflow_name, e.status, e.trigger_type, e.input, e.output, e.started_at, e.finished_at, e.error
+                    (id, workflow_id, workflow_name, workflow_version, status, trigger_type, input, output, started_at, finished_at, error)
+                SELECT e.id, e.workflow_id, e.workflow_name, NULL, e.status, e.trigger_type, e.input, e.output, e.started_at, e.finished_at, e.error
                 FROM executions_old e
                 JOIN workflows w ON w.id = e.workflow_id;
 
@@ -508,6 +536,67 @@ impl SqliteStorage {
         Ok(record)
     }
 
+    pub async fn get_workflow_version_by_id(
+        &self,
+        workflow_id: &str,
+        version: u32,
+    ) -> Result<Option<WorkflowVersion>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, workflow_id, workflow_name, version, definition, created_at, created_by, changelog, checksum
+             FROM workflow_versions
+             WHERE workflow_id = ?1 AND version = ?2",
+        )?;
+
+        let record = stmt
+            .query_row(params![workflow_id, version], Self::row_to_workflow_version)
+            .optional()?;
+
+        Ok(record)
+    }
+
+    pub async fn get_latest_workflow_version_number(
+        &self,
+        workflow_id: &str,
+    ) -> Result<Option<u32>> {
+        let conn = self.conn.lock().await;
+        let version = conn
+            .query_row(
+                "SELECT version FROM workflow_versions
+                 WHERE workflow_id = ?1
+                 ORDER BY version DESC
+                 LIMIT 1",
+                [workflow_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(version)
+    }
+
+    pub async fn get_workflow_version_at_or_before(
+        &self,
+        workflow_id: &str,
+        timestamp: chrono::DateTime<Utc>,
+    ) -> Result<Option<WorkflowVersion>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, workflow_id, workflow_name, version, definition, created_at, created_by, changelog, checksum
+             FROM workflow_versions
+             WHERE workflow_id = ?1 AND created_at <= ?2
+             ORDER BY version DESC
+             LIMIT 1",
+        )?;
+
+        let record = stmt
+            .query_row(
+                params![workflow_id, timestamp.to_rfc3339()],
+                Self::row_to_workflow_version,
+            )
+            .optional()?;
+
+        Ok(record)
+    }
+
     pub async fn rollback_workflow(
         &self,
         workflow_name: &str,
@@ -588,11 +677,12 @@ impl SqliteStorage {
         let conn = self.conn.lock().await;
         conn.execute(
             "INSERT INTO executions
-             (id, workflow_id, workflow_name, status, trigger_type, input, output, started_at, finished_at, error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             (id, workflow_id, workflow_name, workflow_version, status, trigger_type, input, output, started_at, finished_at, error)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(id) DO UPDATE SET
                 workflow_id = excluded.workflow_id,
                 workflow_name = excluded.workflow_name,
+                workflow_version = excluded.workflow_version,
                 status = excluded.status,
                 trigger_type = excluded.trigger_type,
                 input = excluded.input,
@@ -604,6 +694,7 @@ impl SqliteStorage {
                 execution.id,
                 execution.workflow_id,
                 execution.workflow_name,
+                execution.workflow_version,
                 execution.status.to_string(),
                 execution.trigger_type,
                 serde_json::to_string(&execution.input).unwrap_or_default(),
@@ -622,33 +713,34 @@ impl SqliteStorage {
     pub async fn get_execution(&self, id: &str) -> Result<Option<Execution>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "SELECT id, workflow_id, workflow_name, status, trigger_type, input, output, started_at, finished_at, error
+            "SELECT id, workflow_id, workflow_name, workflow_version, status, trigger_type, input, output, started_at, finished_at, error
              FROM executions WHERE id = ?1",
         )?;
 
         let execution = stmt
             .query_row([id], |row| {
-                let status_str: String = row.get(3)?;
+                let status_str: String = row.get(4)?;
                 let status = status_str.parse().unwrap_or(ExecutionStatus::Failed);
-                let input_str: String = row.get(5)?;
-                let output_str: Option<String> = row.get(6)?;
+                let input_str: String = row.get(6)?;
+                let output_str: Option<String> = row.get(7)?;
 
                 Ok(Execution {
                     id: row.get(0)?,
                     workflow_id: row.get(1)?,
                     workflow_name: row.get(2)?,
+                    workflow_version: row.get(3)?,
                     status,
-                    trigger_type: row.get(4)?,
+                    trigger_type: row.get(5)?,
                     input: serde_json::from_str(&input_str).unwrap_or(serde_json::Value::Null),
                     output: output_str.and_then(|s| serde_json::from_str(&s).ok()),
-                    started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
+                    started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
                         .unwrap()
                         .with_timezone(&Utc),
                     finished_at: row
-                        .get::<_, Option<String>>(8)?
+                        .get::<_, Option<String>>(9)?
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                         .map(|t| t.with_timezone(&Utc)),
-                    error: row.get(9)?,
+                    error: row.get(10)?,
                 })
             })
             .optional()?;
@@ -673,7 +765,7 @@ impl SqliteStorage {
         let conn = self.conn.lock().await;
 
         let mut sql = String::from(
-            "SELECT id, workflow_id, workflow_name, status, trigger_type, input, output, started_at, finished_at, error
+            "SELECT id, workflow_id, workflow_name, workflow_version, status, trigger_type, input, output, started_at, finished_at, error
              FROM executions WHERE 1=1",
         );
         let mut bind: Vec<SqlValue> = Vec::new();
@@ -830,27 +922,28 @@ impl SqliteStorage {
     }
 
     fn row_to_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<Execution> {
-        let status_str: String = row.get(3)?;
+        let status_str: String = row.get(4)?;
         let status = status_str.parse().unwrap_or(ExecutionStatus::Failed);
-        let input_str: String = row.get(5)?;
-        let output_str: Option<String> = row.get(6)?;
+        let input_str: String = row.get(6)?;
+        let output_str: Option<String> = row.get(7)?;
 
         Ok(Execution {
             id: row.get(0)?,
             workflow_id: row.get(1)?,
             workflow_name: row.get(2)?,
+            workflow_version: row.get(3)?,
             status,
-            trigger_type: row.get(4)?,
+            trigger_type: row.get(5)?,
             input: serde_json::from_str(&input_str).unwrap_or(serde_json::Value::Null),
             output: output_str.and_then(|s| serde_json::from_str(&s).ok()),
-            started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
+            started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
                 .unwrap()
                 .with_timezone(&Utc),
             finished_at: row
-                .get::<_, Option<String>>(8)?
+                .get::<_, Option<String>>(9)?
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                 .map(|t| t.with_timezone(&Utc)),
-            error: row.get(9)?,
+            error: row.get(10)?,
         })
     }
 
@@ -1009,6 +1102,7 @@ mod tests {
             id: "exec-123".to_string(),
             workflow_id: "wf-123".to_string(),
             workflow_name: "test-workflow".to_string(),
+            workflow_version: None,
             status: ExecutionStatus::Completed,
             trigger_type: "manual".to_string(),
             input: serde_json::json!({"key": "value"}),
@@ -1050,6 +1144,7 @@ mod tests {
             id: "exec-q1".to_string(),
             workflow_id: "wf-q".to_string(),
             workflow_name: "query-workflow".to_string(),
+            workflow_version: None,
             status: ExecutionStatus::Completed,
             trigger_type: "manual".to_string(),
             input: serde_json::json!({"note": "alpha"}),
@@ -1064,6 +1159,7 @@ mod tests {
             id: "exec-q2".to_string(),
             workflow_id: "wf-q".to_string(),
             workflow_name: "query-workflow".to_string(),
+            workflow_version: None,
             status: ExecutionStatus::Failed,
             trigger_type: "replay".to_string(),
             input: serde_json::json!({"note": "beta"}),
@@ -1132,6 +1228,7 @@ mod tests {
             id: "exec-fk".to_string(),
             workflow_id: "wf-fk".to_string(),
             workflow_name: "fk-workflow".to_string(),
+            workflow_version: None,
             status: ExecutionStatus::Running,
             trigger_type: "manual".to_string(),
             input: serde_json::json!({"x": 1}),
@@ -1195,6 +1292,7 @@ mod tests {
             id: "exec-cascade".to_string(),
             workflow_id: "wf-cascade".to_string(),
             workflow_name: "cascade-workflow".to_string(),
+            workflow_version: None,
             status: ExecutionStatus::Running,
             trigger_type: "manual".to_string(),
             input: serde_json::json!({"x": 1}),
