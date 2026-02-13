@@ -103,7 +103,7 @@ impl Executor {
 
         // Load credentials for this execution
         let credentials = merge_inherited_credentials(
-            load_workflow_credentials(workflow)?,
+            load_workflow_credentials(workflow).await?,
             self.inherited_credentials.as_ref(),
         );
 
@@ -600,7 +600,7 @@ impl Executor {
 
         // Load credentials for this execution
         let credentials = merge_inherited_credentials(
-            load_workflow_credentials(workflow)?,
+            load_workflow_credentials(workflow).await?,
             self.inherited_credentials.as_ref(),
         );
 
@@ -1467,11 +1467,11 @@ fn emit_node_terminal_event(monitor: Option<&Arc<Monitor>>, node_exec: &NodeExec
 ///
 /// Scans all nodes for `credential` config fields and loads
 /// the corresponding credentials from the credential store.
-fn load_workflow_credentials(workflow: &Workflow) -> Result<HashMap<String, String>> {
+async fn load_workflow_credentials(workflow: &Workflow) -> Result<HashMap<String, String>> {
     let mut credentials = HashMap::new();
 
     // Try to load the credential store
-    let store = match CredentialStore::load() {
+    let store = match CredentialStore::load().await {
         Ok(s) => s,
         Err(e) => {
             warn!(

@@ -3,10 +3,14 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::time::Duration;
 use tracing::{debug, info};
 
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
+
+const DEFAULT_SUMMARIZE_HTTP_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_SUMMARIZE_HTTP_CONNECT_TIMEOUT_SECS: u64 = 10;
 
 /// Summarize node for AI-powered text summarization.
 pub struct SummarizeNode;
@@ -159,7 +163,13 @@ impl Node for SummarizeNode {
         // Call the API
         let (api_url, headers, body) = build_api_request(&config, &api_key, &prompt)?;
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(DEFAULT_SUMMARIZE_HTTP_TIMEOUT_SECS))
+            .connect_timeout(Duration::from_secs(
+                DEFAULT_SUMMARIZE_HTTP_CONNECT_TIMEOUT_SECS,
+            ))
+            .build()
+            .map_err(|e| Error::Node(format!("Failed to build HTTP client: {}", e)))?;
         let response = client
             .post(&api_url)
             .headers(headers)

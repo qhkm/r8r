@@ -4,7 +4,7 @@
 //! A master key is derived from a user password using PBKDF2.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
@@ -38,6 +38,8 @@ const SALT_LEN: usize = 16;
 
 /// Nonce length for AES-GCM.
 const NONCE_LEN: usize = 12;
+/// File mode for credential files on Unix systems (owner read/write only).
+const CREDENTIAL_FILE_MODE: u32 = 0o600;
 
 /// A stored credential.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,23 +94,25 @@ impl CredentialStore {
     }
 
     /// Load credentials from disk (without master key - can only list, not decrypt).
-    pub fn load() -> Result<Self> {
+    pub async fn load() -> Result<Self> {
         let path = Self::path();
-        if !path.exists() {
+        if !tokio::fs::try_exists(&path)
+            .await
+            .map_err(|e| Error::Storage(format!("Failed to check credentials path: {}", e)))?
+        {
             return Ok(Self::default());
         }
 
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| Error::Storage(format!("Failed to read credentials: {}", e)))?;
+        let content = read_file(&path, "credentials").await?;
 
         serde_json::from_str(&content)
             .map_err(|e| Error::Storage(format!("Failed to parse credentials: {}", e)))
     }
 
     /// Load credentials and unlock with password.
-    pub fn load_with_password(password: &str) -> Result<Self> {
-        let mut store = Self::load()?;
-        store.unlock(password)?;
+    pub async fn load_with_password(password: &str) -> Result<Self> {
+        let mut store = Self::load().await?;
+        store.unlock(password).await?;
         Ok(store)
     }
 
@@ -119,7 +123,7 @@ impl CredentialStore {
 
     /// Initialize encryption with a new password.
     /// Creates a new master key and encrypts it with the password.
-    pub fn initialize_encryption(password: &str) -> Result<()> {
+    pub async fn initialize_encryption(password: &str) -> Result<()> {
         if Self::is_encryption_initialized() {
             return Err(Error::Storage(
                 "Encryption already initialized. Use unlock instead.".to_string(),
@@ -158,41 +162,33 @@ impl CredentialStore {
         };
 
         let path = Self::master_key_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| Error::Storage(format!("Failed to create directory: {}", e)))?;
-        }
-
         let content = serde_json::to_string_pretty(&master_key_file)
             .map_err(|e| Error::Storage(format!("Failed to serialize master key: {}", e)))?;
-
-        std::fs::write(&path, content)
-            .map_err(|e| Error::Storage(format!("Failed to write master key: {}", e)))?;
+        write_secure_file(&path, &content, "master key").await?;
 
         Ok(())
     }
 
     /// Unlock the credential store with a password.
-    pub fn unlock(&mut self, password: &str) -> Result<()> {
+    pub async fn unlock(&mut self, password: &str) -> Result<()> {
         if !Self::is_encryption_initialized() {
             // No encryption - nothing to unlock
             return Ok(());
         }
 
         let path = Self::master_key_path();
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| Error::Storage(format!("Failed to read master key: {}", e)))?;
+        let content = read_file(&path, "master key").await?;
 
         let master_key_file: MasterKeyFile = serde_json::from_str(&content)
             .map_err(|e| Error::Storage(format!("Failed to parse master key: {}", e)))?;
 
         let salt = STANDARD
             .decode(&master_key_file.salt)
-            .map_err(|e| Error::Storage(format!("Failed to decode salt: {}", e)))?;
+            .map_err(|_| Error::Storage("Invalid password".to_string()))?;
 
         let encrypted_key = STANDARD
             .decode(&master_key_file.encrypted_key)
-            .map_err(|e| Error::Storage(format!("Failed to decode encrypted key: {}", e)))?;
+            .map_err(|_| Error::Storage("Invalid password".to_string()))?;
 
         // Derive encryption key from password
         let mut derived_key = [0u8; 32];
@@ -213,24 +209,16 @@ impl CredentialStore {
     }
 
     /// Save credentials to disk.
-    pub fn save(&self) -> Result<()> {
+    pub async fn save(&self) -> Result<()> {
         let path = Self::path();
-
-        // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| Error::Storage(format!("Failed to create directory: {}", e)))?;
-        }
 
         let content = serde_json::to_string_pretty(&self)
             .map_err(|e| Error::Storage(format!("Failed to serialize credentials: {}", e)))?;
-
-        std::fs::write(&path, content)
-            .map_err(|e| Error::Storage(format!("Failed to write credentials: {}", e)))
+        write_secure_file(&path, &content, "credentials").await
     }
 
     /// Set a credential.
-    pub fn set(&mut self, service: &str, key: Option<&str>, value: &str) -> Result<()> {
+    pub async fn set(&mut self, service: &str, key: Option<&str>, value: &str) -> Result<()> {
         let now = chrono::Utc::now();
         let rng = SystemRandom::new();
 
@@ -256,7 +244,7 @@ impl CredentialStore {
         };
 
         self.credentials.insert(service.to_string(), credential);
-        self.save()
+        self.save().await
     }
 
     /// Get a credential value (decrypted/decoded).
@@ -271,16 +259,15 @@ impl CredentialStore {
                         )
                     })?;
 
-                    let encrypted = STANDARD.decode(&cred.value[4..]).map_err(|e| {
-                        Error::Storage(format!("Failed to decode credential: {}", e))
-                    })?;
+                    let encrypted = STANDARD
+                        .decode(&cred.value[4..])
+                        .map_err(|_| Error::Storage("Failed to decrypt credential".to_string()))?;
 
                     let decrypted = decrypt_data(&encrypted, master_key.as_bytes())
                         .map_err(|_| Error::Storage("Failed to decrypt credential".to_string()))?;
 
-                    String::from_utf8(decrypted).map_err(|e| {
-                        Error::Storage(format!("Invalid UTF-8 in credential: {}", e))
-                    })?
+                    String::from_utf8(decrypted)
+                        .map_err(|_| Error::Storage("Failed to decrypt credential".to_string()))?
                 } else {
                     // Legacy base64-encoded value
                     let decoded = STANDARD.decode(&cred.value).map_err(|e| {
@@ -304,17 +291,17 @@ impl CredentialStore {
     }
 
     /// Delete a credential.
-    pub fn delete(&mut self, service: &str) -> Result<bool> {
+    pub async fn delete(&mut self, service: &str) -> Result<bool> {
         let existed = self.credentials.remove(service).is_some();
         if existed {
-            self.save()?;
+            self.save().await?;
         }
         Ok(existed)
     }
 
     /// Migrate legacy base64 credentials to encrypted format.
     /// Requires the store to be unlocked with a master key.
-    pub fn migrate_to_encrypted(&mut self) -> Result<usize> {
+    pub async fn migrate_to_encrypted(&mut self) -> Result<usize> {
         let master_key = self.master_key.as_ref().ok_or_else(|| {
             Error::Storage("Store must be unlocked to migrate credentials".to_string())
         })?;
@@ -344,7 +331,7 @@ impl CredentialStore {
         }
 
         if migrated > 0 {
-            self.save()?;
+            self.save().await?;
         }
 
         Ok(migrated)
@@ -363,6 +350,44 @@ impl CredentialStore {
     pub fn is_encrypted(credential: &Credential) -> bool {
         credential.value.starts_with("enc:")
     }
+}
+
+async fn read_file(path: &Path, label: &str) -> Result<String> {
+    tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| Error::Storage(format!("Failed to read {}: {}", label, e)))
+}
+
+async fn ensure_parent_dir(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| Error::Storage(format!("Failed to create directory: {}", e)))?;
+    }
+    Ok(())
+}
+
+async fn write_secure_file(path: &Path, content: &str, label: &str) -> Result<()> {
+    ensure_parent_dir(path).await?;
+    tokio::fs::write(path, content)
+        .await
+        .map_err(|e| Error::Storage(format!("Failed to write {}: {}", label, e)))?;
+    set_file_permissions_owner_only(path).await
+}
+
+#[cfg(unix)]
+async fn set_file_permissions_owner_only(path: &Path) -> Result<()> {
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt;
+
+    tokio::fs::set_permissions(path, Permissions::from_mode(CREDENTIAL_FILE_MODE))
+        .await
+        .map_err(|e| Error::Storage(format!("Failed to secure file permissions: {}", e)))
+}
+
+#[cfg(not(unix))]
+async fn set_file_permissions_owner_only(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 /// Encrypt data using AES-256-GCM.
@@ -413,11 +438,12 @@ fn decrypt_data(ciphertext: &[u8], key: &[u8]) -> std::result::Result<Vec<u8>, (
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_credential_roundtrip() {
+    #[tokio::test]
+    async fn test_credential_roundtrip() {
         let mut store = CredentialStore::default();
         store
             .set("test-service", Some("api_key"), "secret123")
+            .await
             .unwrap();
 
         let value = store.get("test-service").unwrap();
@@ -444,15 +470,16 @@ mod tests {
         assert_eq!(decrypted, plaintext);
     }
 
-    #[test]
-    fn test_encrypted_credential_roundtrip() {
-        let mut store = CredentialStore::default();
-
-        // Set master key directly for testing
-        store.master_key = Some(SecureMasterKey::new(vec![0u8; 32]));
+    #[tokio::test]
+    async fn test_encrypted_credential_roundtrip() {
+        let mut store = CredentialStore {
+            master_key: Some(SecureMasterKey::new(vec![0u8; 32])),
+            ..CredentialStore::default()
+        };
 
         store
             .set("encrypted-service", None, "encrypted_secret")
+            .await
             .unwrap();
 
         // Verify it's encrypted
@@ -464,12 +491,15 @@ mod tests {
         assert_eq!(value, Some("encrypted_secret".to_string()));
     }
 
-    #[test]
-    fn test_migration() {
+    #[tokio::test]
+    async fn test_migration() {
         let mut store = CredentialStore::default();
 
         // Create a legacy credential (no master key)
-        store.set("legacy-service", None, "legacy_secret").unwrap();
+        store
+            .set("legacy-service", None, "legacy_secret")
+            .await
+            .unwrap();
 
         // Verify it's NOT encrypted
         let cred = store.credentials.get("legacy-service").unwrap();
@@ -477,7 +507,7 @@ mod tests {
 
         // Set master key and migrate
         store.master_key = Some(SecureMasterKey::new(vec![0u8; 32]));
-        let migrated = store.migrate_to_encrypted().unwrap();
+        let migrated = store.migrate_to_encrypted().await.unwrap();
         assert_eq!(migrated, 1);
 
         // Verify it's now encrypted

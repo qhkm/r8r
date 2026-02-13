@@ -1,6 +1,8 @@
 //! HTTP node - make HTTP requests.
 
 use std::net::IpAddr;
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::Client;
@@ -109,11 +111,20 @@ pub struct HttpNode {
     client: Client,
 }
 
+const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_HTTP_CONNECT_TIMEOUT_SECS: u64 = 10;
+
 impl HttpNode {
     pub fn new() -> Self {
-        Self {
-            client: Client::new(),
-        }
+        let client = Client::builder()
+            .timeout(Duration::from_secs(DEFAULT_HTTP_TIMEOUT_SECS))
+            .connect_timeout(Duration::from_secs(DEFAULT_HTTP_CONNECT_TIMEOUT_SECS))
+            .build()
+            .unwrap_or_else(|e| {
+                warn!("Failed to build HTTP client with timeout defaults: {}", e);
+                Client::new()
+            });
+        Self { client }
     }
 }
 
@@ -393,7 +404,7 @@ fn render_template(template: &str, ctx: &NodeContext) -> String {
     // Replace {{ env.VAR }} - only allow safe environment variables
     // By default, only R8R_* variables are allowed. Additional variables can be
     // whitelisted via R8R_ALLOWED_ENV_VARS (comma-separated list).
-    let env_regex = regex_lite::Regex::new(r"\{\{\s*env\.(\w+)\s*\}\}").unwrap();
+    let env_regex = env_template_regex();
     result = env_regex
         .replace_all(&result, |caps: &regex_lite::Captures| {
             let var_name = &caps[1];
@@ -410,6 +421,12 @@ fn render_template(template: &str, ctx: &NodeContext) -> String {
         .to_string();
 
     result
+}
+
+fn env_template_regex() -> &'static regex_lite::Regex {
+    static ENV_TEMPLATE_REGEX: OnceLock<regex_lite::Regex> = OnceLock::new();
+    ENV_TEMPLATE_REGEX
+        .get_or_init(|| regex_lite::Regex::new(r"\{\{\s*env\.(\w+)\s*\}\}").expect("valid regex"))
 }
 
 /// Render template variables in body recursively.

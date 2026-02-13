@@ -5,7 +5,7 @@ mod websocket;
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{HeaderValue, Method, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -98,6 +98,8 @@ pub fn create_cors_layer() -> CorsLayer {
 
 /// Default maximum concurrent requests.
 const DEFAULT_MAX_CONCURRENT_REQUESTS: usize = 100;
+/// Default maximum request body size in bytes (1 MiB).
+const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 1_048_576;
 
 /// Get the maximum concurrent requests limit from environment.
 ///
@@ -113,6 +115,21 @@ pub fn get_max_concurrent_requests() -> usize {
 pub fn create_concurrency_limit() -> tower::limit::ConcurrencyLimitLayer {
     let max = get_max_concurrent_requests();
     tower::limit::ConcurrencyLimitLayer::new(max)
+}
+
+/// Get the maximum request body size limit from environment.
+///
+/// - R8R_MAX_REQUEST_BODY_BYTES: Maximum request body size in bytes (default: 1048576)
+pub fn get_max_request_body_bytes() -> usize {
+    std::env::var("R8R_MAX_REQUEST_BODY_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_MAX_REQUEST_BODY_BYTES)
+}
+
+/// Create request body size limit layer to prevent memory exhaustion.
+pub fn create_request_body_limit() -> DefaultBodyLimit {
+    DefaultBodyLimit::max(get_max_request_body_bytes())
 }
 
 /// Shared application state.
@@ -142,6 +159,7 @@ pub fn create_monitored_routes() -> Router<MonitoredAppState> {
 /// Create the complete API router with state.
 pub fn create_router(state: AppState) -> Router {
     create_api_routes()
+        .layer(create_request_body_limit())
         .layer(create_concurrency_limit())
         .layer(TraceLayer::new_for_http())
         .layer(create_cors_layer())

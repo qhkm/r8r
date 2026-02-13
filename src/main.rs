@@ -784,8 +784,8 @@ async fn cmd_workflows_export_all(output_dir: &str) -> anyhow::Result<()> {
 
 async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     use r8r::api::{
-        create_api_routes, create_cors_layer, create_monitored_routes, AppState, Monitor,
-        MonitoredAppState,
+        create_api_routes, create_concurrency_limit, create_cors_layer, create_monitored_routes,
+        create_request_body_limit, AppState, Monitor, MonitoredAppState,
     };
     use r8r::nodes::NodeRegistry;
     use r8r::triggers::{create_webhook_routes, EventSubscriber, Scheduler};
@@ -850,6 +850,8 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         .with_state(state.clone())
         .merge(monitored_routes.with_state(monitored_state))
         .merge(webhook_routes.with_state(state))
+        .layer(create_request_body_limit())
+        .layer(create_concurrency_limit())
         .layer(TraceLayer::new_for_http())
         .layer(create_cors_layer());
 
@@ -1005,8 +1007,8 @@ async fn cmd_credentials_set(
         anyhow::bail!("Credential value cannot be empty");
     }
 
-    let mut store = CredentialStore::load()?;
-    store.set(service, key, &credential_value)?;
+    let mut store = CredentialStore::load().await?;
+    store.set(service, key, &credential_value).await?;
 
     println!("✓ Credential '{}' saved", service);
     if let Some(k) = key {
@@ -1019,7 +1021,7 @@ async fn cmd_credentials_set(
 async fn cmd_credentials_list() -> anyhow::Result<()> {
     use r8r::credentials::CredentialStore;
 
-    let store = CredentialStore::load()?;
+    let store = CredentialStore::load().await?;
     let credentials = store.list();
 
     if credentials.is_empty() {
@@ -1044,8 +1046,8 @@ async fn cmd_credentials_list() -> anyhow::Result<()> {
 async fn cmd_credentials_delete(service: &str) -> anyhow::Result<()> {
     use r8r::credentials::CredentialStore;
 
-    let mut store = CredentialStore::load()?;
-    let deleted = store.delete(service)?;
+    let mut store = CredentialStore::load().await?;
+    let deleted = store.delete(service).await?;
 
     if deleted {
         println!("✓ Credential '{}' deleted", service);

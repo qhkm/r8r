@@ -1,6 +1,7 @@
 //! Set node - add or update fields in object data.
 
 use chrono::Utc;
+use std::sync::OnceLock;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -96,13 +97,13 @@ fn render_value(value: &Value, ctx: &NodeContext) -> Value {
 }
 
 fn render_string_value(template: &str, ctx: &NodeContext) -> Value {
-    let full_template = regex_lite::Regex::new(r"^\s*\{\{\s*([^{}]+?)\s*\}\}\s*$").unwrap();
+    let full_template = full_template_regex();
     if let Some(captures) = full_template.captures(template) {
         let expr = captures.get(1).map(|m| m.as_str()).unwrap_or_default();
         return resolve_expression(expr, ctx);
     }
 
-    let template_re = regex_lite::Regex::new(r"\{\{\s*(.+?)\s*\}\}").unwrap();
+    let template_re = inline_template_regex();
     let rendered = template_re
         .replace_all(template, |caps: &regex_lite::Captures| {
             let expr = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
@@ -115,6 +116,19 @@ fn render_string_value(template: &str, ctx: &NodeContext) -> Value {
         .to_string();
 
     Value::String(rendered)
+}
+
+fn full_template_regex() -> &'static regex_lite::Regex {
+    static FULL_TEMPLATE_REGEX: OnceLock<regex_lite::Regex> = OnceLock::new();
+    FULL_TEMPLATE_REGEX.get_or_init(|| {
+        regex_lite::Regex::new(r"^\s*\{\{\s*([^{}]+?)\s*\}\}\s*$").expect("valid regex")
+    })
+}
+
+fn inline_template_regex() -> &'static regex_lite::Regex {
+    static INLINE_TEMPLATE_REGEX: OnceLock<regex_lite::Regex> = OnceLock::new();
+    INLINE_TEMPLATE_REGEX
+        .get_or_init(|| regex_lite::Regex::new(r"\{\{\s*(.+?)\s*\}\}").expect("valid regex"))
 }
 
 fn resolve_expression(expr: &str, ctx: &NodeContext) -> Value {
