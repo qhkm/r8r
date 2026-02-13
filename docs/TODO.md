@@ -48,6 +48,16 @@
 - [x] OpenAPI specification
 - [x] Workflow import/export CLI
 
+### Workflow Features
+- [x] Workflow templates/blueprints (5 built-in, custom templates supported)
+- [x] Parameterized workflows (with type validation & defaults)
+- [x] Workflow dependencies (DAG of workflows with cycle detection)
+
+### UI & Developer Experience
+- [x] Web dashboard for monitoring
+- [x] Visual workflow editor
+- [x] CLI autocomplete
+
 ## In Progress
 
 ### Event Triggers
@@ -57,23 +67,9 @@
 ## Planned
 
 ### Node Types
-- [ ] `email` - Send emails via SMTP/API
-- [ ] `slack` - Slack messaging
 - [ ] `discord` - Discord messaging
-- [ ] `database` - SQL query execution
-- [ ] `s3` - S3 object operations
 - [ ] `google-sheets` - Google Sheets integration
 - [ ] `telegram` - Telegram Bot API
-
-### Workflow Features
-- [ ] Workflow templates/blueprints
-- [ ] Parameterized workflows
-- [ ] Workflow dependencies (DAG of workflows)
-
-### UI & Developer Experience
-- [x] Web dashboard for monitoring
-- [x] Visual workflow editor
-- [x] CLI autocomplete
 
 ### Scalability
 - [ ] Distributed execution (multiple workers)
@@ -91,7 +87,7 @@
 We welcome contributions! Pick an item from "Planned" and open an issue to discuss before starting work.
 
 Priority areas:
-1. New node types (especially `email`, `slack`, `database`)
+1. New node types (especially `discord`, `telegram`)
 2. Event trigger sources
 3. Documentation improvements
 4. Test coverage

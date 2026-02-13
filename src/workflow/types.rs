@@ -56,6 +56,10 @@ pub struct Workflow {
     #[serde(default)]
     pub variables: HashMap<String, serde_json::Value>,
 
+    /// Dependencies on other workflows (for workflow pipelines)
+    #[serde(default)]
+    pub depends_on_workflows: Vec<super::dag::WorkflowDependency>,
+
     /// Nodes (steps) in the workflow
     pub nodes: Vec<Node>,
 
