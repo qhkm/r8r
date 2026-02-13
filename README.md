@@ -15,6 +15,38 @@ r8r is a lightweight, fast workflow automation tool designed for AI agents. It p
 - **MCP Server** - Model Context Protocol support for AI tool integration
 - **Distributed Tracing** - OpenTelemetry integration for observability
 
+## Why r8r?
+
+r8r is designed for a different use case than traditional workflow tools. Here's how it compares:
+
+| Feature | r8r | n8n |
+|---------|-----|-----|
+| **Primary User** | AI agents & developers | Human operators |
+| **Interface** | CLI, API, MCP | Visual drag-and-drop |
+| **Language** | Rust (native binary) | TypeScript (Node.js) |
+| **Memory Usage** | ~10-50 MB | ~200-500 MB+ |
+| **Startup Time** | <100ms | Several seconds |
+| **Dependencies** | Single binary + SQLite | Node.js + PostgreSQL/MySQL |
+| **Workflow Format** | YAML (LLM-friendly) | JSON (visual editor) |
+| **Version Control** | Git-friendly YAML files | Database-stored |
+| **MCP Support** | Built-in | Not available |
+| **Self-hosted** | ✅ Always free | ✅ Free (limited cloud) |
+
+### When to use r8r
+
+- Your workflows are invoked by AI agents
+- You need fast, lightweight automation
+- You want version-controlled workflow definitions
+- You prefer CLI/API over visual editors
+- You need MCP integration for AI tools
+
+### When to use n8n
+
+- You prefer visual workflow building
+- You need 400+ pre-built integrations
+- Your team is non-technical
+- You want a polished web UI
+
 ## Quick Start
 
 ### Installation
