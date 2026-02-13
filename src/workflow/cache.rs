@@ -174,6 +174,7 @@ mod tests {
             inputs: std::collections::HashMap::new(),
             input_schema: None,
             variables: std::collections::HashMap::new(),
+            depends_on_workflows: vec![],
             nodes: vec![],
             settings: Default::default(),
         }

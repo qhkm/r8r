@@ -1,6 +1,6 @@
 //! R8r MCP Server binary
 //!
-//! Run with: r8r-mcp [OPTIONS]
+//! Run with: `r8r-mcp [OPTIONS]`
 //!
 //! This binary starts the r8r MCP server, which exposes r8r workflow
 //! capabilities via the Model Context Protocol. It can be used with

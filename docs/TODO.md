@@ -4,7 +4,7 @@
 
 ### Core Engine
 - [x] Workflow execution with dependency resolution
-- [x] Node types: http, transform, agent, subworkflow, debug, variables, template, circuit_breaker
+- [x] Node types: http, transform, agent, subworkflow, debug, variables, template, circuit_breaker, wait, switch, filter, sort, limit, set, aggregate, split, crypto, datetime, dedupe, summarize, if
 - [x] Conditional execution (`condition` field)
 - [x] Retry with backoff strategies (fixed, linear, exponential)
 - [x] Error handling with fallback values
@@ -25,6 +25,7 @@
 - [x] Cron scheduling
 - [x] Webhook endpoints with signature verification
 - [x] Manual/API triggers
+- [x] Redis pub/sub event source
 
 ### Security
 - [x] Credential encryption (AES-256-GCM)
@@ -45,34 +46,30 @@
 - [x] MCP server for AI tool integration
 - [x] WebSocket monitoring
 - [x] OpenAPI specification
+- [x] Workflow import/export CLI
+
+### Workflow Features
+- [x] Workflow templates/blueprints (5 built-in, custom templates supported)
+- [x] Parameterized workflows (with type validation & defaults)
+- [x] Workflow dependencies (DAG of workflows with cycle detection)
+
+### UI & Developer Experience
+- [x] Web dashboard for monitoring
+- [x] Visual workflow editor
+- [x] CLI autocomplete
 
 ## In Progress
 
 ### Event Triggers
-- [ ] Redis pub/sub event source
 - [ ] Kafka consumer trigger
 - [ ] SQS/SNS triggers
 
 ## Planned
 
 ### Node Types
-- [ ] `email` - Send emails via SMTP/API
-- [ ] `slack` - Slack messaging
-- [ ] `database` - SQL query execution
-- [ ] `s3` - S3 object operations
-- [ ] `wait` - Delay/sleep node
-- [ ] `switch` - Multi-branch routing
-
-### Workflow Features
-- [ ] Workflow import/export CLI
-- [ ] Workflow templates/blueprints
-- [ ] Parameterized workflows
-- [ ] Workflow dependencies (DAG of workflows)
-
-### UI & Developer Experience
-- [ ] Web dashboard for monitoring
-- [ ] Visual workflow editor
-- [ ] CLI autocomplete
+- [ ] `discord` - Discord messaging
+- [ ] `google-sheets` - Google Sheets integration
+- [ ] `telegram` - Telegram Bot API
 
 ### Scalability
 - [ ] Distributed execution (multiple workers)
@@ -90,7 +87,7 @@
 We welcome contributions! Pick an item from "Planned" and open an issue to discuss before starting work.
 
 Priority areas:
-1. New node types (especially `email`, `slack`, `database`)
+1. New node types (especially `discord`, `telegram`)
 2. Event trigger sources
 3. Documentation improvements
 4. Test coverage
