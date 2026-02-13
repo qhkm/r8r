@@ -35,6 +35,9 @@ pub enum Error {
     #[error("Validation error: {0}")]
     Validation(String),
 
+    #[error("Internal error: {0}")]
+    Internal(String),
+
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 
@@ -62,6 +65,7 @@ impl Error {
             Error::Config(_) => "CONFIG_ERROR",
             Error::Parse(_) => "PARSE_ERROR",
             Error::Validation(_) => "VALIDATION_ERROR",
+            Error::Internal(_) => "INTERNAL_ERROR",
             Error::Http(_) => "HTTP_ERROR",
             Error::Database(_) => "DATABASE_ERROR",
             Error::Yaml(_) => "YAML_ERROR",
@@ -70,7 +74,59 @@ impl Error {
         }
     }
 
-    /// Convert to agent-friendly JSON response.
+    /// Get a sanitized error message safe for external consumers.
+    ///
+    /// This hides internal details like file paths, SQL statements,
+    /// and stack traces that could leak sensitive information.
+    pub fn external_message(&self) -> String {
+        match self {
+            // User-facing errors - safe to expose the message
+            Error::Workflow(msg) => format!("Workflow error: {}", msg),
+            Error::Node(msg) => format!("Node error: {}", msg),
+            Error::Execution(msg) => format!("Execution error: {}", msg),
+            Error::Config(msg) => format!("Configuration error: {}", msg),
+            Error::Parse(msg) => format!("Parse error: {}", msg),
+            Error::Validation(msg) => format!("Validation error: {}", msg),
+
+            // Internal errors - sanitize to avoid leaking details
+            Error::Storage(_) => "A storage error occurred".to_string(),
+            Error::Internal(_) => "An internal error occurred".to_string(),
+            Error::Database(_) => "A database error occurred".to_string(),
+            Error::Io(_) => "An I/O error occurred".to_string(),
+
+            // HTTP errors - extract status code if available, hide details
+            Error::Http(e) => {
+                if let Some(status) = e.status() {
+                    format!("HTTP request failed with status {}", status.as_u16())
+                } else if e.is_timeout() {
+                    "HTTP request timed out".to_string()
+                } else if e.is_connect() {
+                    "Failed to connect to remote server".to_string()
+                } else {
+                    "HTTP request failed".to_string()
+                }
+            }
+
+            // Serialization errors - indicate format issue without details
+            Error::Yaml(_) => "Invalid YAML format".to_string(),
+            Error::Json(_) => "Invalid JSON format".to_string(),
+        }
+    }
+
+    /// Convert to agent-friendly JSON response with sanitized message.
+    pub fn to_external_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "success": false,
+            "error": {
+                "code": self.code(),
+                "message": self.external_message(),
+            }
+        })
+    }
+
+    /// Convert to agent-friendly JSON response (includes full error details).
+    ///
+    /// **Warning**: Only use this for internal/debug purposes, not for external APIs.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "success": false,

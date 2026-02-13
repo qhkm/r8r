@@ -112,6 +112,10 @@ pub struct DatabaseHealth {
     pub orphaned_executions: u64,
     pub orphaned_node_executions: u64,
     pub orphaned_workflow_versions: u64,
+    /// Journal mode (ideally "wal" for better concurrent access).
+    pub journal_mode: String,
+    /// Busy timeout in milliseconds (how long SQLite waits on lock contention).
+    pub busy_timeout_ms: i64,
 }
 
 /// Query filters for execution history.

@@ -47,6 +47,10 @@ pub struct Workflow {
     #[serde(default)]
     pub inputs: HashMap<String, InputDefinition>,
 
+    /// Workflow variables (constants and computed values)
+    #[serde(default)]
+    pub variables: HashMap<String, serde_json::Value>,
+
     /// Nodes (steps) in the workflow
     pub nodes: Vec<Node>,
 
@@ -145,6 +149,15 @@ pub struct Node {
     /// Error handling configuration
     #[serde(default)]
     pub on_error: Option<ErrorConfig>,
+
+    /// Pinned data for testing - when set, this data is used instead of executing the node.
+    /// Useful for testing workflows without hitting external services.
+    #[serde(default)]
+    pub pinned_data: Option<serde_json::Value>,
+
+    /// Timeout for this specific node in seconds (overrides workflow default)
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
 }
 
 /// Retry configuration for a node.
@@ -232,6 +245,29 @@ pub struct WorkflowSettings {
     /// Whether to store execution traces
     #[serde(default = "default_true")]
     pub store_traces: bool,
+
+    /// Chunk size for streaming for_each processing.
+    /// When > 0, for_each nodes process arrays in batches of this size,
+    /// reducing memory usage for very large datasets.
+    /// Default: 0 (no chunking, process all items at once)
+    #[serde(default)]
+    pub chunk_size: usize,
+
+    /// Maximum number of items allowed in a for_each loop.
+    /// Prevents memory exhaustion from processing extremely large arrays.
+    /// Default: 10,000
+    #[serde(default = "default_max_for_each_items")]
+    pub max_for_each_items: usize,
+
+    /// Name of workflow to execute when this workflow fails.
+    /// The error workflow receives the error context as input.
+    #[serde(default)]
+    pub error_workflow: Option<String>,
+
+    /// Enable debug mode for detailed execution tracing.
+    /// When enabled, captures full input/output data for each node.
+    #[serde(default)]
+    pub debug: bool,
 }
 
 impl Default for WorkflowSettings {
@@ -240,6 +276,10 @@ impl Default for WorkflowSettings {
             timeout_seconds: default_timeout(),
             max_concurrency: default_concurrency(),
             store_traces: true,
+            chunk_size: 0,
+            max_for_each_items: default_max_for_each_items(),
+            error_workflow: None,
+            debug: false,
         }
     }
 }
@@ -250,6 +290,10 @@ fn default_timeout() -> u64 {
 
 fn default_concurrency() -> usize {
     10
+}
+
+fn default_max_for_each_items() -> usize {
+    10_000 // 10,000 items max per for_each loop
 }
 
 fn default_true() -> bool {

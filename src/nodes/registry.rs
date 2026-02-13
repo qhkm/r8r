@@ -7,8 +7,9 @@ use serde_json::Value;
 
 use super::types::{Node, NodeContext, NodeResult};
 use super::{
-    AgentNode, AggregateNode, FilterNode, HttpNode, IfNode, LimitNode, MergeNode, SetNode,
-    SortNode, SplitNode, SwitchNode, TransformNode,
+    AgentNode, AggregateNode, CryptoNode, DateTimeNode, DebugNode, DedupeNode, FilterNode,
+    HttpNode, IfNode, LimitNode, MergeNode, SetNode, SortNode, SplitNode, SubWorkflowNode,
+    SummarizeNode, SwitchNode, TransformNode, VariablesNode, WaitNode,
 };
 use crate::error::{Error, Result};
 
@@ -38,6 +39,14 @@ impl NodeRegistry {
         registry.register(Arc::new(SetNode::new()));
         registry.register(Arc::new(AggregateNode::new()));
         registry.register(Arc::new(SplitNode::new()));
+        registry.register(Arc::new(WaitNode::new()));
+        registry.register(Arc::new(CryptoNode::new()));
+        registry.register(Arc::new(DateTimeNode::new()));
+        registry.register(Arc::new(DedupeNode::new()));
+        registry.register(Arc::new(SubWorkflowNode::new()));
+        registry.register(Arc::new(VariablesNode::new()));
+        registry.register(Arc::new(DebugNode::new()));
+        registry.register(Arc::new(SummarizeNode::new()));
 
         registry
     }
@@ -118,6 +127,14 @@ mod tests {
         assert!(registry.has("set"));
         assert!(registry.has("aggregate"));
         assert!(registry.has("split"));
+        assert!(registry.has("wait"));
+        assert!(registry.has("crypto"));
+        assert!(registry.has("datetime"));
+        assert!(registry.has("dedupe"));
+        assert!(registry.has("subworkflow"));
+        assert!(registry.has("variables"));
+        assert!(registry.has("debug"));
+        assert!(registry.has("summarize"));
         assert!(!registry.has("nonexistent"));
     }
 
@@ -138,5 +155,13 @@ mod tests {
         assert!(types.contains(&"set"));
         assert!(types.contains(&"aggregate"));
         assert!(types.contains(&"split"));
+        assert!(types.contains(&"wait"));
+        assert!(types.contains(&"crypto"));
+        assert!(types.contains(&"datetime"));
+        assert!(types.contains(&"dedupe"));
+        assert!(types.contains(&"subworkflow"));
+        assert!(types.contains(&"variables"));
+        assert!(types.contains(&"debug"));
+        assert!(types.contains(&"summarize"));
     }
 }

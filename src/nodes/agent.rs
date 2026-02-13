@@ -232,16 +232,48 @@ fn render_template(template: &str, ctx: &NodeContext) -> String {
         }
     }
 
-    // Replace {{ env.VAR }}
+    // Replace {{ env.VAR }} - only allow safe environment variables
+    // By default, only R8R_* variables are allowed. Additional variables can be
+    // whitelisted via R8R_ALLOWED_ENV_VARS (comma-separated list).
     let env_regex = regex_lite::Regex::new(r"\{\{\s*env\.(\w+)\s*\}\}").unwrap();
     result = env_regex
         .replace_all(&result, |caps: &regex_lite::Captures| {
             let var_name = &caps[1];
-            std::env::var(var_name).unwrap_or_default()
+            if is_safe_env_var(var_name) {
+                std::env::var(var_name).unwrap_or_default()
+            } else {
+                tracing::warn!(
+                    "Blocked access to environment variable '{}' in template (not in allowlist)",
+                    var_name
+                );
+                String::new()
+            }
         })
         .to_string();
 
     result
+}
+
+/// Check if an environment variable is safe to expose in templates.
+///
+/// By default, only R8R_* prefixed variables are allowed.
+/// Additional variables can be whitelisted via R8R_ALLOWED_ENV_VARS
+/// (comma-separated list).
+fn is_safe_env_var(var_name: &str) -> bool {
+    // Always allow R8R_* variables (application configuration)
+    if var_name.starts_with("R8R_") {
+        return true;
+    }
+
+    // Check user-defined allowlist
+    if let Ok(allowed) = std::env::var("R8R_ALLOWED_ENV_VARS") {
+        let allowed_vars: Vec<&str> = allowed.split(',').map(|s| s.trim()).collect();
+        if allowed_vars.contains(&var_name) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Try to extract JSON from a string that may contain extra text.

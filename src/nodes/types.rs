@@ -2,8 +2,10 @@
 
 use async_trait::async_trait;
 use serde_json::Value;
+use std::sync::Arc;
 
 use crate::error::Result;
+use crate::storage::SqliteStorage;
 
 /// Result of node execution.
 #[derive(Debug, Clone)]
@@ -45,7 +47,7 @@ impl NodeResult {
 }
 
 /// Context passed to a node during execution.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NodeContext {
     /// Input data (from previous nodes or workflow input)
     pub input: Value,
@@ -64,6 +66,33 @@ pub struct NodeContext {
 
     /// Current item index (for for_each processing)
     pub item_index: Option<usize>,
+
+    /// Resolved credentials (keyed by service name).
+    /// Values are decrypted/decoded and ready to use.
+    /// SECURITY: Never log or trace this field!
+    pub credentials: std::collections::HashMap<String, String>,
+
+    /// Storage for sub-workflow execution (optional)
+    pub storage: Option<SqliteStorage>,
+
+    /// Node registry for sub-workflow execution (optional)
+    pub registry: Option<Arc<super::NodeRegistry>>,
+}
+
+impl std::fmt::Debug for NodeContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NodeContext")
+            .field("input", &self.input)
+            .field("node_outputs", &self.node_outputs)
+            .field("variables", &self.variables)
+            .field("execution_id", &self.execution_id)
+            .field("workflow_name", &self.workflow_name)
+            .field("item_index", &self.item_index)
+            .field("credentials", &"[REDACTED]")
+            .field("storage", &self.storage.as_ref().map(|_| "[Storage]"))
+            .field("registry", &self.registry.as_ref().map(|_| "[Registry]"))
+            .finish()
+    }
 }
 
 impl NodeContext {
@@ -76,6 +105,9 @@ impl NodeContext {
             execution_id: execution_id.to_string(),
             workflow_name: workflow_name.to_string(),
             item_index: None,
+            credentials: std::collections::HashMap::new(),
+            storage: None,
+            registry: None,
         }
     }
 
@@ -89,6 +121,20 @@ impl NodeContext {
     pub fn with_variables(mut self, variables: Value) -> Self {
         self.variables = variables;
         self
+    }
+
+    /// Set credentials.
+    pub fn with_credentials(
+        mut self,
+        credentials: std::collections::HashMap<String, String>,
+    ) -> Self {
+        self.credentials = credentials;
+        self
+    }
+
+    /// Get a credential by service name.
+    pub fn get_credential(&self, service: &str) -> Option<&String> {
+        self.credentials.get(service)
     }
 
     /// Add a node output.
@@ -110,7 +156,22 @@ impl NodeContext {
             execution_id: self.execution_id.clone(),
             workflow_name: self.workflow_name.clone(),
             item_index: Some(index),
+            credentials: self.credentials.clone(),
+            storage: self.storage.clone(),
+            registry: self.registry.clone(),
         }
+    }
+
+    /// Set storage for sub-workflow execution.
+    pub fn with_storage(mut self, storage: SqliteStorage) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+
+    /// Set registry for sub-workflow execution.
+    pub fn with_registry(mut self, registry: Arc<super::NodeRegistry>) -> Self {
+        self.registry = Some(registry);
+        self
     }
 }
 

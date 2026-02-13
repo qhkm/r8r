@@ -12,6 +12,19 @@ use tokio::sync::Mutex;
 use super::models::*;
 use crate::error::{Error, Result};
 
+/// Escape SQL LIKE pattern special characters to prevent injection.
+/// Characters % and _ have special meaning in LIKE patterns.
+fn escape_like_pattern(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// Default query limit.
+const DEFAULT_QUERY_LIMIT: usize = 50;
+/// Maximum query limit to prevent abuse.
+const MAX_QUERY_LIMIT: usize = 1000;
+
 /// SQLite-based storage.
 #[derive(Clone)]
 pub struct SqliteStorage {
@@ -46,8 +59,17 @@ impl SqliteStorage {
     }
 
     fn init_schema_sync(conn: &mut Connection) -> Result<()> {
+        // Configure SQLite for better concurrent access and reliability
+        // Note: WAL mode must be set before any transaction begins
         conn.execute_batch(
             r#"
+            -- Enable WAL mode for better concurrent reads during writes
+            PRAGMA journal_mode = WAL;
+            -- Wait up to 5 seconds when database is locked instead of failing immediately
+            PRAGMA busy_timeout = 5000;
+            -- Balance between safety and performance (fsync at critical moments)
+            PRAGMA synchronous = NORMAL;
+            -- Enable foreign key enforcement
             PRAGMA foreign_keys = ON;
 
             CREATE TABLE IF NOT EXISTS workflows (
@@ -442,6 +464,8 @@ impl SqliteStorage {
             conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
         let integrity_check: String =
             conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        let journal_mode: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+        let busy_timeout_ms: i64 = conn.query_row("PRAGMA busy_timeout", [], |row| row.get(0))?;
 
         let mut violations_stmt = conn.prepare("PRAGMA foreign_key_check")?;
         let violations_iter = violations_stmt.query_map([], |row| {
@@ -492,6 +516,8 @@ impl SqliteStorage {
             orphaned_executions: orphaned_executions.max(0) as u64,
             orphaned_node_executions: orphaned_node_executions.max(0) as u64,
             orphaned_workflow_versions: orphaned_workflow_versions.max(0) as u64,
+            journal_mode,
+            busy_timeout_ms,
         })
     }
 
@@ -797,9 +823,9 @@ impl SqliteStorage {
 
         if let Some(search) = &query.search {
             sql.push_str(
-                " AND (input LIKE ? OR COALESCE(output, '') LIKE ? OR COALESCE(error, '') LIKE ?)",
+                " AND (input LIKE ? ESCAPE '\\' OR COALESCE(output, '') LIKE ? ESCAPE '\\' OR COALESCE(error, '') LIKE ? ESCAPE '\\')",
             );
-            let pattern = format!("%{}%", search);
+            let pattern = format!("%{}%", escape_like_pattern(search));
             bind.push(SqlValue::Text(pattern.clone()));
             bind.push(SqlValue::Text(pattern.clone()));
             bind.push(SqlValue::Text(pattern));
@@ -807,9 +833,9 @@ impl SqliteStorage {
 
         sql.push_str(" ORDER BY started_at DESC LIMIT ? OFFSET ?");
         let limit = if query.limit == 0 {
-            50
+            DEFAULT_QUERY_LIMIT
         } else {
-            query.limit.min(1000)
+            query.limit.min(MAX_QUERY_LIMIT)
         };
         bind.push(SqlValue::Integer(limit as i64));
         bind.push(SqlValue::Integer(query.offset as i64));
@@ -1269,6 +1295,23 @@ mod tests {
         assert!(health.foreign_keys_enabled);
         assert_eq!(health.integrity_check.to_lowercase(), "ok");
         assert!(health.foreign_key_violations.is_empty());
+        // In-memory databases use "memory" journal mode (WAL only applies to file DBs)
+        assert_eq!(health.journal_mode.to_lowercase(), "memory");
+        // Verify busy_timeout is set to handle lock contention
+        assert_eq!(health.busy_timeout_ms, 5000);
+    }
+
+    #[tokio::test]
+    async fn test_wal_mode_for_file_database() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let storage = SqliteStorage::open(&db_path).unwrap();
+
+        let health = storage.check_health().await.unwrap();
+        // File-based databases should use WAL mode for better concurrent access
+        assert_eq!(health.journal_mode.to_lowercase(), "wal");
+        // Verify busy_timeout is set to handle lock contention
+        assert_eq!(health.busy_timeout_ms, 5000);
     }
 
     #[tokio::test]
@@ -1333,5 +1376,18 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn test_escape_like_pattern() {
+        // Test that special LIKE characters are escaped
+        assert_eq!(escape_like_pattern("hello"), "hello");
+        assert_eq!(escape_like_pattern("100%"), "100\\%");
+        assert_eq!(escape_like_pattern("test_value"), "test\\_value");
+        assert_eq!(escape_like_pattern("%_%"), "\\%\\_\\%");
+        assert_eq!(escape_like_pattern("back\\slash"), "back\\\\slash");
+
+        // Combined special characters
+        assert_eq!(escape_like_pattern("10% of_total"), "10\\% of\\_total");
     }
 }

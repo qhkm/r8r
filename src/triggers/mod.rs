@@ -4,12 +4,12 @@
 //! - Cron: Schedule-based (e.g., every 5 minutes)
 //! - Manual: CLI or API invocation
 //! - Webhook: HTTP endpoint
-//! - Event: Internal events
+//! - Event: Redis pub/sub events
 
-// TODO: Implement triggers
-// mod cron;
-// mod webhook;
+mod event;
+mod scheduler;
+mod webhook;
 
-// For now, triggers are parsed but not actively managed.
-// The CLI handles manual triggers, and cron will be implemented
-// in the server mode.
+pub use event::{EventError, EventMessage, EventPublisher, EventSubscriber};
+pub use scheduler::Scheduler;
+pub use webhook::create_webhook_routes;
