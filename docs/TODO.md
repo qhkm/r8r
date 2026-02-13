@@ -13,7 +13,10 @@ They should not report fake success.
   - POST /api/workflows/:name/execute
   - GET /api/executions/:id
   - GET /api/executions/:id/trace
-- TODO: Wire scheduler/trigger lifecycle into server startup/shutdown.
+- ~~Wire scheduler/trigger lifecycle into server startup/shutdown~~ ✓ DONE
+  - Scheduler loads all enabled workflows with cron triggers on startup
+  - Cron jobs execute workflows automatically
+  - Graceful shutdown stops all scheduled jobs
 
 2. ~~`dev` mode~~ ✓ DONE
 - ~~Implement file watching for workflow YAML~~ ✓
@@ -23,14 +26,22 @@ They should not report fake success.
 3. ~~`credentials` commands~~ ✓ DONE
 - ~~Implement secure local credential storage~~ ✓ (base64-encoded in ~/.r8r/credentials.json)
 - ~~Add CRUD operations and masked list output~~ ✓
-- TODO: Add integration path for node credential resolution
-- TODO: Add true encryption with master key (ring crate)
+- ~~Add integration path for node credential resolution~~ ✓ DONE
+  - Credentials loaded from store during workflow execution
+  - HTTP node supports `credential` and `auth_type` config fields
+  - Auth types: bearer, basic, api_key, header:<name>
+- ~~Add true encryption with master key (ring crate)~~ ✓ DONE
+  - AES-256-GCM encryption for credential values
+  - PBKDF2 key derivation from user password (100k iterations)
+  - Master key stored encrypted in ~/.r8r/master.key
+  - Backward compatible with legacy base64 credentials
+  - Migration support: `migrate_to_encrypted()` method
 
 ## Engine Reliability
 
-1. Apply `condition`, `retry`, `timeout_seconds`, and `max_concurrency` semantics.
-2. Ensure `for_each` non-array input fails deterministically (or is explicitly skipped) and always finalizes node execution state.
-3. Add regression tests for failure paths and retry behavior.
+1. ~~Apply `condition`, `retry`, `timeout_seconds`, and `max_concurrency` semantics.~~ ✓ DONE
+2. ~~Ensure `for_each` non-array input fails deterministically (or is explicitly skipped) and always finalizes node execution state.~~ ✓ DONE
+3. ~~Add regression tests for failure paths and retry behavior.~~ ✓ DONE (24 executor tests)
 
 ## Improvements Over n8n
 
@@ -48,5 +59,22 @@ Completed in this phase:
 - Search/filter execution history API (`query_executions`) + CLI (`r8r workflows search`).
 
 Remaining:
-1. Resume from failed node checkpoint (partial re-run).
-2. Streaming executor for very large datasets (chunked processing).
+1. ~~Resume from failed node checkpoint (partial re-run).~~ ✓ DONE (`r8r workflows resume <execution_id>`)
+2. ~~Streaming executor for very large datasets (chunked processing).~~ ✓ DONE (`settings.chunk_size`)
+
+## Trigger System
+
+1. ~~Cron trigger~~ ✓ DONE (via Scheduler)
+   - Automatically registers cron jobs on server startup
+   - Executes workflows on schedule
+   - Graceful shutdown
+
+2. ~~Webhook trigger~~ ✓ DONE
+   - Dynamic route registration based on workflow definitions
+   - Supports GET/POST/PUT/DELETE/PATCH methods
+   - Custom path support: `/webhooks/{workflow_name}` or custom
+   - Request body, headers, and method passed as workflow input
+
+3. Event trigger - TODO
+   - Redis pub/sub or similar message queue
+   - Event filtering based on trigger config
