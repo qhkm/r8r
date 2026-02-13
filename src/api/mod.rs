@@ -1,6 +1,11 @@
 //! HTTP API server for r8r.
 
+mod openapi;
+mod webhook;
 mod websocket;
+
+pub use openapi::generate_openapi_spec;
+pub use webhook::{compute_signature, verify_signature, SignatureConfig, SignatureScheme};
 
 use std::sync::Arc;
 
@@ -144,6 +149,8 @@ pub struct AppState {
 pub fn create_api_routes() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(health_check))
+        .route("/api/metrics", get(prometheus_metrics))
+        .route("/api/openapi.json", get(openapi_spec))
         .route("/api/workflows", get(list_workflows))
         .route("/api/workflows/{name}", get(get_workflow))
         .route("/api/workflows/{name}/execute", post(execute_workflow))
@@ -192,6 +199,28 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
                 .into_response()
         }
     }
+}
+
+// ============================================================================
+// Prometheus Metrics
+// ============================================================================
+
+async fn prometheus_metrics() -> impl IntoResponse {
+    use axum::http::header::CONTENT_TYPE;
+
+    let metrics = crate::metrics::render_metrics();
+    (
+        [(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        metrics,
+    )
+}
+
+// ============================================================================
+// OpenAPI Specification
+// ============================================================================
+
+async fn openapi_spec() -> impl IntoResponse {
+    Json(openapi::generate_openapi_spec())
 }
 
 // ============================================================================

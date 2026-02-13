@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::{debug, info, warn};
 
+use super::template::{render_body, render_template, RenderMode};
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
 
@@ -104,6 +105,15 @@ fn is_private_or_special_ip(ip: &IpAddr) -> bool {
                 || ipv6.to_ipv4_mapped().map(|v4| is_private_or_special_ip(&IpAddr::V4(v4))).unwrap_or(false)
         }
     }
+}
+
+use super::circuit_breaker::CircuitBreakerRegistry;
+
+/// Global circuit breaker registry for HTTP endpoints.
+static CIRCUIT_BREAKERS: OnceLock<CircuitBreakerRegistry> = OnceLock::new();
+
+fn get_circuit_breakers() -> &'static CircuitBreakerRegistry {
+    CIRCUIT_BREAKERS.get_or_init(CircuitBreakerRegistry::new)
 }
 
 /// HTTP request node.
@@ -219,10 +229,24 @@ impl Node for HttpNode {
             .map_err(|e| Error::Node(format!("Invalid HTTP config: {}", e)))?;
 
         // Render URL with template variables
-        let url = render_template(&config.url, ctx);
+        let url = render_template(&config.url, ctx, RenderMode::Compact);
 
         // Validate URL to prevent SSRF attacks
         validate_url(&url)?;
+
+        // Extract host for circuit breaker
+        let cb_key = reqwest::Url::parse(&url)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.to_string()))
+            .unwrap_or_else(|| url.clone());
+
+        // Check circuit breaker
+        if !get_circuit_breakers().allow_request(&cb_key) {
+            return Err(Error::Node(format!(
+                "Circuit breaker open for host '{}' - too many recent failures",
+                cb_key
+            )));
+        }
 
         debug!("HTTP {} {}", config.method, url);
 
@@ -258,7 +282,7 @@ impl Node for HttpNode {
             if let Some(headers_obj) = headers.as_object() {
                 for (key, value) in headers_obj {
                     let header_value = match value {
-                        Value::String(s) => render_template(s, ctx),
+                        Value::String(s) => render_template(s, ctx, RenderMode::Compact),
                         _ => value.to_string(),
                     };
                     request = request.header(key, header_value);
@@ -269,7 +293,7 @@ impl Node for HttpNode {
         // Add body
         if let Some(body) = &config.body {
             // Render template variables in body
-            let rendered_body = render_body(body, ctx);
+            let rendered_body = render_body(body, ctx, RenderMode::Compact);
             request = request.json(&rendered_body);
         }
 
@@ -279,7 +303,13 @@ impl Node for HttpNode {
         }
 
         let start = std::time::Instant::now();
-        let response = request.send().await?;
+        let response = match request.send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                get_circuit_breakers().record_failure(&cb_key);
+                return Err(e.into());
+            }
+        };
         let duration = start.elapsed();
 
         let status = response.status().as_u16();
@@ -302,11 +332,18 @@ impl Node for HttpNode {
         })?;
 
         if status >= 400 {
+            // Record failure for server errors (5xx)
+            if status >= 500 {
+                get_circuit_breakers().record_failure(&cb_key);
+            }
             return Err(Error::Node(format!(
                 "HTTP {} {} -> {}: {}",
                 config.method, url, status, body_text
             )));
         }
+
+        // Record success
+        get_circuit_breakers().record_success(&cb_key);
 
         let body: Value = if config.raw_response {
             Value::String(body_text)
@@ -340,111 +377,6 @@ impl Node for HttpNode {
     }
 }
 
-/// Check if an environment variable is safe to expose in templates.
-///
-/// By default, only R8R_* prefixed variables are allowed.
-/// Additional variables can be whitelisted via R8R_ALLOWED_ENV_VARS
-/// (comma-separated list).
-fn is_safe_env_var(var_name: &str) -> bool {
-    // Always allow R8R_* variables (application configuration)
-    if var_name.starts_with("R8R_") {
-        return true;
-    }
-
-    // Check user-defined allowlist
-    if let Ok(allowed) = std::env::var("R8R_ALLOWED_ENV_VARS") {
-        let allowed_vars: Vec<&str> = allowed.split(',').map(|s| s.trim()).collect();
-        if allowed_vars.contains(&var_name) {
-            return true;
-        }
-    }
-
-    false
-}
-
-/// Simple template rendering for HTTP configs.
-fn render_template(template: &str, ctx: &NodeContext) -> String {
-    let mut result = template.to_string();
-
-    // Replace {{ input }} with full input
-    result = result.replace("{{ input }}", &ctx.input.to_string());
-    result = result.replace("{{input}}", &ctx.input.to_string());
-
-    // Replace {{ input.field }}
-    if let Some(obj) = ctx.input.as_object() {
-        for (key, value) in obj {
-            let pattern1 = format!("{{{{ input.{} }}}}", key);
-            let pattern2 = format!("{{{{input.{}}}}}", key);
-            let replacement = match value {
-                Value::String(s) => s.clone(),
-                _ => value.to_string(),
-            };
-            result = result.replace(&pattern1, &replacement);
-            result = result.replace(&pattern2, &replacement);
-        }
-    }
-
-    // Replace {{ nodes.node_id.output... }}
-    for (node_id, output) in &ctx.node_outputs {
-        let pattern = format!("{{{{ nodes.{}.output }}}}", node_id);
-        result = result.replace(&pattern, &output.to_string());
-
-        if let Some(obj) = output.as_object() {
-            for (key, value) in obj {
-                let pattern = format!("{{{{ nodes.{}.output.{} }}}}", node_id, key);
-                let replacement = match value {
-                    Value::String(s) => s.clone(),
-                    _ => value.to_string(),
-                };
-                result = result.replace(&pattern, &replacement);
-            }
-        }
-    }
-
-    // Replace {{ env.VAR }} - only allow safe environment variables
-    // By default, only R8R_* variables are allowed. Additional variables can be
-    // whitelisted via R8R_ALLOWED_ENV_VARS (comma-separated list).
-    let env_regex = env_template_regex();
-    result = env_regex
-        .replace_all(&result, |caps: &regex_lite::Captures| {
-            let var_name = &caps[1];
-            if is_safe_env_var(var_name) {
-                std::env::var(var_name).unwrap_or_default()
-            } else {
-                tracing::warn!(
-                    "Blocked access to environment variable '{}' in template (not in allowlist)",
-                    var_name
-                );
-                String::new()
-            }
-        })
-        .to_string();
-
-    result
-}
-
-fn env_template_regex() -> &'static regex_lite::Regex {
-    static ENV_TEMPLATE_REGEX: OnceLock<regex_lite::Regex> = OnceLock::new();
-    ENV_TEMPLATE_REGEX
-        .get_or_init(|| regex_lite::Regex::new(r"\{\{\s*env\.(\w+)\s*\}\}").expect("valid regex"))
-}
-
-/// Render template variables in body recursively.
-fn render_body(body: &Value, ctx: &NodeContext) -> Value {
-    match body {
-        Value::String(s) => Value::String(render_template(s, ctx)),
-        Value::Object(obj) => {
-            let mut new_obj = serde_json::Map::new();
-            for (k, v) in obj {
-                new_obj.insert(k.clone(), render_body(v, ctx));
-            }
-            Value::Object(new_obj)
-        }
-        Value::Array(arr) => Value::Array(arr.iter().map(|v| render_body(v, ctx)).collect()),
-        _ => body.clone(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -454,7 +386,7 @@ mod tests {
         let ctx = NodeContext::new("exec-1", "test")
             .with_input(json!({"name": "John", "email": "john@example.com"}));
 
-        let result = render_template("Hello {{ input.name }}", &ctx);
+        let result = render_template("Hello {{ input.name }}", &ctx, RenderMode::Compact);
         assert!(result.contains("John"));
     }
 
@@ -464,7 +396,7 @@ mod tests {
         std::env::set_var("R8R_TEST_VAR", "test_value");
         let ctx = NodeContext::new("exec-1", "test");
 
-        let result = render_template("Value: {{ env.R8R_TEST_VAR }}", &ctx);
+        let result = render_template("Value: {{ env.R8R_TEST_VAR }}", &ctx, RenderMode::Compact);
         assert!(result.contains("test_value"));
     }
 
@@ -474,7 +406,7 @@ mod tests {
         std::env::set_var("SECRET_KEY", "super_secret");
         let ctx = NodeContext::new("exec-1", "test");
 
-        let result = render_template("Value: {{ env.SECRET_KEY }}", &ctx);
+        let result = render_template("Value: {{ env.SECRET_KEY }}", &ctx, RenderMode::Compact);
         // Should NOT contain the secret - blocked for security
         assert!(!result.contains("super_secret"));
         assert!(result.contains("Value: "));
@@ -487,7 +419,7 @@ mod tests {
         std::env::set_var("CUSTOM_VAR", "custom_value");
         let ctx = NodeContext::new("exec-1", "test");
 
-        let result = render_template("Value: {{ env.CUSTOM_VAR }}", &ctx);
+        let result = render_template("Value: {{ env.CUSTOM_VAR }}", &ctx, RenderMode::Compact);
         assert!(result.contains("custom_value"));
 
         // Clean up

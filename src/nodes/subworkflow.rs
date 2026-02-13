@@ -108,7 +108,7 @@ impl Node for SubWorkflowNode {
         // Create executor and apply optional inheritance/timeout overrides.
         let mut executor = Executor::new((**registry).clone(), storage.clone());
         if config.inherit_credentials {
-            executor = executor.with_inherited_credentials(ctx.credentials.clone());
+            executor = executor.with_inherited_credentials((*ctx.credentials).clone());
         }
         if config.timeout_seconds > 0 {
             executor = executor.with_timeout_override(config.timeout_seconds);

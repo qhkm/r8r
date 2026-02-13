@@ -7,10 +7,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
 use tokio::time::{sleep, timeout};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn, Span};
+
+use crate::metrics;
 
 use crate::api::Monitor;
 use crate::credentials::CredentialStore;
+use crate::engine::rate_limiter::RateLimiterRegistry;
 use crate::error::{Error, Result};
 use crate::nodes::{Node, NodeContext, NodeRegistry, NodeResult};
 use crate::storage::{Execution, ExecutionStatus, NodeExecution, SqliteStorage};
@@ -25,6 +28,7 @@ pub struct Executor {
     monitor: Option<Arc<Monitor>>,
     inherited_credentials: Option<HashMap<String, String>>,
     timeout_override_seconds: Option<u64>,
+    rate_limiter: Option<Arc<RateLimiterRegistry>>,
 }
 
 impl Executor {
@@ -36,12 +40,19 @@ impl Executor {
             monitor: None,
             inherited_credentials: None,
             timeout_override_seconds: None,
+            rate_limiter: None,
         }
     }
 
     /// Attach a live monitor for execution/node lifecycle events.
     pub fn with_monitor(mut self, monitor: Arc<Monitor>) -> Self {
         self.monitor = Some(monitor);
+        self
+    }
+
+    /// Attach a rate limiter for per-workflow rate limiting.
+    pub fn with_rate_limiter(mut self, rate_limiter: Arc<RateLimiterRegistry>) -> Self {
+        self.rate_limiter = Some(rate_limiter);
         self
     }
 
@@ -58,6 +69,20 @@ impl Executor {
     }
 
     /// Execute a workflow.
+    ///
+    /// Optionally provide a correlation_id for distributed tracing.
+    /// If not provided, the execution_id will be used as the correlation_id.
+    #[instrument(
+        name = "workflow.execute",
+        skip(self, workflow, input),
+        fields(
+            workflow_id = %workflow_id,
+            workflow_name = %workflow.name,
+            trigger_type = %trigger_type,
+            execution_id = tracing::field::Empty,
+            correlation_id = tracing::field::Empty,
+        )
+    )]
     pub async fn execute(
         &self,
         workflow: &Workflow,
@@ -65,11 +90,55 @@ impl Executor {
         trigger_type: &str,
         input: Value,
     ) -> Result<Execution> {
+        self.execute_with_correlation(workflow, workflow_id, trigger_type, input, None)
+            .await
+    }
+
+    /// Execute a workflow with an explicit correlation ID.
+    #[instrument(
+        name = "workflow.execute",
+        skip(self, workflow, input, correlation_id),
+        fields(
+            workflow_id = %workflow_id,
+            workflow_name = %workflow.name,
+            trigger_type = %trigger_type,
+            execution_id = tracing::field::Empty,
+            correlation_id = tracing::field::Empty,
+        )
+    )]
+    pub async fn execute_with_correlation(
+        &self,
+        workflow: &Workflow,
+        workflow_id: &str,
+        trigger_type: &str,
+        input: Value,
+        correlation_id: Option<String>,
+    ) -> Result<Execution> {
+        // Check rate limit if configured
+        if let Some(ref rate_limiter) = self.rate_limiter {
+            if !rate_limiter.try_acquire(&workflow.name) {
+                warn!(
+                    workflow_name = %workflow.name,
+                    "Rate limit exceeded for workflow"
+                );
+                return Err(Error::Execution(format!(
+                    "Rate limit exceeded for workflow '{}'",
+                    workflow.name
+                )));
+            }
+        }
+
+        // Validate input against schema if defined
+        if let Some(ref schema) = workflow.input_schema {
+            crate::validation::validate_input(Some(schema), &input)?;
+        }
+
         let workflow_version = self
             .storage
             .get_latest_workflow_version_number(workflow_id)
             .await?;
         let execution_id = uuid::Uuid::new_v4().to_string();
+        let correlation_id = correlation_id.unwrap_or_else(|| execution_id.clone());
         let started_at = Utc::now();
         let timeout_seconds = self
             .timeout_override_seconds
@@ -77,10 +146,18 @@ impl Executor {
             .max(1);
         let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
 
+        // Record execution and correlation IDs in the current span
+        Span::current().record("execution_id", &execution_id);
+        Span::current().record("correlation_id", &correlation_id);
+
         info!(
-            "Starting execution {} of workflow '{}'",
-            execution_id, workflow.name
+            "Starting execution {} of workflow '{}' (correlation: {})",
+            execution_id, workflow.name, correlation_id
         );
+
+        // Record metrics
+        metrics::inc_active_executions();
+        let start_time = Instant::now();
 
         // Create execution record
         let mut execution = Execution {
@@ -113,6 +190,7 @@ impl Executor {
         // Create context with credentials, variables, and infrastructure for sub-workflows
         let mut ctx = NodeContext::new(&execution_id, &workflow.name)
             .with_input(input)
+            .with_correlation_id(&correlation_id)
             .with_credentials(credentials)
             .with_variables(variables)
             .with_storage(self.storage.clone())
@@ -370,6 +448,7 @@ impl Executor {
                     variables: ctx.variables.clone(),
                     execution_id: ctx.execution_id.clone(),
                     workflow_name: ctx.workflow_name.clone(),
+                    correlation_id: ctx.correlation_id.clone(),
                     item_index: None,
                     credentials: ctx.credentials.clone(),
                     storage: ctx.storage.clone(),
@@ -436,6 +515,14 @@ impl Executor {
             execution.status = ExecutionStatus::Completed;
             execution.output = Some(last_output);
         }
+
+        // Record metrics
+        metrics::dec_active_executions();
+        metrics::record_workflow_duration(start_time.elapsed(), &workflow.name);
+        metrics::record_workflow_execution(
+            execution.status.to_string().as_str(),
+            trigger_type,
+        );
 
         self.storage.save_execution(&execution).await?;
         emit_execution_finished(self.monitor.as_ref(), &execution);
@@ -880,6 +967,7 @@ impl Executor {
                     variables: ctx.variables.clone(),
                     execution_id: ctx.execution_id.clone(),
                     workflow_name: ctx.workflow_name.clone(),
+                    correlation_id: ctx.correlation_id.clone(),
                     item_index: None,
                     credentials: ctx.credentials.clone(),
                     storage: ctx.storage.clone(),
@@ -1143,7 +1231,7 @@ fn evaluate_condition(condition: &str, node_input: &Value, ctx: &NodeContext) ->
     scope.push("input", input_json.clone());
     scope.push("data", input_json);
 
-    for (node_id, output) in &ctx.node_outputs {
+    for (node_id, output) in ctx.node_outputs.iter() {
         let output_json = serde_json::to_string(output).unwrap_or_default();
         scope.push(node_id.replace('-', "_"), output_json);
     }
@@ -1153,6 +1241,16 @@ fn evaluate_condition(condition: &str, node_input: &Value, ctx: &NodeContext) ->
         .map_err(|e| Error::Execution(format!("Condition evaluation failed: {}", e)))
 }
 
+#[instrument(
+    name = "node.execute",
+    skip(node, config, ctx, retry, deadline),
+    fields(
+        node_type = %node_type,
+        execution_id = %ctx.execution_id,
+        correlation_id = ?ctx.correlation_id,
+        item_index = ?ctx.item_index,
+    )
+)]
 async fn execute_node_with_retry(
     node: Arc<dyn Node>,
     node_type: &str,
@@ -1163,15 +1261,22 @@ async fn execute_node_with_retry(
 ) -> Result<NodeResult> {
     let max_attempts = retry.map(|r| r.max_attempts.max(1)).unwrap_or(1);
     let mut attempt = 1u32;
+    let node_start = Instant::now();
 
     loop {
         let remaining = remaining_until(deadline)
             .ok_or_else(|| Error::Execution("Workflow execution timed out".to_string()))?;
 
         match timeout(remaining, node.execute(config, ctx)).await {
-            Ok(Ok(result)) => return Ok(result),
+            Ok(Ok(result)) => {
+                metrics::record_node_execution(node_type, "success");
+                metrics::record_node_duration(node_start.elapsed(), node_type);
+                return Ok(result);
+            }
             Ok(Err(e)) => {
                 if attempt >= max_attempts {
+                    metrics::record_node_execution(node_type, "failed");
+                    metrics::record_node_duration(node_start.elapsed(), node_type);
                     return Err(e);
                 }
 
@@ -1203,6 +1308,8 @@ async fn execute_node_with_retry(
                 attempt = attempt.saturating_add(1);
             }
             Err(_) => {
+                metrics::record_node_execution(node_type, "timeout");
+                metrics::record_node_duration(node_start.elapsed(), node_type);
                 return Err(Error::Execution(format!(
                     "Node '{}' timed out before completion",
                     node_type

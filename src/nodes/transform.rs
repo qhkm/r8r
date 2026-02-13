@@ -146,7 +146,7 @@ impl Node for TransformNode {
         scope.push("data", input_json);
 
         // Add previous node outputs
-        for (node_id, output) in &ctx.node_outputs {
+        for (node_id, output) in ctx.node_outputs.iter() {
             let output_json = serde_json::to_string(output).unwrap_or_default();
             scope.push(node_id.replace('-', "_"), output_json);
         }

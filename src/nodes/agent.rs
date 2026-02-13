@@ -7,10 +7,10 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
+use super::template::{render_template, RenderMode};
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
 
@@ -127,8 +127,8 @@ impl Node for AgentNode {
         let config: AgentConfig = serde_json::from_value(config.clone())
             .map_err(|e| Error::Node(format!("Invalid agent config: {}", e)))?;
 
-        // Render prompt with template variables
-        let prompt = render_template(&config.prompt, ctx);
+        // Render prompt with template variables (pretty mode for better LLM readability)
+        let prompt = render_template(&config.prompt, ctx, RenderMode::Pretty);
 
         debug!("Agent node calling ZeptoClaw: {}", config.endpoint);
         info!(
@@ -198,104 +198,6 @@ impl Node for AgentNode {
     }
 }
 
-/// Render template variables in the prompt.
-fn render_template(template: &str, ctx: &NodeContext) -> String {
-    let mut result = template.to_string();
-
-    // Replace {{ input }} with full input
-    let input_str = match &ctx.input {
-        Value::String(s) => s.clone(),
-        _ => serde_json::to_string_pretty(&ctx.input).unwrap_or_default(),
-    };
-    result = result.replace("{{ input }}", &input_str);
-    result = result.replace("{{input}}", &input_str);
-
-    // Replace {{ input.field }}
-    if let Some(obj) = ctx.input.as_object() {
-        for (key, value) in obj {
-            let pattern1 = format!("{{{{ input.{} }}}}", key);
-            let pattern2 = format!("{{{{input.{}}}}}", key);
-            let replacement = match value {
-                Value::String(s) => s.clone(),
-                _ => serde_json::to_string_pretty(value).unwrap_or_default(),
-            };
-            result = result.replace(&pattern1, &replacement);
-            result = result.replace(&pattern2, &replacement);
-        }
-    }
-
-    // Replace {{ nodes.node_id.output... }}
-    for (node_id, output) in &ctx.node_outputs {
-        let output_str = match output {
-            Value::String(s) => s.clone(),
-            _ => serde_json::to_string_pretty(output).unwrap_or_default(),
-        };
-
-        let pattern = format!("{{{{ nodes.{}.output }}}}", node_id);
-        result = result.replace(&pattern, &output_str);
-
-        if let Some(obj) = output.as_object() {
-            for (key, value) in obj {
-                let pattern = format!("{{{{ nodes.{}.output.{} }}}}", node_id, key);
-                let replacement = match value {
-                    Value::String(s) => s.clone(),
-                    _ => serde_json::to_string_pretty(value).unwrap_or_default(),
-                };
-                result = result.replace(&pattern, &replacement);
-            }
-        }
-    }
-
-    // Replace {{ env.VAR }} - only allow safe environment variables
-    // By default, only R8R_* variables are allowed. Additional variables can be
-    // whitelisted via R8R_ALLOWED_ENV_VARS (comma-separated list).
-    let env_regex = env_template_regex();
-    result = env_regex
-        .replace_all(&result, |caps: &regex_lite::Captures| {
-            let var_name = &caps[1];
-            if is_safe_env_var(var_name) {
-                std::env::var(var_name).unwrap_or_default()
-            } else {
-                tracing::warn!(
-                    "Blocked access to environment variable '{}' in template (not in allowlist)",
-                    var_name
-                );
-                String::new()
-            }
-        })
-        .to_string();
-
-    result
-}
-
-fn env_template_regex() -> &'static regex_lite::Regex {
-    static ENV_TEMPLATE_REGEX: OnceLock<regex_lite::Regex> = OnceLock::new();
-    ENV_TEMPLATE_REGEX
-        .get_or_init(|| regex_lite::Regex::new(r"\{\{\s*env\.(\w+)\s*\}\}").expect("valid regex"))
-}
-
-/// Check if an environment variable is safe to expose in templates.
-///
-/// By default, only R8R_* prefixed variables are allowed.
-/// Additional variables can be whitelisted via R8R_ALLOWED_ENV_VARS
-/// (comma-separated list).
-fn is_safe_env_var(var_name: &str) -> bool {
-    // Always allow R8R_* variables (application configuration)
-    if var_name.starts_with("R8R_") {
-        return true;
-    }
-
-    // Check user-defined allowlist
-    if let Ok(allowed) = std::env::var("R8R_ALLOWED_ENV_VARS") {
-        let allowed_vars: Vec<&str> = allowed.split(',').map(|s| s.trim()).collect();
-        if allowed_vars.contains(&var_name) {
-            return true;
-        }
-    }
-
-    false
-}
-
 /// Try to extract JSON from a string that may contain extra text.
 fn extract_json(s: &str) -> Option<Value> {
     // Look for JSON object
@@ -335,7 +237,7 @@ mod tests {
             .with_input(json!({"name": "John", "email": "john@example.com"}));
 
         let template = "Hello {{ input.name }}, your email is {{ input.email }}";
-        let result = render_template(template, &ctx);
+        let result = render_template(template, &ctx, RenderMode::Pretty);
 
         assert!(result.contains("John"));
         assert!(result.contains("john@example.com"));
@@ -347,7 +249,7 @@ mod tests {
         ctx.add_output("fetch", json!({"status": 200, "data": "hello"}));
 
         let template = "Previous status: {{ nodes.fetch.output.status }}";
-        let result = render_template(template, &ctx);
+        let result = render_template(template, &ctx, RenderMode::Pretty);
 
         assert!(result.contains("200"));
     }

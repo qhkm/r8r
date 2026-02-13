@@ -82,7 +82,7 @@ impl Node for VariablesNode {
                 })?;
 
                 // Merge new values with existing variables
-                let mut new_vars = ctx.variables.clone();
+                let mut new_vars = (*ctx.variables).clone();
                 if let (Value::Object(existing), Value::Object(new_values)) =
                     (&mut new_vars, &values)
                 {
@@ -102,7 +102,7 @@ impl Node for VariablesNode {
                 })?;
 
                 let mut result = serde_json::Map::new();
-                if let Value::Object(vars) = &ctx.variables {
+                if let Value::Object(vars) = &*ctx.variables {
                     for name in &names {
                         if let Some(value) = vars.get(name) {
                             result.insert(name.clone(), value.clone());
@@ -132,7 +132,7 @@ impl Node for VariablesNode {
                     Error::Node("Delete operation requires 'names' field".to_string())
                 })?;
 
-                let mut new_vars = ctx.variables.clone();
+                let mut new_vars = (*ctx.variables).clone();
                 if let Value::Object(vars) = &mut new_vars {
                     for name in &names {
                         vars.remove(name);
@@ -145,14 +145,14 @@ impl Node for VariablesNode {
                 })
             }
             VariablesOperation::List => {
-                let names: Vec<String> = if let Value::Object(vars) = &ctx.variables {
+                let names: Vec<String> = if let Value::Object(vars) = &*ctx.variables {
                     vars.keys().cloned().collect()
                 } else {
                     vec![]
                 };
 
                 json!({
-                    "variables": ctx.variables.clone(),
+                    "variables": (*ctx.variables).clone(),
                     "names": names,
                     "count": names.len(),
                 })

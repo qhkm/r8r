@@ -52,17 +52,22 @@ pub struct NodeContext {
     /// Input data (from previous nodes or workflow input)
     pub input: Value,
 
-    /// All node outputs so far (keyed by node ID)
-    pub node_outputs: std::collections::HashMap<String, Value>,
+    /// All node outputs so far (keyed by node ID).
+    /// Wrapped in Arc for cheap cloning in for_each loops.
+    pub node_outputs: Arc<std::collections::HashMap<String, Value>>,
 
-    /// Workflow variables
-    pub variables: Value,
+    /// Workflow variables.
+    /// Wrapped in Arc for cheap cloning.
+    pub variables: Arc<Value>,
 
     /// Execution ID
-    pub execution_id: String,
+    pub execution_id: Arc<str>,
 
     /// Workflow name
-    pub workflow_name: String,
+    pub workflow_name: Arc<str>,
+
+    /// Correlation ID for distributed tracing (optional)
+    pub correlation_id: Option<Arc<str>>,
 
     /// Current item index (for for_each processing)
     pub item_index: Option<usize>,
@@ -70,7 +75,8 @@ pub struct NodeContext {
     /// Resolved credentials (keyed by service name).
     /// Values are decrypted/decoded and ready to use.
     /// SECURITY: Never log or trace this field!
-    pub credentials: std::collections::HashMap<String, String>,
+    /// Wrapped in Arc for cheap cloning.
+    pub credentials: Arc<std::collections::HashMap<String, String>>,
 
     /// Storage for sub-workflow execution (optional)
     pub storage: Option<SqliteStorage>,
@@ -87,6 +93,7 @@ impl std::fmt::Debug for NodeContext {
             .field("variables", &self.variables)
             .field("execution_id", &self.execution_id)
             .field("workflow_name", &self.workflow_name)
+            .field("correlation_id", &self.correlation_id)
             .field("item_index", &self.item_index)
             .field("credentials", &"[REDACTED]")
             .field("storage", &self.storage.as_ref().map(|_| "[Storage]"))
@@ -100,12 +107,13 @@ impl NodeContext {
     pub fn new(execution_id: &str, workflow_name: &str) -> Self {
         Self {
             input: Value::Null,
-            node_outputs: std::collections::HashMap::new(),
-            variables: serde_json::json!({}),
-            execution_id: execution_id.to_string(),
-            workflow_name: workflow_name.to_string(),
+            node_outputs: Arc::new(std::collections::HashMap::new()),
+            variables: Arc::new(serde_json::json!({})),
+            execution_id: Arc::from(execution_id),
+            workflow_name: Arc::from(workflow_name),
+            correlation_id: None,
             item_index: None,
-            credentials: std::collections::HashMap::new(),
+            credentials: Arc::new(std::collections::HashMap::new()),
             storage: None,
             registry: None,
         }
@@ -119,7 +127,13 @@ impl NodeContext {
 
     /// Set variables.
     pub fn with_variables(mut self, variables: Value) -> Self {
-        self.variables = variables;
+        self.variables = Arc::new(variables);
+        self
+    }
+
+    /// Set correlation ID for distributed tracing.
+    pub fn with_correlation_id(mut self, correlation_id: impl Into<String>) -> Self {
+        self.correlation_id = Some(Arc::from(correlation_id.into()));
         self
     }
 
@@ -128,7 +142,7 @@ impl NodeContext {
         mut self,
         credentials: std::collections::HashMap<String, String>,
     ) -> Self {
-        self.credentials = credentials;
+        self.credentials = Arc::new(credentials);
         self
     }
 
@@ -139,7 +153,7 @@ impl NodeContext {
 
     /// Add a node output.
     pub fn add_output(&mut self, node_id: &str, output: Value) {
-        self.node_outputs.insert(node_id.to_string(), output);
+        Arc::make_mut(&mut self.node_outputs).insert(node_id.to_string(), output);
     }
 
     /// Get a previous node's output.
@@ -155,6 +169,7 @@ impl NodeContext {
             variables: self.variables.clone(),
             execution_id: self.execution_id.clone(),
             workflow_name: self.workflow_name.clone(),
+            correlation_id: self.correlation_id.clone(),
             item_index: Some(index),
             credentials: self.credentials.clone(),
             storage: self.storage.clone(),

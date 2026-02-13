@@ -5,10 +5,12 @@
 //! - Nodes: The steps to execute
 //! - Settings: Global configuration
 
+mod cache;
 mod parser;
 mod types;
 mod validator;
 
+pub use cache::{CacheStats, WorkflowCache};
 pub use parser::{parse_workflow, parse_workflow_file};
 pub use types::*;
 pub use validator::validate_workflow;

@@ -63,6 +63,7 @@ hex = "0.4"
 ring = "0.17"
 md5 = "0.7"
 zeroize = { version = "1.8", features = ["derive"] }
+subtle = "2"
 
 # Async utilities
 futures-util = "0.3"
@@ -81,9 +82,17 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
 dirs = "5"
 
+# Metrics
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+
 # MCP Server
 rmcp = { version = "0.1", features = ["server", "transport-io"] }
 schemars = "0.8"
+jsonschema = "0.29"
+
+# Caching
+moka = { version = "0.12", features = ["future"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -47,6 +47,11 @@ pub struct Workflow {
     #[serde(default)]
     pub inputs: HashMap<String, InputDefinition>,
 
+    /// JSON Schema for validating workflow input
+    /// Use this for comprehensive validation with patterns, constraints, etc.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<serde_json::Value>,
+
     /// Workflow variables (constants and computed values)
     #[serde(default)]
     pub variables: HashMap<String, serde_json::Value>,

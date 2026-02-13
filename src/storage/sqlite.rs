@@ -28,7 +28,7 @@ const MAX_QUERY_LIMIT: usize = 1000;
 /// SQLite-based storage.
 #[derive(Clone)]
 pub struct SqliteStorage {
-    conn: Arc<Mutex<Connection>>,
+    pub(crate) conn: Arc<Mutex<Connection>>,
 }
 
 impl SqliteStorage {

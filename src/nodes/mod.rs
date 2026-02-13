@@ -5,6 +5,7 @@
 
 mod agent;
 mod aggregate;
+pub mod circuit_breaker;
 mod crypto;
 mod datetime;
 mod debug;
@@ -17,6 +18,7 @@ mod merge;
 mod registry;
 mod set;
 mod sort;
+mod template;
 mod split;
 mod subworkflow;
 mod summarize;

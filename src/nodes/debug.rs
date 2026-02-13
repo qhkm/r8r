@@ -126,7 +126,7 @@ impl Node for DebugNode {
 
         // Log variables
         if config.log_variables {
-            debug_info.insert("variables".to_string(), ctx.variables.clone());
+            debug_info.insert("variables".to_string(), (*ctx.variables).clone());
             log_value(&config.level, label, "variables", &ctx.variables);
         }
 
