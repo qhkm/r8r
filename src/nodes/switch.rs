@@ -1,4 +1,4 @@
-//! Switch node - multi-way branch selection.
+//! Switch node - multi-branch routing based on conditions.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
 
-/// Switch node implementation.
+/// Switch node for conditional branching.
 pub struct SwitchNode;
 
 impl SwitchNode {
@@ -24,22 +24,37 @@ impl Default for SwitchNode {
 
 #[derive(Debug, Deserialize)]
 struct SwitchConfig {
-    field: String,
+    /// Expression to evaluate for switching.
+    expression: String,
+
+    /// Cases to match against.
     cases: Vec<SwitchCase>,
+
+    /// Default output if no case matches.
     #[serde(default)]
-    default_branch: Option<String>,
+    default: Option<Value>,
+
+    /// Mode: "first" (first match) or "all" (all matches).
+    #[serde(default = "default_mode")]
+    mode: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct SwitchCase {
+    /// Value to match or condition expression.
+    #[serde(alias = "when")]
     value: Value,
-    branch: String,
-    #[serde(default = "default_operator")]
-    operator: String,
+
+    /// Output when this case matches.
+    output: Value,
+
+    /// Optional label for the case.
+    #[serde(default)]
+    label: Option<String>,
 }
 
-fn default_operator() -> String {
-    "equals".to_string()
+fn default_mode() -> String {
+    "first".to_string()
 }
 
 #[async_trait]
@@ -49,122 +64,160 @@ impl Node for SwitchNode {
     }
 
     fn description(&self) -> &str {
-        "Select branch by matching field value against cases"
+        "Route execution based on conditions"
     }
 
     async fn execute(&self, config: &Value, ctx: &NodeContext) -> Result<NodeResult> {
         let config: SwitchConfig = serde_json::from_value(config.clone())
             .map_err(|e| Error::Node(format!("Invalid switch config: {}", e)))?;
 
-        if config.cases.is_empty() && config.default_branch.is_none() {
-            return Err(Error::Node(
-                "Switch node requires at least one case or a default_branch".to_string(),
-            ));
-        }
+        // Evaluate the switch expression
+        let switch_value = evaluate_expression(&config.expression, &ctx.input)?;
 
-        let field_value = resolve_field(&config.field, ctx);
-        let mut selected_branch = None;
-        let mut matched_case_index = None;
+        let mut matched_cases: Vec<Value> = Vec::new();
+        let mut matched_labels: Vec<String> = Vec::new();
 
-        for (idx, case) in config.cases.iter().enumerate() {
-            if evaluate_case(&field_value, &case.operator, &case.value)? {
-                selected_branch = Some(case.branch.clone());
-                matched_case_index = Some(idx);
-                break;
+        for (i, case) in config.cases.iter().enumerate() {
+            let matches = match &case.value {
+                // String starting with "==" is an equality check
+                Value::String(s) if s.starts_with("==") => {
+                    let compare_val = s.trim_start_matches("==").trim();
+                    switch_value.to_string().trim_matches('"') == compare_val
+                }
+                // String starting with expression operators
+                Value::String(s) if s.starts_with('>') || s.starts_with('<') || s.starts_with('!') => {
+                    evaluate_condition_expr(s, &switch_value)?
+                }
+                // String is a Rhai expression returning bool
+                Value::String(s) if s.contains("input") || s.contains("value") => {
+                    let expr_result = evaluate_bool_expression(s, &ctx.input, &switch_value)?;
+                    expr_result
+                }
+                // Direct value comparison
+                _ => switch_value == case.value,
+            };
+
+            if matches {
+                let label = case.label.clone().unwrap_or_else(|| format!("case_{}", i));
+                matched_labels.push(label);
+                matched_cases.push(case.output.clone());
+
+                if config.mode == "first" {
+                    break;
+                }
             }
         }
 
-        let selected_branch = selected_branch
-            .or_else(|| config.default_branch.clone())
-            .ok_or_else(|| {
-                Error::Node("No switch case matched and no default_branch set".to_string())
-            })?;
-
-        Ok(NodeResult::with_metadata(
+        // Build output
+        let output = if matched_cases.is_empty() {
             json!({
-                "selected_branch": selected_branch,
-                "matched_case_index": matched_case_index,
-                "field_value": field_value,
-            }),
+                "matched": false,
+                "value": switch_value,
+                "output": config.default.unwrap_or(Value::Null),
+                "branch": "default",
+            })
+        } else if config.mode == "first" {
             json!({
-                "cases_checked": config.cases.len(),
-            }),
-        ))
+                "matched": true,
+                "value": switch_value,
+                "output": matched_cases[0],
+                "branch": matched_labels[0],
+            })
+        } else {
+            json!({
+                "matched": true,
+                "value": switch_value,
+                "outputs": matched_cases,
+                "branches": matched_labels,
+                "match_count": matched_cases.len(),
+            })
+        };
+
+        Ok(NodeResult::new(output))
     }
 }
 
-fn evaluate_case(left: &Value, operator: &str, right: &Value) -> Result<bool> {
-    match operator {
-        "equals" => Ok(left == right),
-        "not_equals" => Ok(left != right),
-        "contains" => match left {
-            Value::String(s) => Ok(right
-                .as_str()
-                .map(|needle| s.contains(needle))
-                .unwrap_or(false)),
-            Value::Array(items) => Ok(items.contains(right)),
-            _ => Ok(false),
-        },
-        _ => Err(Error::Node(format!(
-            "Unsupported switch operator '{}'",
-            operator
-        ))),
-    }
+fn evaluate_expression(expr: &str, input: &Value) -> Result<Value> {
+    let engine = rhai::Engine::new();
+    
+    // Register input as a variable
+    let input_str = serde_json::to_string(input).unwrap_or_default();
+    let scope_expr = format!(
+        r#"let input = parse_json("{}"); {}"#,
+        input_str.replace('\\', "\\\\").replace('"', "\\\""),
+        expr
+    );
+
+    // Try to evaluate and convert result
+    let result: rhai::Dynamic = engine
+        .eval(&scope_expr)
+        .or_else(|_| {
+            // Fallback: try as simple expression
+            engine.eval_expression(expr)
+        })
+        .map_err(|e| Error::Node(format!("Expression error: {}", e)))?;
+
+    // Convert Rhai Dynamic to JSON Value
+    dynamic_to_value(result)
 }
 
-fn resolve_field(field: &str, ctx: &NodeContext) -> Value {
-    let expr = normalize_template(field.trim());
-    if expr == "input" {
-        return ctx.input.clone();
-    }
+fn evaluate_condition_expr(expr: &str, value: &Value) -> Result<bool> {
+    let num_value = match value {
+        Value::Number(n) => n.as_f64().unwrap_or(0.0),
+        Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
+        _ => 0.0,
+    };
 
-    if let Some(path) = expr.strip_prefix("input.") {
-        return get_path_value(&ctx.input, path).unwrap_or(Value::Null);
-    }
-
-    if let Some(rest) = expr.strip_prefix("nodes.") {
-        if let Some((node_id, path)) = rest.split_once(".output") {
-            let base = ctx
-                .node_outputs
-                .get(node_id)
-                .cloned()
-                .unwrap_or(Value::Null);
-            let path = path.strip_prefix('.').unwrap_or(path);
-            if path.is_empty() {
-                return base;
-            }
-            return get_path_value(&base, path).unwrap_or(Value::Null);
-        }
-    }
-
-    Value::String(field.to_string())
-}
-
-fn normalize_template(expr: &str) -> &str {
-    let trimmed = expr.trim();
-    if trimmed.starts_with("{{") && trimmed.ends_with("}}") {
-        trimmed[2..trimmed.len() - 2].trim()
+    if let Some(rest) = expr.strip_prefix(">=") {
+        let threshold: f64 = rest.trim().parse().map_err(|_| Error::Node("Invalid number".to_string()))?;
+        Ok(num_value >= threshold)
+    } else if let Some(rest) = expr.strip_prefix("<=") {
+        let threshold: f64 = rest.trim().parse().map_err(|_| Error::Node("Invalid number".to_string()))?;
+        Ok(num_value <= threshold)
+    } else if let Some(rest) = expr.strip_prefix('>') {
+        let threshold: f64 = rest.trim().parse().map_err(|_| Error::Node("Invalid number".to_string()))?;
+        Ok(num_value > threshold)
+    } else if let Some(rest) = expr.strip_prefix('<') {
+        let threshold: f64 = rest.trim().parse().map_err(|_| Error::Node("Invalid number".to_string()))?;
+        Ok(num_value < threshold)
+    } else if let Some(rest) = expr.strip_prefix("!=") {
+        let compare = rest.trim();
+        Ok(value.to_string().trim_matches('"') != compare)
     } else {
-        trimmed
+        Ok(false)
     }
 }
 
-fn get_path_value(root: &Value, path: &str) -> Option<Value> {
-    let mut current = root;
-    for segment in path.split('.') {
-        if segment.is_empty() {
-            continue;
-        }
-        match current {
-            Value::Object(map) => current = map.get(segment)?,
-            Value::Array(items) => {
-                let index = segment.parse::<usize>().ok()?;
-                current = items.get(index)?;
-            }
-            _ => return None,
-        }
+fn evaluate_bool_expression(expr: &str, input: &Value, switch_value: &Value) -> Result<bool> {
+    let engine = rhai::Engine::new();
+    
+    let input_str = serde_json::to_string(input).unwrap_or_default();
+    let value_str = serde_json::to_string(switch_value).unwrap_or_default();
+    
+    let full_expr = format!(
+        r#"let input = parse_json("{}"); let value = parse_json("{}"); {}"#,
+        input_str.replace('\\', "\\\\").replace('"', "\\\""),
+        value_str.replace('\\', "\\\\").replace('"', "\\\""),
+        expr
+    );
+
+    engine
+        .eval::<bool>(&full_expr)
+        .map_err(|e| Error::Node(format!("Condition error: {}", e)))
+}
+
+fn dynamic_to_value(d: rhai::Dynamic) -> Result<Value> {
+    if d.is::<i64>() {
+        Ok(json!(d.as_int().unwrap()))
+    } else if d.is::<f64>() {
+        Ok(json!(d.as_float().unwrap()))
+    } else if d.is::<bool>() {
+        Ok(json!(d.as_bool().unwrap()))
+    } else if d.is::<String>() || d.is::<rhai::ImmutableString>() {
+        Ok(json!(d.into_string().unwrap()))
+    } else {
+        Ok(json!(d.to_string()))
     }
-    Some(current.clone())
 }
 
 #[cfg(test)]
@@ -172,37 +225,84 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_switch_matches_case() {
+    async fn test_switch_exact_match() {
         let node = SwitchNode::new();
         let config = json!({
-            "field": "{{ input.type }}",
+            "expression": "input.status",
             "cases": [
-                {"value": "order", "branch": "process-order"},
-                {"value": "refund", "branch": "process-refund"}
+                { "value": "active", "output": { "action": "process" }, "label": "active" },
+                { "value": "pending", "output": { "action": "wait" }, "label": "pending" },
             ],
-            "default_branch": "unknown-type"
+            "default": { "action": "skip" }
         });
-        let ctx = NodeContext::new("exec-1", "wf").with_input(json!({"type": "refund"}));
+        let ctx = NodeContext::new("exec-1", "test")
+            .with_input(json!({ "status": "active" }));
 
         let result = node.execute(&config, &ctx).await.unwrap();
-        assert_eq!(result.data["selected_branch"], "process-refund");
-        assert_eq!(result.data["matched_case_index"], 1);
+
+        assert_eq!(result.data["matched"], true);
+        assert_eq!(result.data["branch"], "active");
+        assert_eq!(result.data["output"]["action"], "process");
     }
 
     #[tokio::test]
-    async fn test_switch_falls_back_to_default() {
+    async fn test_switch_default() {
         let node = SwitchNode::new();
         let config = json!({
-            "field": "input.type",
+            "expression": "input.status",
             "cases": [
-                {"value": "order", "branch": "process-order"}
+                { "value": "active", "output": "active_output" },
             ],
-            "default_branch": "unknown-type"
+            "default": "default_output"
         });
-        let ctx = NodeContext::new("exec-1", "wf").with_input(json!({"type": "inquiry"}));
+        let ctx = NodeContext::new("exec-1", "test")
+            .with_input(json!({ "status": "unknown" }));
 
         let result = node.execute(&config, &ctx).await.unwrap();
-        assert_eq!(result.data["selected_branch"], "unknown-type");
-        assert!(result.data["matched_case_index"].is_null());
+
+        assert_eq!(result.data["matched"], false);
+        assert_eq!(result.data["branch"], "default");
+        assert_eq!(result.data["output"], "default_output");
+    }
+
+    #[tokio::test]
+    async fn test_switch_numeric() {
+        let node = SwitchNode::new();
+        let config = json!({
+            "expression": "input.count",
+            "cases": [
+                { "value": 0, "output": "zero", "label": "zero" },
+                { "value": 1, "output": "one", "label": "one" },
+                { "value": 2, "output": "two", "label": "two" },
+            ]
+        });
+        let ctx = NodeContext::new("exec-1", "test")
+            .with_input(json!({ "count": 1 }));
+
+        let result = node.execute(&config, &ctx).await.unwrap();
+
+        assert_eq!(result.data["matched"], true);
+        assert_eq!(result.data["branch"], "one");
+    }
+
+    #[tokio::test]
+    async fn test_switch_comparison() {
+        let node = SwitchNode::new();
+        let config = json!({
+            "expression": "input.score",
+            "cases": [
+                { "value": ">=90", "output": "A", "label": "grade_a" },
+                { "value": ">=80", "output": "B", "label": "grade_b" },
+                { "value": ">=70", "output": "C", "label": "grade_c" },
+            ],
+            "default": "F"
+        });
+        let ctx = NodeContext::new("exec-1", "test")
+            .with_input(json!({ "score": 85 }));
+
+        let result = node.execute(&config, &ctx).await.unwrap();
+
+        assert_eq!(result.data["matched"], true);
+        assert_eq!(result.data["output"], "B");
     }
 }

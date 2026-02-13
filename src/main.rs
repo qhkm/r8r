@@ -1,4 +1,5 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::{generate, Shell};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
@@ -40,6 +41,17 @@ enum Commands {
         #[command(subcommand)]
         action: DbActions,
     },
+    /// Manage workflow templates
+    Templates {
+        #[command(subcommand)]
+        action: TemplateActions,
+    },
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: CompletionShell,
+    },
 }
 
 #[derive(Subcommand)]
@@ -58,6 +70,9 @@ enum WorkflowActions {
         /// JSON input data
         #[arg(short, long)]
         input: Option<String>,
+        /// Parameter values (key=value)
+        #[arg(short, long = "param", value_parser = parse_var)]
+        params: Vec<(String, String)>,
         /// Wait for completion
         #[arg(short, long, default_value = "true")]
         wait: bool,
@@ -159,6 +174,14 @@ enum WorkflowActions {
         #[arg(short, long, default_value = "./workflows")]
         output: String,
     },
+    /// Show workflow dependency graph (DAG)
+    Dag {
+        /// Workflow name or ID
+        name: String,
+        /// Show execution order instead of tree
+        #[arg(long)]
+        order: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -189,6 +212,42 @@ enum DbActions {
     Check,
 }
 
+#[derive(Subcommand)]
+enum TemplateActions {
+    /// List available workflow templates
+    List {
+        /// Show templates by category
+        #[arg(long)]
+        by_category: bool,
+    },
+    /// Show details of a specific template
+    Show {
+        /// Template name
+        name: String,
+    },
+    /// Create a workflow from a template
+    Use {
+        /// Template name
+        name: String,
+        /// Output file path
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Variable assignments (key=value)
+        #[arg(short, long = "var", value_parser = parse_var)]
+        vars: Vec<(String, String)>,
+        /// Create workflow in database after generating
+        #[arg(long)]
+        create: bool,
+    },
+}
+
+fn parse_var(s: &str) -> std::result::Result<(String, String), String> {
+    let pos = s.find('=').ok_or_else(|| {
+        format!("Invalid variable format '{}'. Expected key=value", s)
+    })?;
+    Ok((s[..pos].to_string(), s[pos + 1..].to_string()))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize logging
@@ -205,8 +264,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Workflows { action } => match action {
             WorkflowActions::List => cmd_workflows_list().await?,
             WorkflowActions::Create { file } => cmd_workflows_create(&file).await?,
-            WorkflowActions::Run { name, input, wait } => {
-                cmd_workflows_run(&name, input.as_deref(), wait).await?
+            WorkflowActions::Run { name, input, params, wait } => {
+                cmd_workflows_run(&name, input.as_deref(), &params, wait).await?
             }
             WorkflowActions::Logs { name, limit } => cmd_workflows_logs(&name, limit).await?,
             WorkflowActions::Search {
@@ -248,6 +307,7 @@ async fn main() -> anyhow::Result<()> {
                 cmd_workflows_export(&name, output.as_deref()).await?
             }
             WorkflowActions::ExportAll { output } => cmd_workflows_export_all(&output).await?,
+            WorkflowActions::Dag { name, order } => cmd_workflows_dag(&name, order).await?,
         },
         Commands::Server { port, no_ui } => cmd_server(port, no_ui).await?,
         Commands::Dev { file } => cmd_dev(&file).await?,
@@ -263,8 +323,57 @@ async fn main() -> anyhow::Result<()> {
         Commands::Db { action } => match action {
             DbActions::Check => cmd_db_check().await?,
         },
+        Commands::Templates { action } => match action {
+            TemplateActions::List { by_category } => cmd_templates_list(by_category).await?,
+            TemplateActions::Show { name } => cmd_templates_show(&name).await?,
+            TemplateActions::Use {
+                name,
+                output,
+                vars,
+                create,
+            } => cmd_templates_use(&name, output.as_deref(), &vars, create).await?,
+        },
+        Commands::Completions { shell } => {
+            cmd_completions(shell)?;
+        }
     }
 
+    Ok(())
+}
+
+/// Shell completion variants
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+enum CompletionShell {
+    /// Bash shell
+    Bash,
+    /// Zsh shell
+    Zsh,
+    /// Fish shell
+    Fish,
+    /// PowerShell
+    PowerShell,
+    /// Elvish shell
+    Elvish,
+}
+
+impl From<CompletionShell> for Shell {
+    fn from(shell: CompletionShell) -> Self {
+        match shell {
+            CompletionShell::Bash => Shell::Bash,
+            CompletionShell::Zsh => Shell::Zsh,
+            CompletionShell::Fish => Shell::Fish,
+            CompletionShell::PowerShell => Shell::PowerShell,
+            CompletionShell::Elvish => Shell::Elvish,
+        }
+    }
+}
+
+/// Generate shell completions
+fn cmd_completions(shell: CompletionShell) -> anyhow::Result<()> {
+    let mut cmd = Cli::command();
+    let name = cmd.get_name().to_string();
+    let shell: Shell = shell.into();
+    generate(shell, &mut cmd, name, &mut std::io::stdout());
     Ok(())
 }
 
@@ -340,10 +449,15 @@ async fn cmd_workflows_create(file: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_workflows_run(name: &str, input: Option<&str>, wait: bool) -> anyhow::Result<()> {
+async fn cmd_workflows_run(
+    name: &str,
+    input: Option<&str>,
+    params: &[(String, String)],
+    wait: bool,
+) -> anyhow::Result<()> {
     use r8r::engine::Executor;
     use r8r::nodes::NodeRegistry;
-    use r8r::workflow::parse_workflow;
+    use r8r::workflow::{get_parameter_info, merge_params, parse_cli_params, parse_workflow};
 
     let storage = get_storage()?;
 
@@ -355,12 +469,32 @@ async fn cmd_workflows_run(name: &str, input: Option<&str>, wait: bool) -> anyho
 
     let workflow = parse_workflow(&stored.definition)?;
 
-    // Parse input
-    let input_value: serde_json::Value = if let Some(input_str) = input {
+    // Show parameter info if workflow has parameters and none provided
+    if !workflow.inputs.is_empty() && params.is_empty() && input.is_none() {
+        let param_info = get_parameter_info(&workflow);
+        let required: Vec<_> = param_info.iter().filter(|p| p.required && p.default.is_none()).collect();
+
+        if !required.is_empty() {
+            println!("Workflow '{}' requires parameters:", name);
+            for p in &param_info {
+                let req = if p.required && p.default.is_none() { " (required)" } else { "" };
+                let def = p.default.as_ref().map(|d| format!(" [default: {}]", d)).unwrap_or_default();
+                println!("  --param {}=<{}>{}{}  {}", p.name, p.input_type, req, def, p.description);
+            }
+            anyhow::bail!("Missing required parameters");
+        }
+    }
+
+    // Parse input JSON
+    let base_input: serde_json::Value = if let Some(input_str) = input {
         serde_json::from_str(input_str)?
     } else {
-        serde_json::Value::Null
+        serde_json::json!({})
     };
+
+    // Parse CLI params and merge with input
+    let cli_params = parse_cli_params(params)?;
+    let input_value = merge_params(&base_input, &cli_params);
 
     println!("Running workflow '{}'...", name);
     if !wait {
@@ -778,6 +912,79 @@ async fn cmd_workflows_export_all(output_dir: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn cmd_workflows_dag(name: &str, show_order: bool) -> anyhow::Result<()> {
+    use r8r::workflow::{parse_workflow, WorkflowDag};
+
+    let storage = get_storage()?;
+
+    // Get the target workflow
+    let stored = storage
+        .get_workflow(name)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Workflow not found: {}", name))?;
+
+    let workflow = parse_workflow(&stored.definition)?;
+
+    if workflow.depends_on_workflows.is_empty() {
+        println!("Workflow '{}' has no workflow dependencies.", name);
+        return Ok(());
+    }
+
+    // Build the DAG
+    let mut dag = WorkflowDag::new();
+
+    // Add the target workflow and recursively build dependencies
+    async fn add_workflow_to_dag(
+        dag: &mut WorkflowDag,
+        storage: &r8r::storage::SqliteStorage,
+        workflow_name: &str,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> anyhow::Result<()> {
+        if visited.contains(workflow_name) {
+            return Ok(());
+        }
+        visited.insert(workflow_name.to_string());
+
+        if let Some(stored) = storage.get_workflow(workflow_name).await? {
+            let workflow = r8r::workflow::parse_workflow(&stored.definition)?;
+            dag.add_workflow(workflow_name, workflow.depends_on_workflows.clone());
+
+            // Recursively add dependencies
+            for dep in &workflow.depends_on_workflows {
+                Box::pin(add_workflow_to_dag(dag, storage, &dep.workflow, visited)).await?;
+            }
+        }
+        Ok(())
+    }
+
+    let mut visited = std::collections::HashSet::new();
+    add_workflow_to_dag(&mut dag, &storage, name, &mut visited).await?;
+
+    if show_order {
+        // Show execution order (topological sort)
+        match dag.execution_order(name) {
+            Ok(order) => {
+                println!("Execution order for '{}':", name);
+                println!();
+                for (i, workflow_name) in order.iter().enumerate() {
+                    let marker = if *workflow_name == name { " ← target" } else { "" };
+                    println!("  {}. {}{}", i + 1, workflow_name, marker);
+                }
+            }
+            Err(e) => {
+                println!("Error determining execution order: {}", e);
+            }
+        }
+    } else {
+        // Show dependency tree
+        println!("Dependency graph for '{}':", name);
+        println!();
+        println!("{}", dag.to_text(name));
+    }
+
+    Ok(())
+}
+
 // ============================================================================
 // Server Commands
 // ============================================================================
@@ -846,7 +1053,7 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
 
     // Build app with both regular and monitored routes
     // Each router needs its state consumed to become Router<()>
-    let app = api_routes
+    let mut app = api_routes
         .with_state(state.clone())
         .merge(monitored_routes.with_state(monitored_state))
         .merge(webhook_routes.with_state(state))
@@ -854,6 +1061,12 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         .layer(create_concurrency_limit())
         .layer(TraceLayer::new_for_http())
         .layer(create_cors_layer());
+    
+    // Add dashboard routes if UI is enabled
+    if !_no_ui {
+        use r8r::dashboard::create_dashboard_routes;
+        app = app.merge(create_dashboard_routes());
+    }
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -873,6 +1086,9 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     println!("  WS   /api/monitor (live execution monitoring)");
     println!();
     println!("Webhooks: /webhooks/:workflow_name (see workflow definitions)");
+    if !_no_ui {
+        println!("Dashboard: http://0.0.0.0:{}/ (Web UI)", port);
+    }
     println!();
     println!("Press Ctrl+C to stop");
 
@@ -1098,6 +1314,193 @@ async fn cmd_db_check() -> anyhow::Result<()> {
     } else {
         anyhow::bail!("Database health check failed")
     }
+}
+
+// ============================================================================
+// Template Commands
+// ============================================================================
+
+async fn cmd_templates_list(by_category: bool) -> anyhow::Result<()> {
+    use r8r::templates::TemplateRegistry;
+
+    let registry = TemplateRegistry::new();
+
+    if by_category {
+        let by_category = registry.list_by_category();
+        let mut categories: Vec<_> = by_category.keys().collect();
+        categories.sort();
+
+        for category in categories {
+            println!("{}:", category.to_uppercase());
+            for template in &by_category[category] {
+                println!("  {:<25} {}", template.name, template.description);
+            }
+            println!();
+        }
+    } else {
+        let templates = registry.list();
+
+        if templates.is_empty() {
+            println!("No templates available.");
+            return Ok(());
+        }
+
+        println!("{:<25} {:<15} {}", "NAME", "CATEGORY", "DESCRIPTION");
+        println!("{}", "-".repeat(70));
+
+        for template in templates {
+            println!(
+                "{:<25} {:<15} {}",
+                template.name,
+                template.category,
+                template.description
+            );
+        }
+    }
+
+    println!();
+    println!("Use a template with: r8r templates use <name> --var key=value");
+
+    Ok(())
+}
+
+async fn cmd_templates_show(name: &str) -> anyhow::Result<()> {
+    use r8r::templates::TemplateRegistry;
+
+    let registry = TemplateRegistry::new();
+    let template = registry
+        .get(name)
+        .ok_or_else(|| anyhow::anyhow!("Template not found: {}", name))?;
+
+    println!("Template: {}", template.name);
+    println!("Category: {}", template.category);
+    println!("Description: {}", template.description);
+    println!();
+
+    println!("Variables:");
+    for var in &template.variables {
+        let required = if var.required && var.default.is_none() {
+            " (required)"
+        } else {
+            ""
+        };
+        let default = var
+            .default
+            .as_ref()
+            .map(|d| format!(" [default: {}]", d))
+            .unwrap_or_default();
+        let example = var
+            .example
+            .as_ref()
+            .map(|e| format!(" (e.g., {})", e))
+            .unwrap_or_default();
+
+        println!("  {}{}{}", var.name, required, default);
+        if !var.description.is_empty() {
+            println!("    {}{}", var.description, example);
+        }
+    }
+
+    println!();
+    println!("Template content:");
+    println!("---");
+    println!("{}", template.content);
+    println!("---");
+
+    Ok(())
+}
+
+async fn cmd_templates_use(
+    name: &str,
+    output: Option<&str>,
+    vars: &[(String, String)],
+    create: bool,
+) -> anyhow::Result<()> {
+    use r8r::templates::TemplateRegistry;
+    use std::collections::HashMap;
+
+    let registry = TemplateRegistry::new();
+
+    // Convert vars to HashMap
+    let vars_map: HashMap<String, String> = vars.iter().cloned().collect();
+
+    // Check for missing variables
+    let missing = registry.validate_variables(name, &vars_map)?;
+    if !missing.is_empty() {
+        println!("Missing required variables:");
+        for var in &missing {
+            println!("  - {}", var);
+        }
+        println!();
+
+        // Show what's needed
+        if let Some(template) = registry.get(name) {
+            println!("Required variables for '{}':", name);
+            for var in &template.variables {
+                if var.required && var.default.is_none() {
+                    let example = var
+                        .example
+                        .as_ref()
+                        .map(|e| format!(" (e.g., {})", e))
+                        .unwrap_or_default();
+                    println!("  --var {}=<value>{}", var.name, example);
+                }
+            }
+        }
+        anyhow::bail!("Cannot instantiate template without required variables");
+    }
+
+    // Instantiate the template
+    let workflow_yaml = registry.instantiate(name, &vars_map)?;
+
+    // Output or create
+    if create {
+        // Parse and validate the generated workflow
+        use r8r::storage::StoredWorkflow;
+        use r8r::workflow::{parse_workflow, validate_workflow};
+
+        let workflow = parse_workflow(&workflow_yaml)?;
+        validate_workflow(&workflow)?;
+
+        let storage = get_storage()?;
+        let now = chrono::Utc::now();
+
+        let stored = StoredWorkflow {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: workflow.name.clone(),
+            definition: workflow_yaml.clone(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+
+        storage.save_workflow(&stored).await?;
+
+        println!("✓ Created workflow '{}' from template '{}'", workflow.name, name);
+        println!();
+        println!("Run with: r8r workflows run {}", workflow.name);
+
+        // Also write to file if output specified
+        if let Some(path) = output {
+            std::fs::write(path, &workflow_yaml)?;
+            println!("Also saved to: {}", path);
+        }
+    } else {
+        match output {
+            Some(path) => {
+                std::fs::write(path, &workflow_yaml)?;
+                println!("✓ Generated workflow from template '{}' to {}", name, path);
+                println!();
+                println!("Create in database with: r8r workflows create {}", path);
+            }
+            None => {
+                // Output to stdout
+                print!("{}", workflow_yaml);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // ============================================================================

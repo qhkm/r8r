@@ -128,7 +128,10 @@ impl Executor {
             }
         }
 
-        // Validate input against schema if defined
+        // Validate and process parameters
+        let input = crate::workflow::validate_parameters(workflow, &input)?;
+
+        // Validate input against JSON schema if defined
         if let Some(ref schema) = workflow.input_schema {
             crate::validation::validate_input(Some(schema), &input)?;
         }

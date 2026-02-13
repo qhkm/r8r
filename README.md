@@ -139,8 +139,13 @@ nodes:
 | `transform` | Data transformation (Rhai expressions) |
 | `agent` | LLM/AI agent invocation |
 | `subworkflow` | Nested workflow execution |
+| `email` | Send emails (SMTP, SendGrid, Resend, Mailgun) |
+| `slack` | Slack messaging |
+| `database` | SQL query execution (SQLite, PostgreSQL, MySQL) |
+| `s3` | S3 object storage operations |
+| `switch` | Multi-branch routing |
+| `wait` | Delay/sleep node |
 | `variables` | Workflow state management |
-| `template` | Text templating |
 | `circuit_breaker` | Fault tolerance |
 | `debug` | Development logging |
 
@@ -156,14 +161,22 @@ r8r dev --workflows ./workflows       # Hot-reload mode
 # Workflows
 r8r workflows list                    # List workflows
 r8r workflows run <name>              # Execute
+r8r workflows run <name> -p key=val   # Execute with parameters
 r8r workflows validate <file>         # Lint YAML
 r8r workflows history <name>          # Version history
 r8r workflows rollback <name> <ver>   # Rollback
+r8r workflows dag <name>              # Show dependency graph
+r8r workflows dag <name> --order      # Show execution order
 
 # Executions
 r8r workflows trace <id>              # Execution trace
 r8r workflows resume <id>             # Resume failed
 r8r workflows replay <id>             # Replay execution
+
+# Templates
+r8r templates list                    # List available templates
+r8r templates show <name>             # Show template details
+r8r templates use <name> -o out.yaml  # Create workflow from template
 
 # Security
 r8r credentials set <name>            # Store secret

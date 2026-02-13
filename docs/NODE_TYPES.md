@@ -24,6 +24,10 @@ This document describes all built-in node types available in r8r.
 - [Integration Nodes](#integration-nodes)
   - [Agent](#agent)
   - [SubWorkflow](#subworkflow)
+  - [Email](#email)
+  - [Slack](#slack)
+  - [Database](#database)
+  - [S3](#s3)
 - [Utility Nodes](#utility-nodes)
   - [Debug](#debug)
   - [DateTime](#datetime)
@@ -533,6 +537,204 @@ nodes:
 | `workflow` | string | Yes | - | Workflow name or ID |
 | `input` | object | No | - | Input for sub-workflow |
 | `inherit_credentials` | boolean | No | true | Pass credentials to sub-workflow |
+
+---
+
+### Email
+
+Send emails via SMTP or API providers.
+
+**Type**: `email`
+
+**Configuration**:
+
+```yaml
+nodes:
+  - id: send-notification
+    type: email
+    config:
+      provider: resend  # smtp, sendgrid, resend, mailgun
+      to: "user@example.com"
+      from: "noreply@example.com"
+      subject: "Order Confirmation"
+      body: "Your order #{{ input.order_id }} has been confirmed."
+      html: "<h1>Order Confirmed</h1><p>Order #{{ input.order_id }}</p>"
+      credential: email_api_key
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `provider` | string | No | smtp | Email provider: smtp, sendgrid, resend, mailgun |
+| `to` | string/array | Yes | - | Recipient email(s) |
+| `from` | string | Yes | - | Sender email |
+| `subject` | string | Yes | - | Email subject |
+| `body` | string | No | - | Plain text body |
+| `html` | string | No | - | HTML body |
+| `cc` | string/array | No | - | CC recipients |
+| `bcc` | string/array | No | - | BCC recipients |
+| `reply_to` | string | No | - | Reply-to address |
+| `credential` | string | No | - | API key credential name |
+
+**SMTP-specific fields**:
+- `smtp_host` - SMTP server hostname
+- `smtp_port` - SMTP port (default: 587)
+- `smtp_username` - SMTP username
+- `smtp_password` - SMTP password
+
+---
+
+### Slack
+
+Send messages to Slack channels.
+
+**Type**: `slack`
+
+**Configuration**:
+
+```yaml
+nodes:
+  - id: notify-slack
+    type: slack
+    config:
+      channel: "#alerts"
+      text: "New order received: {{ input.order_id }}"
+      blocks:
+        - type: section
+          text:
+            type: mrkdwn
+            text: "*New Order*\nOrder ID: {{ input.order_id }}"
+      credential: slack_token
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | Yes | Slack channel (e.g., "#general" or channel ID) |
+| `text` | string | No* | Message text (*required if no blocks) |
+| `blocks` | array | No* | Block Kit blocks (*required if no text) |
+| `attachments` | array | No | Legacy attachments |
+| `username` | string | No | Bot username override |
+| `icon_emoji` | string | No | Bot icon emoji (e.g., ":robot_face:") |
+| `icon_url` | string | No | Bot icon URL |
+| `thread_ts` | string | No | Thread timestamp (for replies) |
+| `reply_broadcast` | boolean | No | Also post to channel when replying |
+| `webhook_url` | string | No | Webhook URL (alternative to token) |
+| `credential` | string | No | OAuth token credential name |
+
+---
+
+### Database
+
+Execute SQL queries on databases.
+
+**Type**: `database`
+
+**Configuration**:
+
+```yaml
+nodes:
+  - id: fetch-users
+    type: database
+    config:
+      db_type: sqlite  # sqlite, postgres, mysql
+      connection_string: "./data/app.db"
+      query: "SELECT * FROM users WHERE status = ?"
+      params: ["active"]
+      operation: query  # query or execute
+      max_rows: 100
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `db_type` | string | No | sqlite | Database type: sqlite, postgres, mysql |
+| `connection_string` | string | No | - | Connection string or DSN |
+| `query` | string | Yes | - | SQL query to execute |
+| `params` | array | No | - | Query parameters (positional) |
+| `operation` | string | No | query | Operation: query (SELECT) or execute (INSERT/UPDATE/DELETE) |
+| `max_rows` | number | No | 1000 | Maximum rows to return |
+| `timeout_seconds` | number | No | 30 | Query timeout |
+| `credential` | string | No | - | Credential name for connection string |
+
+**Output** (query):
+```json
+{
+  "success": true,
+  "db_type": "sqlite",
+  "operation": "query",
+  "columns": ["id", "name", "email"],
+  "rows": [{ "id": 1, "name": "John", "email": "john@example.com" }],
+  "row_count": 1
+}
+```
+
+**Output** (execute):
+```json
+{
+  "success": true,
+  "db_type": "sqlite",
+  "operation": "execute",
+  "affected_rows": 5
+}
+```
+
+---
+
+### S3
+
+Perform S3 object storage operations.
+
+**Type**: `s3`
+
+**Configuration**:
+
+```yaml
+nodes:
+  - id: upload-file
+    type: s3
+    config:
+      operation: put
+      bucket: my-bucket
+      key: "uploads/{{ input.filename }}"
+      content: "{{ input.data }}"
+      content_type: "application/json"
+      region: us-east-1
+      credential: aws_credentials
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `operation` | string | Yes | get, put, delete, list, copy, head, presign |
+| `bucket` | string | Yes | S3 bucket name |
+| `key` | string | No* | Object key (*required for most operations) |
+| `content` | string | No | Content to upload (for put) |
+| `content_base64` | string | No | Base64-encoded content (for binary data) |
+| `content_type` | string | No | MIME type for uploads |
+| `prefix` | string | No | Prefix filter (for list) |
+| `max_keys` | number | No | Max keys to return (for list, default: 1000) |
+| `region` | string | No | AWS region (default: us-east-1) |
+| `endpoint` | string | No | Custom endpoint (for MinIO, R2, etc.) |
+| `credential` | string | No | Credential name (format: access_key:secret_key) |
+
+**Operations**:
+- `get/download` - Download an object
+- `put/upload` - Upload content to S3
+- `delete` - Delete an object
+- `list` - List objects in bucket
+- `copy` - Copy object within S3
+- `head` - Get object metadata
+- `presign` - Generate presigned URL
+
+**Output** (get):
+```json
+{
+  "success": true,
+  "operation": "get",
+  "bucket": "my-bucket",
+  "key": "data.json",
+  "content_type": "application/json",
+  "content": "{ ... }",
+  "is_base64": false
+}
+```
 
 ---
 
