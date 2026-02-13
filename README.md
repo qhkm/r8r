@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License: AGPL v3"></a>
   <a href="https://github.com/qhkm/r8r"><img src="https://img.shields.io/badge/rust-1.70+-orange.svg" alt="Rust"></a>
   <img src="https://img.shields.io/badge/status-beta-yellow.svg" alt="Status: Beta">
 </p>
@@ -215,7 +215,9 @@ See [Roadmap](docs/TODO.md) for contribution ideas.
 
 ## 📄 License
 
-MIT — Use it however you want.
+AGPL-3.0 — Free to use, modify, and distribute. If you run a modified version as a network service, you must make the source available.
+
+**Commercial licensing available** for organizations that cannot use AGPL. [Contact us](mailto:hello@r8r.dev) for details.
 
 ---
 
