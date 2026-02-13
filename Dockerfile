@@ -46,18 +46,17 @@ FROM debian:bookworm-slim AS runtime
 # Install minimal runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    gosu \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd -r -s /bin/false r8r
+    && useradd -r -s /bin/false -d /data r8r
 
 # Copy binaries from builder
 COPY --from=builder /app/target/release/r8r /usr/local/bin/
 COPY --from=builder /app/target/release/r8r-mcp /usr/local/bin/
 
-# Create data directory
-RUN mkdir -p /data && chown r8r:r8r /data
-
-# Switch to non-root user
-USER r8r
+# Copy entrypoint
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Set environment
 ENV R8R_DB=/data/r8r.db
@@ -68,6 +67,9 @@ EXPOSE 8080
 
 # Data volume
 VOLUME /data
+
+# Entrypoint handles permissions and drops to r8r user
+ENTRYPOINT ["docker-entrypoint.sh"]
 
 # Default command
 CMD ["r8r", "server", "--port", "8080"]
