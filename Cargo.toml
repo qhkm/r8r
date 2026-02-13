@@ -35,8 +35,8 @@ toml = "0.8"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 # HTTP server
-axum = "0.8"
-tower = "0.5"
+axum = { version = "0.8", features = ["ws"] }
+tower = { version = "0.5", features = ["limit"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # Database
@@ -57,10 +57,23 @@ notify-debouncer-mini = "0.6"
 
 # Encoding
 base64 = "0.22"
+hex = "0.4"
+
+# Cryptography
+ring = "0.17"
+md5 = "0.7"
+zeroize = { version = "1.8", features = ["derive"] }
+
+# Async utilities
+futures-util = "0.3"
+
+# Redis pub/sub
+redis = { version = "0.27", features = ["tokio-comp", "aio"] }
 
 # Utilities
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"

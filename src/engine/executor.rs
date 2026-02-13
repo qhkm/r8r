@@ -2,12 +2,15 @@
 
 use chrono::Utc;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
 use tokio::time::{sleep, timeout};
 use tracing::{debug, error, info, warn};
 
+use crate::api::Monitor;
+use crate::credentials::CredentialStore;
 use crate::error::{Error, Result};
 use crate::nodes::{Node, NodeContext, NodeRegistry, NodeResult};
 use crate::storage::{Execution, ExecutionStatus, NodeExecution, SqliteStorage};
@@ -19,12 +22,39 @@ use crate::workflow::{
 pub struct Executor {
     registry: NodeRegistry,
     storage: SqliteStorage,
+    monitor: Option<Arc<Monitor>>,
+    inherited_credentials: Option<HashMap<String, String>>,
+    timeout_override_seconds: Option<u64>,
 }
 
 impl Executor {
     /// Create a new executor.
     pub fn new(registry: NodeRegistry, storage: SqliteStorage) -> Self {
-        Self { registry, storage }
+        Self {
+            registry,
+            storage,
+            monitor: None,
+            inherited_credentials: None,
+            timeout_override_seconds: None,
+        }
+    }
+
+    /// Attach a live monitor for execution/node lifecycle events.
+    pub fn with_monitor(mut self, monitor: Arc<Monitor>) -> Self {
+        self.monitor = Some(monitor);
+        self
+    }
+
+    /// Merge parent credentials into the execution context.
+    pub fn with_inherited_credentials(mut self, credentials: HashMap<String, String>) -> Self {
+        self.inherited_credentials = Some(credentials);
+        self
+    }
+
+    /// Override workflow timeout for this execution.
+    pub fn with_timeout_override(mut self, timeout_seconds: u64) -> Self {
+        self.timeout_override_seconds = Some(timeout_seconds);
+        self
     }
 
     /// Execute a workflow.
@@ -41,7 +71,10 @@ impl Executor {
             .await?;
         let execution_id = uuid::Uuid::new_v4().to_string();
         let started_at = Utc::now();
-        let timeout_seconds = workflow.settings.timeout_seconds.max(1);
+        let timeout_seconds = self
+            .timeout_override_seconds
+            .unwrap_or(workflow.settings.timeout_seconds)
+            .max(1);
         let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
 
         info!(
@@ -65,9 +98,25 @@ impl Executor {
         };
 
         self.storage.save_execution(&execution).await?;
+        emit_execution_finished(self.monitor.as_ref(), &execution);
+        emit_execution_started(self.monitor.as_ref(), &execution);
 
-        // Create context
-        let mut ctx = NodeContext::new(&execution_id, &workflow.name).with_input(input);
+        // Load credentials for this execution
+        let credentials = merge_inherited_credentials(
+            load_workflow_credentials(workflow)?,
+            self.inherited_credentials.as_ref(),
+        );
+
+        // Load workflow variables
+        let variables = serde_json::to_value(&workflow.variables).unwrap_or_default();
+
+        // Create context with credentials, variables, and infrastructure for sub-workflows
+        let mut ctx = NodeContext::new(&execution_id, &workflow.name)
+            .with_input(input)
+            .with_credentials(credentials)
+            .with_variables(variables)
+            .with_storage(self.storage.clone())
+            .with_registry(Arc::new(self.registry.clone()));
 
         // Get topological order
         let order = workflow.topological_sort();
@@ -134,6 +183,12 @@ impl Executor {
                 error: None,
             };
             self.storage.save_node_execution(&node_exec).await?;
+            emit_node_started(
+                self.monitor.as_ref(),
+                &execution_id,
+                node_id,
+                &node.node_type,
+            );
 
             // Evaluate optional condition before execution.
             if let Some(condition) = &node.condition {
@@ -148,6 +203,7 @@ impl Executor {
                         node_exec.output = Some(skipped_output);
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
+                        emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         continue;
                     }
                     Ok(true) => {}
@@ -165,6 +221,7 @@ impl Executor {
                             node_exec.error = Some(e.to_string());
                             node_exec.finished_at = Some(Utc::now());
                             self.storage.save_node_execution(&node_exec).await?;
+                            emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                             continue;
                         }
 
@@ -174,12 +231,28 @@ impl Executor {
                         node_exec.error = error_msg.clone();
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
+                        emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         break;
                     }
                 }
             }
 
             info!("Executing node '{}' [{}]", node_id, node.node_type);
+
+            // Check for pinned data (mock data for testing)
+            if let Some(pinned) = &node.pinned_data {
+                info!("Using pinned data for node '{}'", node_id);
+                let output = pinned.clone();
+                ctx.add_output(node_id, output.clone());
+                last_output = output.clone();
+
+                node_exec.status = ExecutionStatus::Completed;
+                node_exec.output = Some(output);
+                node_exec.finished_at = Some(Utc::now());
+                self.storage.save_node_execution(&node_exec).await?;
+                emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                continue;
+            }
 
             if node.for_each {
                 let Some(items) = node_input.as_array() else {
@@ -198,6 +271,7 @@ impl Executor {
                         node_exec.error = Some(message);
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
+                        emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         continue;
                     }
 
@@ -208,8 +282,42 @@ impl Executor {
                     node_exec.error = Some(message);
                     node_exec.finished_at = Some(Utc::now());
                     self.storage.save_node_execution(&node_exec).await?;
+                    emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                     break;
                 };
+
+                // Check item count limit to prevent memory exhaustion
+                let max_items = workflow.settings.max_for_each_items;
+                if items.len() > max_items {
+                    let message = format!(
+                        "Node '{}' for_each has {} items, exceeding limit of {} (adjust settings.max_for_each_items)",
+                        node_id, items.len(), max_items
+                    );
+
+                    if let Some(recovery_output) = on_error_recovery_output(node) {
+                        warn!("{}", message);
+                        ctx.add_output(node_id, recovery_output.clone());
+                        last_output = recovery_output.clone();
+
+                        node_exec.status = ExecutionStatus::Failed;
+                        node_exec.output = Some(recovery_output);
+                        node_exec.error = Some(message);
+                        node_exec.finished_at = Some(Utc::now());
+                        self.storage.save_node_execution(&node_exec).await?;
+                        emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                        continue;
+                    }
+
+                    error!("{}", message);
+                    failed = true;
+                    error_msg = Some(message.clone());
+                    node_exec.status = ExecutionStatus::Failed;
+                    node_exec.error = Some(message);
+                    node_exec.finished_at = Some(Utc::now());
+                    self.storage.save_node_execution(&node_exec).await?;
+                    emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                    break;
+                }
 
                 let max_concurrency = workflow.settings.max_concurrency.max(1);
                 let chunk_size = workflow.settings.chunk_size;
@@ -241,6 +349,7 @@ impl Executor {
                     node_exec.error = error_msg.clone();
                     node_exec.finished_at = Some(Utc::now());
                     self.storage.save_node_execution(&node_exec).await?;
+                    emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                     break;
                 }
 
@@ -252,6 +361,7 @@ impl Executor {
                 node_exec.output = Some(output);
                 node_exec.finished_at = Some(Utc::now());
                 self.storage.save_node_execution(&node_exec).await?;
+                emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
             } else {
                 // Regular execution
                 let node_ctx = NodeContext {
@@ -261,6 +371,9 @@ impl Executor {
                     execution_id: ctx.execution_id.clone(),
                     workflow_name: ctx.workflow_name.clone(),
                     item_index: None,
+                    credentials: ctx.credentials.clone(),
+                    storage: ctx.storage.clone(),
+                    registry: ctx.registry.clone(),
                 };
 
                 let result = execute_node_with_retry(
@@ -283,6 +396,7 @@ impl Executor {
                         node_exec.output = Some(result.data);
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
+                        emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                     }
                     Err(e) => {
                         if let Some(recovery_output) = on_error_recovery_output(node) {
@@ -295,6 +409,7 @@ impl Executor {
                             node_exec.error = Some(e.to_string());
                             node_exec.finished_at = Some(Utc::now());
                             self.storage.save_node_execution(&node_exec).await?;
+                            emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         } else {
                             error!("Node '{}' failed: {}", node_id, e);
                             failed = true;
@@ -304,6 +419,7 @@ impl Executor {
                             node_exec.error = Some(e.to_string());
                             node_exec.finished_at = Some(Utc::now());
                             self.storage.save_node_execution(&node_exec).await?;
+                            emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                             break;
                         }
                     }
@@ -315,13 +431,14 @@ impl Executor {
         execution.finished_at = Some(Utc::now());
         if failed {
             execution.status = ExecutionStatus::Failed;
-            execution.error = error_msg;
+            execution.error = error_msg.clone();
         } else {
             execution.status = ExecutionStatus::Completed;
             execution.output = Some(last_output);
         }
 
         self.storage.save_execution(&execution).await?;
+        emit_execution_finished(self.monitor.as_ref(), &execution);
 
         let duration = execution
             .finished_at
@@ -333,6 +450,20 @@ impl Executor {
             "Execution {} completed with status {} ({}ms)",
             execution_id, execution.status, duration
         );
+
+        // Trigger error workflow if configured and execution failed
+        if failed {
+            if let Some(error_workflow_name) = &workflow.settings.error_workflow {
+                trigger_error_workflow_task(
+                    self.storage.clone(),
+                    self.registry.clone(),
+                    error_workflow_name,
+                    &execution,
+                    error_msg.as_deref(),
+                )
+                .await;
+            }
+        }
 
         Ok(execution)
     }
@@ -436,7 +567,10 @@ impl Executor {
     ) -> Result<Execution> {
         let execution_id = uuid::Uuid::new_v4().to_string();
         let started_at = Utc::now();
-        let timeout_seconds = workflow.settings.timeout_seconds.max(1);
+        let timeout_seconds = self
+            .timeout_override_seconds
+            .unwrap_or(workflow.settings.timeout_seconds)
+            .max(1);
         let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
 
         info!(
@@ -462,9 +596,24 @@ impl Executor {
         };
 
         self.storage.save_execution(&execution).await?;
+        emit_execution_started(self.monitor.as_ref(), &execution);
 
-        // Create context with checkpoint outputs pre-loaded
-        let mut ctx = NodeContext::new(&execution_id, &workflow.name).with_input(input);
+        // Load credentials for this execution
+        let credentials = merge_inherited_credentials(
+            load_workflow_credentials(workflow)?,
+            self.inherited_credentials.as_ref(),
+        );
+
+        // Load workflow variables
+        let variables = serde_json::to_value(&workflow.variables).unwrap_or_default();
+
+        // Create context with checkpoint outputs, credentials, variables, and infrastructure pre-loaded
+        let mut ctx = NodeContext::new(&execution_id, &workflow.name)
+            .with_input(input)
+            .with_credentials(credentials)
+            .with_variables(variables)
+            .with_storage(self.storage.clone())
+            .with_registry(Arc::new(self.registry.clone()));
         for (node_id, output) in &checkpoint {
             ctx.add_output(node_id, output.clone());
         }
@@ -544,6 +693,12 @@ impl Executor {
                 error: None,
             };
             self.storage.save_node_execution(&node_exec).await?;
+            emit_node_started(
+                self.monitor.as_ref(),
+                &execution_id,
+                node_id,
+                &node.node_type,
+            );
 
             // Evaluate optional condition before execution.
             if let Some(condition) = &node.condition {
@@ -558,6 +713,7 @@ impl Executor {
                         node_exec.output = Some(skipped_output);
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
+                        emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         continue;
                     }
                     Ok(true) => {}
@@ -575,6 +731,7 @@ impl Executor {
                             node_exec.error = Some(e.to_string());
                             node_exec.finished_at = Some(Utc::now());
                             self.storage.save_node_execution(&node_exec).await?;
+                            emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                             continue;
                         }
 
@@ -584,12 +741,28 @@ impl Executor {
                         node_exec.error = error_msg.clone();
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
+                        emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         break;
                     }
                 }
             }
 
             info!("Executing node '{}' [{}]", node_id, node.node_type);
+
+            // Check for pinned data (mock data for testing)
+            if let Some(pinned) = &node.pinned_data {
+                info!("Using pinned data for node '{}'", node_id);
+                let output = pinned.clone();
+                ctx.add_output(node_id, output.clone());
+                last_output = output.clone();
+
+                node_exec.status = ExecutionStatus::Completed;
+                node_exec.output = Some(output);
+                node_exec.finished_at = Some(Utc::now());
+                self.storage.save_node_execution(&node_exec).await?;
+                emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                continue;
+            }
 
             if node.for_each {
                 let Some(items) = node_input.as_array() else {
@@ -608,6 +781,7 @@ impl Executor {
                         node_exec.error = Some(message);
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
+                        emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         continue;
                     }
 
@@ -618,8 +792,42 @@ impl Executor {
                     node_exec.error = Some(message);
                     node_exec.finished_at = Some(Utc::now());
                     self.storage.save_node_execution(&node_exec).await?;
+                    emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                     break;
                 };
+
+                // Check item count limit to prevent memory exhaustion
+                let max_items = workflow.settings.max_for_each_items;
+                if items.len() > max_items {
+                    let message = format!(
+                        "Node '{}' for_each has {} items, exceeding limit of {} (adjust settings.max_for_each_items)",
+                        node_id, items.len(), max_items
+                    );
+
+                    if let Some(recovery_output) = on_error_recovery_output(node) {
+                        warn!("{}", message);
+                        ctx.add_output(node_id, recovery_output.clone());
+                        last_output = recovery_output.clone();
+
+                        node_exec.status = ExecutionStatus::Failed;
+                        node_exec.output = Some(recovery_output);
+                        node_exec.error = Some(message);
+                        node_exec.finished_at = Some(Utc::now());
+                        self.storage.save_node_execution(&node_exec).await?;
+                        emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                        continue;
+                    }
+
+                    error!("{}", message);
+                    failed = true;
+                    error_msg = Some(message.clone());
+                    node_exec.status = ExecutionStatus::Failed;
+                    node_exec.error = Some(message);
+                    node_exec.finished_at = Some(Utc::now());
+                    self.storage.save_node_execution(&node_exec).await?;
+                    emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                    break;
+                }
 
                 let max_concurrency = workflow.settings.max_concurrency.max(1);
                 let chunk_size = workflow.settings.chunk_size;
@@ -651,6 +859,7 @@ impl Executor {
                     node_exec.error = error_msg.clone();
                     node_exec.finished_at = Some(Utc::now());
                     self.storage.save_node_execution(&node_exec).await?;
+                    emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                     break;
                 }
 
@@ -662,6 +871,7 @@ impl Executor {
                 node_exec.output = Some(output);
                 node_exec.finished_at = Some(Utc::now());
                 self.storage.save_node_execution(&node_exec).await?;
+                emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
             } else {
                 // Regular execution
                 let node_ctx = NodeContext {
@@ -671,6 +881,9 @@ impl Executor {
                     execution_id: ctx.execution_id.clone(),
                     workflow_name: ctx.workflow_name.clone(),
                     item_index: None,
+                    credentials: ctx.credentials.clone(),
+                    storage: ctx.storage.clone(),
+                    registry: ctx.registry.clone(),
                 };
 
                 let result = execute_node_with_retry(
@@ -693,6 +906,7 @@ impl Executor {
                         node_exec.output = Some(result.data);
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
+                        emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                     }
                     Err(e) => {
                         if let Some(recovery_output) = on_error_recovery_output(node) {
@@ -705,6 +919,7 @@ impl Executor {
                             node_exec.error = Some(e.to_string());
                             node_exec.finished_at = Some(Utc::now());
                             self.storage.save_node_execution(&node_exec).await?;
+                            emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         } else {
                             error!("Node '{}' failed: {}", node_id, e);
                             failed = true;
@@ -714,6 +929,7 @@ impl Executor {
                             node_exec.error = Some(e.to_string());
                             node_exec.finished_at = Some(Utc::now());
                             self.storage.save_node_execution(&node_exec).await?;
+                            emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                             break;
                         }
                     }
@@ -788,6 +1004,90 @@ impl Executor {
             .get_latest_workflow_version_number(&execution.workflow_id)
             .await?;
         Ok((workflow, version))
+    }
+}
+
+/// Trigger an error workflow when the main workflow fails.
+///
+/// This is a standalone function to avoid recursive async issues.
+/// It runs in a spawned task and logs any errors.
+async fn trigger_error_workflow_task(
+    storage: SqliteStorage,
+    registry: NodeRegistry,
+    error_workflow_name: &str,
+    failed_execution: &Execution,
+    error_message: Option<&str>,
+) {
+    info!(
+        "Triggering error workflow '{}' for failed execution '{}'",
+        error_workflow_name, failed_execution.id
+    );
+
+    // Load the error workflow
+    let stored = match storage.get_workflow(error_workflow_name).await {
+        Ok(Some(w)) if w.enabled => w,
+        Ok(Some(_)) => {
+            warn!(
+                "Error workflow '{}' is disabled, skipping",
+                error_workflow_name
+            );
+            return;
+        }
+        Ok(None) => {
+            warn!(
+                "Error workflow '{}' not found, skipping",
+                error_workflow_name
+            );
+            return;
+        }
+        Err(e) => {
+            error!(
+                "Failed to load error workflow '{}': {}",
+                error_workflow_name, e
+            );
+            return;
+        }
+    };
+
+    let workflow = match parse_workflow(&stored.definition) {
+        Ok(w) => w,
+        Err(e) => {
+            error!(
+                "Failed to parse error workflow '{}': {}",
+                error_workflow_name, e
+            );
+            return;
+        }
+    };
+
+    // Build error context input
+    let error_input = serde_json::json!({
+        "error": {
+            "message": error_message,
+            "execution_id": failed_execution.id,
+            "workflow_id": failed_execution.workflow_id,
+            "workflow_name": failed_execution.workflow_name,
+            "trigger_type": failed_execution.trigger_type,
+            "started_at": failed_execution.started_at.to_rfc3339(),
+            "finished_at": failed_execution.finished_at.map(|t| t.to_rfc3339()),
+        },
+        "original_input": failed_execution.input,
+    });
+
+    // Create executor and execute the error workflow
+    // Use Box::pin to break the recursive async future cycle
+    let executor = Executor::new(registry, storage);
+    let future = Box::pin(executor.execute(&workflow, &stored.id, "error_handler", error_input));
+    match future.await {
+        Ok(execution) => {
+            info!(
+                "Error workflow '{}' completed with status: {}",
+                error_workflow_name, execution.status
+            );
+        }
+        Err(e) => {
+            error!("Error workflow '{}' failed: {}", error_workflow_name, e);
+        }
     }
 }
 
@@ -1076,9 +1376,153 @@ async fn process_for_each_items(
     (results, failed, error_msg)
 }
 
+fn merge_inherited_credentials(
+    mut credentials: HashMap<String, String>,
+    inherited: Option<&HashMap<String, String>>,
+) -> HashMap<String, String> {
+    if let Some(inherited) = inherited {
+        for (key, value) in inherited {
+            credentials
+                .entry(key.clone())
+                .or_insert_with(|| value.clone());
+        }
+    }
+    credentials
+}
+
+fn emit_execution_started(monitor: Option<&Arc<Monitor>>, execution: &Execution) {
+    if let Some(monitor) = monitor {
+        monitor.execution_started(
+            &execution.id,
+            &execution.workflow_name,
+            &execution.trigger_type,
+        );
+    }
+}
+
+fn emit_execution_finished(monitor: Option<&Arc<Monitor>>, execution: &Execution) {
+    let Some(monitor) = monitor else {
+        return;
+    };
+
+    let duration_ms = execution
+        .finished_at
+        .map(|f| (f - execution.started_at).num_milliseconds())
+        .unwrap_or(0);
+
+    match execution.status {
+        ExecutionStatus::Completed => monitor.execution_completed(
+            &execution.id,
+            &execution.workflow_name,
+            &execution.status.to_string(),
+            duration_ms,
+        ),
+        ExecutionStatus::Failed => monitor.execution_failed(
+            &execution.id,
+            &execution.workflow_name,
+            execution.error.as_deref().unwrap_or("Execution failed"),
+        ),
+        _ => {}
+    }
+}
+
+fn emit_node_started(
+    monitor: Option<&Arc<Monitor>>,
+    execution_id: &str,
+    node_id: &str,
+    node_type: &str,
+) {
+    if let Some(monitor) = monitor {
+        monitor.node_started(execution_id, node_id, node_type);
+    }
+}
+
+fn emit_node_terminal_event(monitor: Option<&Arc<Monitor>>, node_exec: &NodeExecution) {
+    let Some(monitor) = monitor else {
+        return;
+    };
+
+    let duration_ms = node_exec
+        .finished_at
+        .map(|f| (f - node_exec.started_at).num_milliseconds())
+        .unwrap_or(0);
+
+    match node_exec.status {
+        ExecutionStatus::Completed => monitor.node_completed(
+            &node_exec.execution_id,
+            &node_exec.node_id,
+            "completed",
+            duration_ms,
+        ),
+        ExecutionStatus::Failed => monitor.node_failed(
+            &node_exec.execution_id,
+            &node_exec.node_id,
+            node_exec.error.as_deref().unwrap_or("Node failed"),
+        ),
+        _ => {}
+    }
+}
+
+/// Load credentials required by the workflow nodes.
+///
+/// Scans all nodes for `credential` config fields and loads
+/// the corresponding credentials from the credential store.
+fn load_workflow_credentials(workflow: &Workflow) -> Result<HashMap<String, String>> {
+    let mut credentials = HashMap::new();
+
+    // Try to load the credential store
+    let store = match CredentialStore::load() {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(
+                "Failed to load credential store: {}. Continuing without credentials.",
+                e
+            );
+            return Ok(credentials);
+        }
+    };
+
+    // Scan nodes for credential requirements
+    for node in &workflow.nodes {
+        if let Some(credential_name) = node.config.get("credential").and_then(|v| v.as_str()) {
+            // Skip if already loaded
+            if credentials.contains_key(credential_name) {
+                continue;
+            }
+
+            // Load credential value
+            match store.get(credential_name) {
+                Ok(Some(value)) => {
+                    debug!(
+                        "Loaded credential '{}' for workflow '{}'",
+                        credential_name, workflow.name
+                    );
+                    credentials.insert(credential_name.to_string(), value);
+                }
+                Ok(None) => {
+                    // Credential not found - node will fail when it tries to use it
+                    debug!(
+                        "Credential '{}' not found in store (workflow '{}')",
+                        credential_name, workflow.name
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to load credential '{}' for workflow '{}': {}",
+                        credential_name, workflow.name, e
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(credentials)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::MonitorEvent;
     use crate::storage::StoredWorkflow;
     use crate::workflow::parse_workflow;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1239,6 +1683,86 @@ nodes:
             .unwrap();
 
         assert_eq!(execution.status, ExecutionStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_monitor_emits_execution_lifecycle_events() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let monitor = Arc::new(Monitor::new());
+        let mut rx = monitor.subscribe();
+        let executor = Executor::new(registry, storage.clone()).with_monitor(monitor);
+
+        let yaml = r#"
+name: monitor-success
+nodes:
+  - id: transform
+    type: transform
+    config:
+      expression: '"ok"'
+"#;
+
+        let workflow = parse_workflow(yaml).unwrap();
+        save_test_workflow(&storage, "wf-monitor-success", yaml).await;
+
+        let execution = executor
+            .execute(&workflow, "wf-monitor-success", "manual", Value::Null)
+            .await
+            .unwrap();
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                MonitorEvent::ExecutionStarted { .. },
+                MonitorEvent::NodeStarted { .. },
+                MonitorEvent::NodeCompleted { .. },
+                MonitorEvent::ExecutionCompleted { .. }
+            ]
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_monitor_emits_failure_events() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mut registry = NodeRegistry::new();
+        registry.register(Arc::new(AlwaysFailNode));
+        let monitor = Arc::new(Monitor::new());
+        let mut rx = monitor.subscribe();
+        let executor = Executor::new(registry, storage.clone()).with_monitor(monitor);
+
+        let yaml = r#"
+name: monitor-failure
+nodes:
+  - id: failing
+    type: always_fail
+"#;
+
+        let workflow = parse_workflow(yaml).unwrap();
+        save_test_workflow(&storage, "wf-monitor-failure", yaml).await;
+
+        let execution = executor
+            .execute(&workflow, "wf-monitor-failure", "manual", Value::Null)
+            .await
+            .unwrap();
+        assert_eq!(execution.status, ExecutionStatus::Failed);
+
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, MonitorEvent::NodeFailed { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, MonitorEvent::ExecutionFailed { .. })));
     }
 
     #[tokio::test]
@@ -1939,6 +2463,80 @@ nodes:
 
         assert_eq!(execution.status, ExecutionStatus::Completed);
         assert_eq!(execution.output, Some(serde_json::json!([])));
+    }
+
+    #[tokio::test]
+    async fn test_for_each_max_items_limit() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        // Set a low max_for_each_items limit for testing
+        let yaml = r#"
+name: foreach-limit-workflow
+settings:
+  max_for_each_items: 3
+nodes:
+  - id: foreach_node
+    type: transform
+    for_each: true
+    config:
+      expression: "from_json(input) * 2"
+"#;
+
+        save_test_workflow(&storage, "wf-foreach-limit", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        // Try to process 5 items (exceeds limit of 3)
+        let execution = executor
+            .execute(
+                &workflow,
+                "wf-foreach-limit",
+                "test",
+                serde_json::json!([1, 2, 3, 4, 5]),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Failed);
+        assert!(execution.error.unwrap().contains("exceeding limit of 3"));
+    }
+
+    #[tokio::test]
+    async fn test_for_each_within_limit_succeeds() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Executor::new(registry, storage.clone());
+
+        // Set max_for_each_items to 5
+        let yaml = r#"
+name: foreach-within-limit-workflow
+settings:
+  max_for_each_items: 5
+nodes:
+  - id: foreach_node
+    type: transform
+    for_each: true
+    config:
+      expression: "from_json(input) * 2"
+"#;
+
+        save_test_workflow(&storage, "wf-foreach-within", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        // Process exactly 5 items (within limit)
+        let execution = executor
+            .execute(
+                &workflow,
+                "wf-foreach-within",
+                "test",
+                serde_json::json!([1, 2, 3, 4, 5]),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Completed);
+        assert_eq!(execution.output, Some(serde_json::json!([2, 4, 6, 8, 10])));
     }
 
     // ============================================================================

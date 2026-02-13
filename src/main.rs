@@ -105,6 +105,11 @@ enum WorkflowActions {
         #[arg(short, long)]
         input: Option<String>,
     },
+    /// Resume a failed execution from checkpoint
+    Resume {
+        /// Execution ID of the failed execution
+        execution_id: String,
+    },
     /// Show workflow version history
     History {
         /// Workflow name or ID
@@ -230,6 +235,7 @@ async fn main() -> anyhow::Result<()> {
                 execution_id,
                 input,
             } => cmd_workflows_replay(&execution_id, input.as_deref()).await?,
+            WorkflowActions::Resume { execution_id } => cmd_workflows_resume(&execution_id).await?,
             WorkflowActions::History { name, limit } => cmd_workflows_history(&name, limit).await?,
             WorkflowActions::Rollback { name, version } => {
                 cmd_workflows_rollback(&name, version).await?
@@ -523,6 +529,51 @@ async fn cmd_workflows_replay(execution_id: &str, input: Option<&str>) -> anyhow
     Ok(())
 }
 
+async fn cmd_workflows_resume(execution_id: &str) -> anyhow::Result<()> {
+    use r8r::engine::Executor;
+    use r8r::nodes::NodeRegistry;
+
+    let storage = get_storage()?;
+    let registry = NodeRegistry::new();
+    let executor = Executor::new(registry, storage.clone());
+
+    // Get original execution info for display
+    let original = storage.get_execution(execution_id).await?;
+    let original =
+        original.ok_or_else(|| anyhow::anyhow!("Execution not found: {}", execution_id))?;
+
+    // Get completed nodes count
+    let node_execs = storage.get_node_executions(execution_id).await?;
+    let completed_count = node_execs
+        .iter()
+        .filter(|n| n.status == r8r::storage::ExecutionStatus::Completed)
+        .count();
+
+    println!(
+        "Resuming execution of '{}' from checkpoint...",
+        original.workflow_name
+    );
+    println!("  Original execution: {}", execution_id);
+    println!("  Completed nodes: {}", completed_count);
+    println!();
+
+    let execution = executor.resume(execution_id).await?;
+
+    println!("New execution ID: {}", execution.id);
+    println!("Status: {}", execution.status);
+
+    if let Some(finished) = execution.finished_at {
+        let duration = finished - execution.started_at;
+        println!("Duration: {}ms", duration.num_milliseconds());
+    }
+
+    if let Some(error) = &execution.error {
+        println!("Error: {}", error);
+    }
+
+    Ok(())
+}
+
 async fn cmd_workflows_history(name: &str, limit: usize) -> anyhow::Result<()> {
     let storage = get_storage()?;
     let versions = storage.list_workflow_versions(name).await?;
@@ -732,20 +783,83 @@ async fn cmd_workflows_export_all(output_dir: &str) -> anyhow::Result<()> {
 // ============================================================================
 
 async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
-    use r8r::api::{create_router, AppState};
+    use r8r::api::{
+        create_api_routes, create_cors_layer, create_monitored_routes, AppState, Monitor,
+        MonitoredAppState,
+    };
     use r8r::nodes::NodeRegistry;
+    use r8r::triggers::{create_webhook_routes, EventSubscriber, Scheduler};
     use std::sync::Arc;
+    use tower_http::trace::TraceLayer;
 
     let storage = get_storage()?;
     let registry = Arc::new(NodeRegistry::default());
 
-    let state = AppState { storage, registry };
-    let app = create_router(state);
+    // Create monitor for live WebSocket updates
+    let monitor = Arc::new(Monitor::new());
+
+    // Create and start the scheduler for cron triggers
+    let scheduler = Scheduler::new(storage.clone(), registry.clone())
+        .await?
+        .with_monitor(monitor.clone());
+    scheduler.start().await?;
+
+    let job_count = scheduler.job_count().await;
+
+    // Create and start the event subscriber for Redis pub/sub triggers
+    let mut event_subscriber =
+        EventSubscriber::new(storage.clone(), registry.clone()).with_monitor(monitor.clone());
+    let event_status = match event_subscriber.start().await {
+        Ok(()) => {
+            if event_subscriber.is_running() {
+                "active"
+            } else {
+                "no event triggers configured"
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to start event subscriber: {}", e);
+            "unavailable (Redis not connected)"
+        }
+    };
+
+    // Create API routes (without state)
+    let api_routes = create_api_routes();
+
+    // Create webhook routes (without state)
+    let webhook_routes = create_webhook_routes(storage.clone(), registry.clone()).await;
+
+    // Create monitored routes for WebSocket
+    let monitored_routes = create_monitored_routes();
+
+    // Merge routers and apply state
+    let state = AppState {
+        storage: storage.clone(),
+        registry: registry.clone(),
+        monitor: Some(monitor.clone()),
+    };
+
+    let monitored_state = MonitoredAppState {
+        inner: state.clone(),
+        monitor: monitor.clone(),
+    };
+
+    // Build app with both regular and monitored routes
+    // Each router needs its state consumed to become Router<()>
+    let app = api_routes
+        .with_state(state.clone())
+        .merge(monitored_routes.with_state(monitored_state))
+        .merge(webhook_routes.with_state(state))
+        .layer(TraceLayer::new_for_http())
+        .layer(create_cors_layer());
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     println!("r8r server running on http://0.0.0.0:{}", port);
+    println!();
+    println!("Scheduler: {} cron job(s) active", job_count);
+    println!("Event subscriber: {}", event_status);
     println!();
     println!("API endpoints:");
     println!("  GET  /api/health");
@@ -754,12 +868,19 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     println!("  POST /api/workflows/:name/execute");
     println!("  GET  /api/executions/:id");
     println!("  GET  /api/executions/:id/trace");
+    println!("  WS   /api/monitor (live execution monitoring)");
+    println!();
+    println!("Webhooks: /webhooks/:workflow_name (see workflow definitions)");
     println!();
     println!("Press Ctrl+C to stop");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+
+    // Gracefully stop the event subscriber and scheduler
+    let _ = event_subscriber.stop().await;
+    scheduler.stop().await?;
 
     println!("Server stopped.");
     Ok(())
