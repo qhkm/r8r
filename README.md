@@ -1,256 +1,207 @@
-# r8r
+<p align="center">
+  <h1 align="center">r8r</h1>
+  <p align="center">
+    <em>Pronounced "rater" • The workflow engine that AI agents actually want to use</em>
+  </p>
+</p>
 
-**Agent-first workflow automation engine in Rust.**
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://github.com/qhkm/r8r"><img src="https://img.shields.io/badge/rust-1.70+-orange.svg" alt="Rust"></a>
+</p>
 
-r8r is a lightweight, fast workflow automation tool designed for AI agents. It provides deterministic, repeatable workflows that agents can invoke reliably.
+---
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+**r8r** (r-eight-r → rater) is an agent-first workflow automation engine written in Rust.
 
-## Features
+While tools like n8n and Zapier were built for humans clicking through visual editors, r8r was built for the AI age—where agents need to create, execute, and orchestrate workflows programmatically.
 
-- **Agent-First Design** - Built for AI agents to invoke, not humans to click
-- **LLM-Friendly YAML** - Consistent patterns, easy for agents to generate
-- **Fast & Lightweight** - Single binary, minimal dependencies, sub-millisecond overhead
-- **SQLite Storage** - Zero external dependencies, portable data
-- **MCP Server** - Model Context Protocol support for AI tool integration
-- **Distributed Tracing** - OpenTelemetry integration for observability
+```
+Human clicks "Add Node" → n8n
+Agent writes YAML → r8r
+```
 
-## Why r8r?
+## ✨ What Makes r8r Different
 
-r8r is designed for a different use case than traditional workflow tools. Here's how it compares:
+| Traditional Tools | r8r |
+|------------------|-----|
+| 🖱️ Visual drag-and-drop | 📝 LLM-friendly YAML |
+| 🐘 Heavy (500MB+ RAM) | 🦀 Lightweight (~30MB) |
+| 🐌 Slow startup | ⚡ <100ms cold start |
+| 🔒 Locked in database | 📂 Git-friendly files |
+| 🧑 Built for humans | 🤖 Built for agents |
+
+## 🚀 Quick Start
+
+```bash
+# Install
+git clone https://github.com/qhkm/r8r.git && cd r8r
+cargo build --release
+
+# Create a workflow
+cat > hello.yaml << 'EOF'
+name: hello-world
+nodes:
+  - id: greet
+    type: transform
+    config:
+      expression: '"Hello, " + (input.name ?? "World") + "!"'
+EOF
+
+# Run it
+./target/release/r8r server --workflows . &
+curl -X POST localhost:3000/api/workflows/hello-world/execute \
+  -H "Content-Type: application/json" \
+  -d '{"input": {"name": "Agent"}}'
+```
+
+## 🤖 Built for AI Agents
+
+r8r includes an **MCP server** (Model Context Protocol) so AI agents can directly invoke workflows:
+
+```bash
+# Start the MCP server
+r8r-mcp
+```
+
+Your AI agent can now:
+- `list_workflows` - Discover available workflows
+- `execute_workflow` - Run workflows with parameters
+- `get_execution` - Check execution status
+
+## 📊 r8r vs n8n
 
 | Feature | r8r | n8n |
 |---------|-----|-----|
 | **Primary User** | AI agents & developers | Human operators |
 | **Interface** | CLI, API, MCP | Visual drag-and-drop |
-| **Language** | Rust (native binary) | TypeScript (Node.js) |
-| **Memory Usage** | ~10-50 MB | ~200-500 MB+ |
-| **Startup Time** | <100ms | Several seconds |
-| **Dependencies** | Single binary + SQLite | Node.js + PostgreSQL/MySQL |
-| **Workflow Format** | YAML (LLM-friendly) | JSON (visual editor) |
-| **Version Control** | Git-friendly YAML files | Database-stored |
-| **MCP Support** | Built-in | Not available |
-| **Self-hosted** | ✅ Always free | ✅ Free (limited cloud) |
+| **Language** | Rust | TypeScript |
+| **Memory** | ~30 MB | ~500 MB+ |
+| **Startup** | <100ms | Seconds |
+| **Storage** | SQLite (portable) | PostgreSQL/MySQL |
+| **Workflows** | YAML files (git-friendly) | Database blobs |
+| **MCP Support** | ✅ Built-in | ❌ None |
+| **Price** | Free forever | Free (limited) |
 
-### When to use r8r
+### Use r8r when:
+- 🤖 AI agents trigger your workflows
+- ⚡ You need fast, lightweight automation
+- 📂 You want workflows in version control
+- 🛠️ You prefer code over clicking
 
-- Your workflows are invoked by AI agents
-- You need fast, lightweight automation
-- You want version-controlled workflow definitions
-- You prefer CLI/API over visual editors
-- You need MCP integration for AI tools
+### Use n8n when:
+- 🖱️ You prefer visual workflow building
+- 🔌 You need 400+ pre-built integrations
+- 👥 Your team is non-technical
 
-### When to use n8n
-
-- You prefer visual workflow building
-- You need 400+ pre-built integrations
-- Your team is non-technical
-- You want a polished web UI
-
-## Quick Start
-
-### Installation
-
-```bash
-# From source
-git clone https://github.com/qhkm/r8r.git
-cd r8r
-cargo build --release
-
-# Binary will be at ./target/release/r8r
-```
-
-### Create Your First Workflow
+## 📖 Workflow Anatomy
 
 ```yaml
-# workflows/hello.yaml
-name: hello-world
-description: A simple greeting workflow
+name: order-processor
+description: Process incoming orders
 
 triggers:
-  - type: manual
+  - type: webhook
+    path: /orders
+  - type: cron
+    schedule: "0 * * * *"  # Every hour
 
 nodes:
-  - id: greet
+  - id: validate
     type: transform
     config:
       expression: |
-        "Hello, " + (input.name ?? "World") + "!"
-```
+        if input.amount > 0 { input } else { throw "Invalid amount" }
 
-### Run It
-
-```bash
-# Start the server
-r8r server --workflows ./workflows
-
-# Execute via API
-curl -X POST http://localhost:3000/api/workflows/hello-world/execute \
-  -H "Content-Type: application/json" \
-  -d '{"input": {"name": "Agent"}}'
-```
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [API Reference](docs/API.md) | REST API endpoints |
-| [Node Types](docs/NODE_TYPES.md) | Available node types and configuration |
-| [Environment Variables](docs/ENVIRONMENT_VARIABLES.md) | Configuration options |
-| [Architecture](docs/ARCHITECTURE.md) | System design and internals |
-
-## Workflow Structure
-
-```yaml
-name: workflow-name          # Required: unique identifier
-description: What it does    # Optional: human-readable description
-version: "1.0.0"             # Optional: semantic version
-
-settings:                    # Optional: workflow-level settings
-  timeout_seconds: 3600      # Max execution time
-  max_concurrency: 10        # Concurrent node limit
-  debug: false               # Enable debug logging
-
-triggers:                    # What starts the workflow
-  - type: cron
-    schedule: "*/5 * * * *"  # Every 5 minutes
-  - type: webhook
-    path: /hook/custom       # Custom webhook path
-  - type: manual             # API-triggered only
-
-nodes:                       # The steps to execute
-  - id: step-1
+  - id: notify
     type: http
     config:
-      url: https://api.example.com/data
-      method: GET
-
-  - id: step-2
-    type: transform
-    config:
-      expression: "input.data"
-    depends_on: [step-1]     # Execute after step-1
-    condition: "input.status == 200"  # Only if condition is true
+      url: https://slack.com/api/chat.postMessage
+      method: POST
+      body: '{"text": "New order: ${{ input.amount }}"}'
+    depends_on: [validate]
     retry:
       max_attempts: 3
       backoff: exponential
     on_error:
-      action: fallback
-      fallback_value: []
+      action: continue  # Don't fail the whole workflow
 ```
 
-## Node Types
+## 🧩 Node Types
 
-| Type | Description |
-|------|-------------|
-| `http` | Make HTTP requests |
-| `transform` | Transform data with Rhai expressions |
-| `agent` | Invoke AI agents (LLM calls) |
-| `subworkflow` | Call another workflow |
-| `debug` | Log values for debugging |
-| `variables` | Set/get workflow variables |
-| `template` | Render templates |
-| `circuit_breaker` | Fault tolerance wrapper |
+| Node | Purpose |
+|------|---------|
+| `http` | REST API calls |
+| `transform` | Data transformation (Rhai expressions) |
+| `agent` | LLM/AI agent invocation |
+| `subworkflow` | Nested workflow execution |
+| `variables` | Workflow state management |
+| `template` | Text templating |
+| `circuit_breaker` | Fault tolerance |
+| `debug` | Development logging |
 
-See [Node Types](docs/NODE_TYPES.md) for detailed configuration.
+See [Node Types](docs/NODE_TYPES.md) for full documentation.
 
-## CLI Commands
+## 🔧 CLI Reference
 
 ```bash
 # Server
-r8r server --workflows ./workflows    # Start API server
-r8r dev --workflows ./workflows       # Dev mode with hot reload
+r8r server --workflows ./workflows    # Start server
+r8r dev --workflows ./workflows       # Hot-reload mode
 
 # Workflows
-r8r workflows list                    # List all workflows
-r8r workflows run <name>              # Execute a workflow
-r8r workflows validate <file>         # Validate workflow YAML
+r8r workflows list                    # List workflows
+r8r workflows run <name>              # Execute
+r8r workflows validate <file>         # Lint YAML
 r8r workflows history <name>          # Version history
-r8r workflows rollback <name> <ver>   # Rollback to version
+r8r workflows rollback <name> <ver>   # Rollback
 
 # Executions
-r8r workflows trace <execution_id>    # View execution trace
-r8r workflows resume <execution_id>   # Resume failed execution
-r8r workflows replay <execution_id>   # Replay execution
-
-# Credentials
-r8r credentials set <name>            # Store credential
-r8r credentials list                  # List credentials (masked)
-r8r credentials delete <name>         # Remove credential
-
-# Database
-r8r db check                          # Health check
-```
-
-## MCP Server
-
-r8r includes an MCP (Model Context Protocol) server for AI tool integration:
-
-```bash
-# Start MCP server
-r8r-mcp
-```
-
-Available tools:
-- `list_workflows` - List available workflows
-- `execute_workflow` - Execute a workflow
-- `get_execution` - Get execution status
-
-## Configuration
-
-Key environment variables:
-
-```bash
-# Server
-R8R_CORS_ORIGINS=https://app.example.com
-R8R_MAX_CONCURRENT_REQUESTS=200
+r8r workflows trace <id>              # Execution trace
+r8r workflows resume <id>             # Resume failed
+r8r workflows replay <id>             # Replay execution
 
 # Security
-R8R_MONITOR_TOKEN=<random-token>
-R8R_HEALTH_API_KEY=<api-key>
-
-# Observability
-R8R_OTEL_ENABLED=true
-R8R_OTEL_ENDPOINT=http://jaeger:4317
-
-# Database
-R8R_DATABASE_PATH=/var/lib/r8r/r8r.db
+r8r credentials set <name>            # Store secret
+r8r credentials list                  # List (masked)
 ```
 
-See [Environment Variables](docs/ENVIRONMENT_VARIABLES.md) for full reference.
+## 🔒 Security
 
-## Security
-
-r8r includes several security features:
-
-- **SSRF Protection** - Blocks requests to internal IPs by default
-- **Credential Encryption** - AES-256-GCM with PBKDF2 key derivation
-- **Webhook Signatures** - GitHub, Stripe, Slack signature verification
-- **Rate Limiting** - Per-workflow rate limiting
-- **Input Validation** - JSON Schema validation for workflow inputs
+- **SSRF Protection** — Blocks internal IP requests
+- **AES-256-GCM** — Encrypted credential storage
+- **Webhook Signatures** — GitHub, Stripe, Slack verification
+- **Rate Limiting** — Per-workflow throttling
+- **Schema Validation** — JSON Schema input validation
 
 See [Security Audit](SECURITY_AUDIT_REPORT.md) for details.
 
-## Contributing
+## 📚 Documentation
 
-Contributions are welcome! Please read the contributing guidelines before submitting PRs.
+| Doc | Description |
+|-----|-------------|
+| [API Reference](docs/API.md) | REST endpoints |
+| [Node Types](docs/NODE_TYPES.md) | Node configuration |
+| [Environment Variables](docs/ENVIRONMENT_VARIABLES.md) | Configuration |
+| [Architecture](docs/ARCHITECTURE.md) | System design |
+| [Roadmap](docs/TODO.md) | Planned features |
+
+## 🤝 Contributing
 
 ```bash
-# Run tests
-cargo test
-
-# Run with logging
-RUST_LOG=r8r=debug cargo run -- server
-
-# Check formatting
-cargo fmt --check
-cargo clippy
+cargo test              # Run tests (300+)
+cargo clippy            # Lint
+cargo fmt               # Format
 ```
 
-## License
+See [Roadmap](docs/TODO.md) for contribution ideas.
 
-MIT License - see [LICENSE](LICENSE) for details.
+## 📄 License
 
-## Acknowledgments
+MIT — Use it however you want.
 
-r8r is inspired by workflow automation tools like n8n, Temporal, and Prefect, but designed specifically for the AI agent use case.
+---
+
+<p align="center">
+  <em>r8r — Because AI agents deserve better than drag-and-drop.</em>
+</p>
