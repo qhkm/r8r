@@ -1,18 +1,18 @@
 /* Custom styles for r8r docs */
 
 :root {
-  --sl-color-accent: #f24e1e;
-  --sl-color-accent-high: #ff6b3d;
-  --sl-color-accent-low: #c43e18;
+  --sl-color-accent: #2EC4B6;
+  --sl-color-accent-high: #5FE0D6;
+  --sl-color-accent-low: #1F9E97;
 }
 
 /* Dark mode tweaks */
 [data-theme='dark'] {
-  --sl-color-bg: #0a0a0b;
-  --sl-color-bg-nav: #111113;
-  --sl-color-bg-sidebar: #111113;
-  --sl-color-bg-inline-code: #1a1a1d;
-  --sl-color-border: #27272a;
+  --sl-color-bg: #0B1A1E;
+  --sl-color-bg-nav: #0F2329;
+  --sl-color-bg-sidebar: #0F2329;
+  --sl-color-bg-inline-code: #142E35;
+  --sl-color-border: #1A3A42;
 }
 
 /* Custom font */
