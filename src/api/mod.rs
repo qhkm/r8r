@@ -6,8 +6,8 @@ mod webhook;
 mod websocket;
 
 pub use middleware::{
-    access_log_middleware, health_auth_middleware, request_id_middleware, HealthAuthConfig,
-    RequestId, REQUEST_ID_HEADER,
+    access_log_middleware, api_auth_middleware, health_auth_middleware, request_id_middleware,
+    ApiAuthConfig, HealthAuthConfig, RequestId, REQUEST_ID_HEADER,
 };
 pub use openapi::generate_openapi_spec;
 pub use webhook::{compute_signature, verify_signature, SignatureConfig, SignatureScheme};
@@ -175,16 +175,22 @@ pub fn create_monitored_routes() -> Router<MonitoredAppState> {
 /// 2. Request ID - Generate/propagate X-Request-ID
 /// 3. Access Log - Log requests in structured JSON format
 /// 4. Health Auth - Optional authentication for health endpoints
-/// 5. Tracing - OpenTelemetry-compatible request tracing
-/// 6. Concurrency - Limit concurrent requests
-/// 7. Body Limit - Limit request body size
+/// 5. API Auth - Optional API key authentication for all API endpoints
+/// 6. Tracing - OpenTelemetry-compatible request tracing
+/// 7. Concurrency - Limit concurrent requests
+/// 8. Body Limit - Limit request body size
 pub fn create_router(state: AppState) -> Router {
     let health_auth_config = HealthAuthConfig::default();
+    let api_auth_config = ApiAuthConfig::default();
 
     create_api_routes()
         .layer(create_request_body_limit())
         .layer(create_concurrency_limit())
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn_with_state(
+            api_auth_config,
+            api_auth_middleware,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             health_auth_config,
             health_auth_middleware,

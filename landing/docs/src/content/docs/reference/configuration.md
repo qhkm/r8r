@@ -1,105 +1,94 @@
 ---
 title: Configuration
-description: r8r configuration options
+description: r8r configuration file reference.
 ---
 
-r8r can be configured via `r8r.toml` or environment variables.
+r8r loads configuration from multiple sources in this priority order:
 
-## r8r.toml
+1. Environment variables (`R8R_*`) — highest priority
+2. Config file (`~/.config/r8r/config.toml`)
+3. Shared Kitakod config (`~/.config/kitakod/config.toml` under `[r8r]` section)
+4. Built-in defaults — lowest priority
+
+## Config File
+
+Location: `~/.config/r8r/config.toml`
 
 ```toml
 [server]
-host = "0.0.0.0"
-port = 3000
-request_timeout = "30s"
-
-[workflows]
-directory = "./workflows"
-hot_reload = true
-
-[logging]
-level = "info"
-format = "json"  # json | pretty
-
-[nodes]
-# Custom node directories
-custom = ["./nodes"]
-
-[integrations]
-[integrations.slack]
-token = "${SLACK_TOKEN}"
-
-[integrations.postgres]
-url = "${DATABASE_URL}"
-
-[integrations.redis]
-url = "redis://localhost:6379"
-```
-
-## Server options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `host` | `"0.0.0.0"` | Bind address |
-| `port` | `3000` | HTTP port |
-| `request_timeout` | `"30s"` | Request timeout |
-| `max_body_size` | `"10MB"` | Max request body size |
-| `workers` | `num_cpus` | Worker threads |
-
-## Workflow options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `directory` | `"./workflows"` | Workflows directory |
-| `hot_reload` | `true` | Auto-reload on change |
-| `extensions` | `["yaml", "yml"]` | Valid file extensions |
-
-## Logging options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `level` | `"info"` | Log level (trace/debug/info/warn/error) |
-| `format` | `"pretty"` | Output format |
-| `output` | `"stdout"` | Log destination |
-
-## Environment variables
-
-All config options can be set via environment:
-
-```bash
-R8R_SERVER_PORT=8080
-R8R_WORKFLOWS_HOT_RELOAD=false
-R8R_LOGGING_LEVEL=debug
-```
-
-Use `${VAR}` syntax in config:
-
-```toml
-[integrations.slack]
-token = "${SLACK_TOKEN}"
-```
-
-## Profile-specific config
-
-Override settings per environment:
-
-```toml
-# Default settings
-[server]
-port = 3000
-
-[profile.production]
-[profile.production.server]
 port = 8080
 host = "127.0.0.1"
 
-[profile.production.logging]
-level = "warn"
-format = "json"
+[storage]
+database_path = "/path/to/r8r.db"
+
+[agent]
+endpoint = "http://localhost:3000/api/chat"
+timeout_seconds = 30
 ```
 
-Activate profile:
+### Server Section
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `port` | `8080` | HTTP server port |
+| `host` | `127.0.0.1` | Bind address |
+
+### Storage Section
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `database_path` | `~/.local/share/r8r/r8r.db` | SQLite database file path |
+
+### Agent Section
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `endpoint` | `http://localhost:3000/api/chat` | ZeptoClaw agent API endpoint |
+| `timeout_seconds` | `30` | Timeout for agent API calls |
+
+## Shared Kitakod Config
+
+If you use multiple Kitakod tools, you can share config at `~/.config/kitakod/config.toml`:
+
+```toml
+[r8r]
+[r8r.server]
+port = 8080
+
+[r8r.agent]
+endpoint = "http://localhost:3000/api/chat"
+```
+
+## Environment Variable Overrides
+
+Environment variables take precedence over config files:
+
+| Variable | Config Key | Default |
+|----------|-----------|---------|
+| `R8R_SERVER_PORT` | `server.port` | `8080` |
+| `R8R_SERVER_HOST` | `server.host` | `127.0.0.1` |
+| `R8R_DATABASE_PATH` | `storage.database_path` | `~/.local/share/r8r/r8r.db` |
+| `R8R_AGENT_ENDPOINT` | `agent.endpoint` | `http://localhost:3000/api/chat` |
+| `R8R_AGENT_TIMEOUT_SECONDS` | `agent.timeout_seconds` | `30` |
+
+See [Environment Variables](/reference/environment) for the complete list.
+
+## Data Directory
+
+r8r stores its database in the system data directory:
+
+| OS | Path |
+|----|------|
+| macOS | `~/Library/Application Support/r8r/` |
+| Linux | `~/.local/share/r8r/` |
+
+## Credentials Storage
+
+Credentials are stored encrypted (AES-256-GCM) in the data directory. Manage with:
 
 ```bash
-R8R_PROFILE=production r8r run
+r8r credentials set <service> --value <secret>
+r8r credentials list
+r8r credentials delete <service>
 ```

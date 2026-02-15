@@ -156,7 +156,8 @@ nodes:
 
         {{ input.message }}
       credential: email_api_key
-"#.to_string(),
+"#
+                .to_string(),
             },
         );
 
@@ -204,7 +205,8 @@ nodes:
             type: mrkdwn
             text: "*{{ input.title }}*\n{{ input.message }}"
       credential: slack_token
-"#.to_string(),
+"#
+                .to_string(),
             },
         );
 
@@ -263,7 +265,8 @@ nodes:
     retry:
       max_attempts: 3
       backoff: exponential
-"#.to_string(),
+"#
+                .to_string(),
             },
         );
 
@@ -333,7 +336,8 @@ nodes:
       label: "Pipeline result"
       level: info
     depends_on: [transform]
-"#.to_string(),
+"#
+                .to_string(),
             },
         );
 
@@ -416,7 +420,8 @@ nodes:
         <p>{{ nodes.generate-report.summary }}</p>
       credential: email_api_key
     depends_on: [generate-report]
-"#.to_string(),
+"#
+                .to_string(),
             },
         );
     }
@@ -438,7 +443,11 @@ nodes:
             let entry = entry.map_err(|e| Error::Config(format!("Failed to read entry: {}", e)))?;
             let path = entry.path();
 
-            if path.extension().map(|e| e == "yaml" || e == "yml").unwrap_or(false) {
+            if path
+                .extension()
+                .map(|e| e == "yaml" || e == "yml")
+                .unwrap_or(false)
+            {
                 if let Ok(template) = self.load_template_file(&path) {
                     self.templates.insert(template.name.clone(), template);
                 }
@@ -491,11 +500,7 @@ nodes:
     }
 
     /// Instantiate a template with given variables.
-    pub fn instantiate(
-        &self,
-        name: &str,
-        variables: &HashMap<String, String>,
-    ) -> Result<String> {
+    pub fn instantiate(&self, name: &str, variables: &HashMap<String, String>) -> Result<String> {
         let template = self
             .get(name)
             .ok_or_else(|| Error::Config(format!("Template not found: {}", name)))?;
@@ -579,8 +584,14 @@ mod tests {
 
         let mut vars = HashMap::new();
         vars.insert("workflow_name".to_string(), "my-alerts".to_string());
-        vars.insert("recipient_email".to_string(), "test@example.com".to_string());
-        vars.insert("sender_email".to_string(), "noreply@example.com".to_string());
+        vars.insert(
+            "recipient_email".to_string(),
+            "test@example.com".to_string(),
+        );
+        vars.insert(
+            "sender_email".to_string(),
+            "noreply@example.com".to_string(),
+        );
 
         let result = registry.instantiate("email-alert", &vars).unwrap();
 
@@ -605,8 +616,14 @@ mod tests {
 
         let mut vars = HashMap::new();
         vars.insert("workflow_name".to_string(), "my-alerts".to_string());
-        vars.insert("recipient_email".to_string(), "test@example.com".to_string());
-        vars.insert("sender_email".to_string(), "noreply@example.com".to_string());
+        vars.insert(
+            "recipient_email".to_string(),
+            "test@example.com".to_string(),
+        );
+        vars.insert(
+            "sender_email".to_string(),
+            "noreply@example.com".to_string(),
+        );
         // email_provider has default "resend"
 
         let result = registry.instantiate("email-alert", &vars).unwrap();

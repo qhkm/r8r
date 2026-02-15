@@ -1,184 +1,154 @@
 ---
 title: API Integration
-description: Connect to external APIs
+description: Using the r8r REST API to manage and execute workflows.
 ---
 
-Integrate with external APIs using r8r's HTTP nodes and authentication features.
+r8r provides a REST API for managing workflows and executions. The server runs on port 8080 by default.
 
-## Basic API call
+## Starting the Server
 
-```yaml
-nodes:
-  - name: "fetch_users"
-    type: "http/request"
-    config:
-      url: "https://api.example.com/users"
-      method: GET
+```bash
+r8r server --port 8080
 ```
 
-## Authentication
+The API is also available as an OpenAPI 3.1 spec at `/api/openapi.json`.
 
-### Bearer token
+## Endpoints
 
-```yaml
-nodes:
-  - name: "secure_api"
-    type: "http/request"
-    config:
-      url: "https://api.example.com/data"
-      headers:
-        Authorization: "Bearer {{ env.API_TOKEN }}"
+### Health Check
+
+```bash
+GET /api/health
 ```
 
-### API key
+Returns server health status including database integrity.
 
-```yaml
-nodes:
-  - name: "api_call"
-    type: "http/request"
-    config:
-      url: "https://api.example.com/data"
-      query:
-        api_key: "{{ env.API_KEY }}"
+### List Workflows
+
+```bash
+GET /api/workflows
 ```
 
-### Basic auth
-
-```yaml
-nodes:
-  - name: "legacy_api"
-    type: "http/request"
-    config:
-      url: "https://api.example.com/data"
-      auth:
-        type: basic
-        username: "{{ env.API_USER }}"
-        password: "{{ env.API_PASS }}"
+Response:
+```json
+{
+  "workflows": [
+    {
+      "id": "uuid",
+      "name": "my-workflow",
+      "enabled": true,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z",
+      "node_count": 3,
+      "trigger_count": 1
+    }
+  ]
+}
 ```
 
-## Dynamic URLs
+### Get Workflow
 
-```yaml
-nodes:
-  - name: "get_user"
-    type: "http/request"
-    config:
-      url: "https://api.example.com/users/{{ trigger.body.user_id }}"
+```bash
+GET /api/workflows/{name}
 ```
 
-## POST requests with JSON
+Returns workflow details including the YAML definition.
 
-```yaml
-nodes:
-  - name: "create_user"
-    type: "http/request"
-    config:
-      url: "https://api.example.com/users"
-      method: POST
-      headers:
-        Content-Type: "application/json"
-      body:
-        name: "{{ trigger.body.name }}"
-        email: "{{ trigger.body.email }}"
+### Execute Workflow
+
+```bash
+POST /api/workflows/{name}/execute
+Content-Type: application/json
+
+{
+  "input": {
+    "key": "value"
+  }
+}
 ```
 
-## Handling responses
-
-```yaml
-nodes:
-  - name: "api"
-    type: "http/request"
-    config:
-      url: "https://api.example.com/data"
-
-  - name: "check_status"
-    type: "core/condition"
-    config:
-      condition: "{{ api.status }} == 200"
-      then:
-        - name: "process"
-          type: "core/log"
-          config:
-            message: "Data: {{ api.body }}"
-      else:
-        - name: "error"
-          type: "core/log"
-          config:
-            message: "Failed: {{ api.body.error }}"
+Response:
+```json
+{
+  "execution_id": "uuid",
+  "status": "completed",
+  "output": { "result": "..." },
+  "duration_ms": 150
+}
 ```
 
-## Pagination
+### Get Execution
 
-Handle paginated APIs:
-
-```yaml
-nodes:
-  - name: "fetch_page"
-    type: "http/request"
-    config:
-      url: "https://api.example.com/items"
-      query:
-        page: "{{ trigger.query.page | default: 1 }}"
-        per_page: "100"
-
-  - name: "has_more"
-    type: "core/condition"
-    config:
-      condition: "{{ fetch_page.body.has_more }}"
-      then:
-        - name: "trigger_next"
-          type: "http/request"
-          config:
-            url: "https://api.example.com/items"
-            query:
-              page: "{{ trigger.query.page | int | add: 1 }}"
+```bash
+GET /api/executions/{id}
 ```
 
-## Rate limiting
+Returns execution status, input, output, and timing.
 
-Respect API rate limits:
+### Get Execution Trace
 
-```yaml
-nodes:
-  - name: "api_call"
-    type: "http/request"
-    config:
-      url: "https://api.example.com/data"
-      retry:
-        count: 5
-        delay: "2s"
-        on_status: [429, 503]  # Too Many Requests, Service Unavailable
+```bash
+GET /api/executions/{id}/trace
 ```
 
-## Webhook verification
-
-Verify incoming webhooks:
-
-```yaml
-trigger:
-  webhook:
-    provider: github
-    secret: "${WEBHOOK_SECRET}"
-    verify_signature: true
+Returns per-node execution details:
+```json
+{
+  "execution_id": "uuid",
+  "workflow_name": "my-workflow",
+  "status": "completed",
+  "nodes": [
+    {
+      "node_id": "fetch",
+      "status": "completed",
+      "started_at": "...",
+      "finished_at": "...",
+      "duration_ms": 120
+    }
+  ]
+}
 ```
 
-## Error handling
+### Prometheus Metrics
 
-```yaml
-nodes:
-  - name: "api"
-    type: "http/request"
-    config:
-      url: "https://api.example.com/data"
-    on_error:
-      action: continue
-      output:
-        error: true
-        message: "API unavailable"
+```bash
+GET /api/metrics
+```
 
-  - name: "fallback"
-    type: "core/log"
-    if: "{{ api.error }}"
-    config:
-      message: "Using cached data"
+Returns Prometheus-formatted metrics for monitoring.
+
+### Live Monitoring (WebSocket)
+
+```bash
+WS /api/monitor?token=<token>
+```
+
+Subscribe to live execution events. Set `R8R_MONITOR_TOKEN` for authentication, or set `R8R_MONITOR_PUBLIC=true` for development.
+
+## Webhooks
+
+Workflows with webhook triggers are accessible at:
+
+```bash
+POST /webhooks/{workflow-name}
+```
+
+The request body becomes the workflow input.
+
+## Example: Complete Integration
+
+```bash
+# Create a workflow
+r8r workflows create my-workflow.yaml
+
+# Execute via API
+EXEC_ID=$(curl -s -X POST http://localhost:8080/api/workflows/my-workflow/execute \
+  -H "Content-Type: application/json" \
+  -d '{"input": {"url": "https://example.com"}}' | jq -r '.execution_id')
+
+# Check execution status
+curl http://localhost:8080/api/executions/$EXEC_ID
+
+# View detailed trace
+curl http://localhost:8080/api/executions/$EXEC_ID/trace
 ```

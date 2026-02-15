@@ -135,7 +135,10 @@ impl Node for EmailNode {
             "sendgrid" => send_sendgrid(&config, api_key).await,
             "resend" => send_resend(&config, api_key).await,
             "mailgun" => send_mailgun(&config, api_key).await,
-            _ => Err(Error::Node(format!("Unknown email provider: {}", config.provider))),
+            _ => Err(Error::Node(format!(
+                "Unknown email provider: {}",
+                config.provider
+            ))),
         }
     }
 }
@@ -166,13 +169,20 @@ async fn send_sendgrid(config: &EmailConfig, api_key: Option<String>) -> Result<
     let client = reqwest::Client::new();
 
     // Build recipients
-    let to: Vec<Value> = config.to.to_vec().iter().map(|e| json!({"email": e})).collect();
-    let cc: Option<Vec<Value>> = config.cc.as_ref().map(|c| {
-        c.to_vec().iter().map(|e| json!({"email": e})).collect()
-    });
-    let bcc: Option<Vec<Value>> = config.bcc.as_ref().map(|b| {
-        b.to_vec().iter().map(|e| json!({"email": e})).collect()
-    });
+    let to: Vec<Value> = config
+        .to
+        .to_vec()
+        .iter()
+        .map(|e| json!({"email": e}))
+        .collect();
+    let cc: Option<Vec<Value>> = config
+        .cc
+        .as_ref()
+        .map(|c| c.to_vec().iter().map(|e| json!({"email": e})).collect());
+    let bcc: Option<Vec<Value>> = config
+        .bcc
+        .as_ref()
+        .map(|b| b.to_vec().iter().map(|e| json!({"email": e})).collect());
 
     // Build content array
     let mut content: Vec<Value> = Vec::new();
@@ -223,7 +233,10 @@ async fn send_sendgrid(config: &EmailConfig, api_key: Option<String>) -> Result<
         })))
     } else {
         let error_body = response.text().await.unwrap_or_default();
-        Err(Error::Node(format!("SendGrid error {}: {}", status, error_body)))
+        Err(Error::Node(format!(
+            "SendGrid error {}: {}",
+            status, error_body
+        )))
     }
 }
 
@@ -231,7 +244,7 @@ async fn send_resend(config: &EmailConfig, api_key: Option<String>) -> Result<No
     let api_key = api_key.ok_or_else(|| Error::Node("Resend requires api_key".to_string()))?;
 
     let client = reqwest::Client::new();
-    
+
     let body = json!({
         "from": config.from,
         "to": config.to.to_vec(),

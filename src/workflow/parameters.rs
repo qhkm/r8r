@@ -2,8 +2,8 @@
 
 use serde_json::Value;
 
-use crate::error::{Error, Result};
 use super::types::{InputDefinition, Workflow};
+use crate::error::{Error, Result};
 
 /// Validate and process workflow input against parameter definitions.
 pub fn validate_parameters(workflow: &Workflow, input: &Value) -> Result<Value> {
@@ -49,11 +49,7 @@ pub fn validate_parameters(workflow: &Workflow, input: &Value) -> Result<Value> 
 }
 
 /// Validate a single parameter value.
-fn validate_parameter(
-    name: &str,
-    def: &InputDefinition,
-    value: Option<&Value>,
-) -> Result<Value> {
+fn validate_parameter(name: &str, def: &InputDefinition, value: Option<&Value>) -> Result<Value> {
     // Check if required
     match value {
         None | Some(Value::Null) => {
@@ -67,7 +63,7 @@ fn validate_parameter(
                 )));
             }
             // Not required, use default or null
-            return Ok(def.default.clone().unwrap_or(Value::Null));
+            Ok(def.default.clone().unwrap_or(Value::Null))
         }
         Some(v) => {
             // Validate type

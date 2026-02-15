@@ -1,73 +1,81 @@
 ---
 title: Introduction
-description: What is r8r and why should you use it?
+description: What is r8r and why does it exist?
 ---
 
-**r8r** (pronounced "rator") is a lightning-fast workflow automation tool built in Rust. It's designed for developers who need reliable, high-performance automation without the bloat of traditional tools.
+**r8r** (pronounced "rater") is an agent-first workflow automation engine written in Rust. While tools like n8n and Zapier were built for humans clicking through visual editors, r8r was designed for the AI age — where agents create, execute, and orchestrate workflows programmatically.
 
 ## Why r8r?
 
-### 🚀 Blazing Fast
+| Traditional Tools | r8r |
+|------------------|-----|
+| Visual drag-and-drop | LLM-friendly YAML |
+| Heavy (500MB+ RAM) | Lightweight (~15MB RAM) |
+| Slow startup | ~50ms cold start |
+| Locked in database | Git-friendly files |
+| Built for humans | Built for agents |
 
-- **15MB binary** — Smaller than most JavaScript dependencies
-- **Sub-millisecond latency** — Processes workflows faster than you can blink
-- **50,000+ ops/sec** — Handle massive throughput on modest hardware
+## r8r vs n8n
 
-### 🦀 Built in Rust
+| Feature | r8r | n8n |
+|---------|-----|-----|
+| **Primary User** | AI agents & developers | Human operators |
+| **Interface** | CLI, API, MCP | Visual drag-and-drop |
+| **Language** | Rust | TypeScript |
+| **Binary Size** | 24 MB | ~200 MB+ |
+| **Memory (idle)** | ~15 MB | ~500 MB+ |
+| **Startup** | ~50ms | Seconds |
+| **Storage** | SQLite (embedded) | PostgreSQL/MySQL |
+| **Workflows** | YAML files (git-friendly) | Database blobs |
+| **MCP Support** | Built-in | None |
+| **License** | AGPL-3.0 | Sustainable Use License |
 
-- **Memory safe** — No runtime crashes, no memory leaks
-- **Zero-cost abstractions** — Pay only for what you use
-- **Single static binary** — Deploy anywhere without dependencies
+## Key Concepts
 
-### 🔌 Developer First
+### Workflows
 
-- **YAML or code** — Define workflows declaratively or write custom nodes in Rust
-- **200+ integrations** — Native support for databases, APIs, queues, and more
-- **Observable** — Built-in metrics and tracing with OpenTelemetry export
-
-## What can you build?
-
-- **ETL pipelines** — Extract, transform, and load data between systems
-- **API integrations** — Connect services and automate data flows
-- **Scheduled tasks** — Cron-like automation with better observability
-- **Event processing** — React to webhooks, queue messages, or database changes
-- **DevOps automation** — Deploy, monitor, and respond to infrastructure events
-
-## How it works
+A workflow is a YAML file that defines a directed acyclic graph (DAG) of nodes:
 
 ```yaml
-name: "Daily Report"
-trigger:
-  schedule: "0 9 * * *"
+name: my-workflow
+description: A simple workflow
+
+triggers:
+  - type: webhook
+    path: /incoming
 
 nodes:
-  - name: "fetch_sales"
-    type: "postgres/query"
+  - id: fetch-data
+    type: http
     config:
-      sql: |
-        SELECT * FROM sales 
-        WHERE date > NOW() - INTERVAL '24h'
+      url: https://api.example.com/data
+      method: GET
 
-  - name: "format_report"
-    type: "template"
-    input: "{{ fetch_sales.rows }}"
-
-  - name: "send_slack"
-    type: "slack/post"
+  - id: process
+    type: transform
     config:
-      channel: "#daily-reports"
+      expression: 'input.items.filter(|item| item.active)'
+    depends_on: [fetch-data]
 ```
 
-## Comparison
+### Node Types
 
-| Feature | r8r | n8n | Zapier |
-|---------|-----|-----|--------|
-| Binary size | 15MB | 500MB+ | Cloud only |
-| Self-hosted | ✅ | ✅ | ❌ |
-| Custom nodes | Rust/WASM | JavaScript | Limited |
-| Open source | ✅ | ✅ | ❌ |
-| Performance | Native | Node.js | Cloud dependent |
+r8r ships with 24 built-in node types:
 
-## Next steps
+| Category | Nodes |
+|----------|-------|
+| **Core** | `http`, `transform`, `agent`, `subworkflow` |
+| **Logic** | `if`, `switch`, `merge`, `filter`, `sort`, `limit` |
+| **Data** | `set`, `aggregate`, `split`, `dedupe`, `variables` |
+| **Integrations** | `email`, `slack`, `database`, `s3` |
+| **Utility** | `wait`, `crypto`, `datetime`, `debug`, `summarize` |
 
-Ready to get started? [Install r8r](/getting-started/installation/) and build your first workflow in minutes.
+### MCP Integration
+
+r8r includes a built-in MCP (Model Context Protocol) server so AI agents can discover and execute workflows directly.
+
+## License
+
+r8r is licensed under **AGPL-3.0**. Free to use, modify, and distribute. If you run a modified version as a network service, you must make the source available.
+
+**Commercial licensing** is available for organizations that cannot use AGPL.

@@ -1,115 +1,125 @@
 ---
 title: Triggers
-description: Events that start workflows
+description: How to trigger workflow execution in r8r.
 ---
 
-Triggers define when and how a workflow executes.
+Triggers define when and how a workflow is executed. r8r supports 4 trigger types.
 
-## HTTP trigger
+## Trigger Types
 
-Start workflows via HTTP requests:
+### Cron
 
-```yaml
-trigger:
-  http:
-    path: /api/users          # URL path
-    method: POST              # GET | POST | PUT | DELETE
-    auth:
-      type: bearer            # none | basic | bearer | api_key
-    validate:
-      body:                   # JSON Schema validation
-        type: object
-        required: ["email"]
-```
-
-Access trigger data:
+Schedule workflows on a recurring basis:
 
 ```yaml
-{{ trigger.body }}           # Request body
-{{ trigger.query }}          # Query parameters
-{{ trigger.headers }}        # Headers
-{{ trigger.params }}         # URL path params
+triggers:
+  - type: cron
+    schedule: "*/5 * * * *"   # Every 5 minutes
+  - type: cron
+    schedule: "0 9 * * MON"   # Every Monday at 9 AM
 ```
 
-## Schedule trigger
+Cron expressions follow standard 5-field format: `minute hour day-of-month month day-of-week`.
 
-Cron-based execution:
+Use the `settings.timezone` field to control which timezone the cron schedule uses:
 
 ```yaml
-trigger:
-  schedule: "0 9 * * MON"     # Every Monday at 9 AM
+settings:
+  timezone: "America/New_York"
 ```
 
-Cron syntax:
+### Webhook
 
-```
-* * * * *
-│ │ │ │ └─── Day of week (0-7, 0=Sunday)
-│ │ │ └───── Month (1-12)
-│ │ └─────── Day of month (1-31)
-│ └───────── Hour (0-23)
-└─────────── Minute (0-59)
-```
-
-Common patterns:
-
-| Expression | Meaning |
-|------------|---------|
-| `*/5 * * * *` | Every 5 minutes |
-| `0 * * * *` | Every hour |
-| `0 0 * * *` | Daily at midnight |
-| `0 9 * * MON` | Weekly on Monday |
-
-## Webhook trigger
-
-Receive external webhooks:
+Trigger workflows via HTTP POST requests:
 
 ```yaml
-trigger:
-  webhook:
-    provider: github
-    secret: "${WEBHOOK_SECRET}"
-    events:
-      - push
-      - pull_request
+triggers:
+  - type: webhook
+    path: /orders
 ```
 
-## Queue trigger
+When the server is running, POST to `http://localhost:8080/webhooks/<workflow-name>` to trigger the workflow. The request body becomes the workflow input.
 
-Process messages from queues:
+#### Webhook Signature Verification
+
+Verify webhook authenticity using signature schemes:
 
 ```yaml
-trigger:
-  queue:
-    type: kafka
-    brokers:
-      - localhost:9092
-    topic: events
-    group: r8r-consumers
+triggers:
+  - type: webhook
+    path: /github-events
+    signature:
+      scheme: github          # github | stripe | slack | generic
+      secret_env: GITHUB_WEBHOOK_SECRET  # Read from environment
 ```
 
-## Manual trigger
+Supported schemes:
+- **github**: Validates `X-Hub-Signature-256` header
+- **stripe**: Validates Stripe webhook signatures
+- **slack**: Validates Slack request signatures
+- **generic**: HMAC-SHA256 with configurable header
 
-Start via CLI or API:
+You can also reference stored credentials:
 
 ```yaml
-trigger:
-  manual: {}
+    signature:
+      scheme: github
+      secret_credential: github-webhook  # From r8r credentials store
 ```
 
-```bash
-r8r trigger my-workflow --data '{"key": "value"}'
+### Event
+
+Subscribe to events via Redis pub/sub:
+
+```yaml
+triggers:
+  - type: event
+    event: order.created
 ```
 
-## Multiple triggers
+When an event matching the name is published, the workflow is triggered with the event payload as input. Requires a Redis connection.
+
+### Manual
+
+Explicitly mark a workflow as manually triggerable:
+
+```yaml
+triggers:
+  - type: manual
+```
+
+Manual triggers allow execution via the CLI (`r8r workflows run`) or API (`POST /api/workflows/{name}/execute`).
+
+## Multiple Triggers
 
 A workflow can have multiple triggers:
 
 ```yaml
 triggers:
-  - http:
-      path: /api/users
-  - schedule: "0 9 * * *"
-  - webhook:
-      provider: stripe
+  - type: webhook
+    path: /incoming
+  - type: cron
+    schedule: "0 * * * *"
+  - type: manual
+```
+
+## Triggering via CLI
+
+```bash
+# Run any workflow manually
+r8r workflows run my-workflow
+
+# With parameters
+r8r workflows run my-workflow -p key=value
+
+# With JSON input
+r8r workflows run my-workflow --input '{"key": "value"}'
+```
+
+## Triggering via API
+
+```bash
+curl -X POST http://localhost:8080/api/workflows/my-workflow/execute \
+  -H "Content-Type: application/json" \
+  -d '{"input": {"key": "value"}}'
 ```

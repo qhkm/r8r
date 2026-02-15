@@ -78,13 +78,13 @@ impl WorkflowDag {
         let mut rec_stack = HashSet::new();
 
         for node in &all_nodes {
-            if !visited.contains(node) {
-                if self.has_cycle(node, &graph, &mut visited, &mut rec_stack)? {
-                    return Err(Error::Validation(format!(
-                        "Circular dependency detected involving workflow '{}'",
-                        node
-                    )));
-                }
+            if !visited.contains(node)
+                && self.has_cycle(node, &graph, &mut visited, &mut rec_stack)?
+            {
+                return Err(Error::Validation(format!(
+                    "Circular dependency detected involving workflow '{}'",
+                    node
+                )));
             }
         }
 

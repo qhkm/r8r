@@ -30,18 +30,15 @@ async fn serve_index() -> impl IntoResponse {
 
 /// Serve static assets (JS, CSS files)
 async fn serve_assets(axum::extract::Path(file): axum::extract::Path<String>) -> Response {
-    let assets_dir = Path::new(file!())
-        .parent()
-        .unwrap()
-        .join("static/assets");
-    
+    let assets_dir = Path::new(file!()).parent().unwrap().join("static/assets");
+
     let file_path = assets_dir.join(&file);
-    
+
     // Security: ensure the path doesn't escape the assets directory
     if !file_path.starts_with(&assets_dir) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    
+
     match tokio::fs::read(&file_path).await {
         Ok(contents) => {
             let mime_type = match file_path.extension().and_then(|e| e.to_str()) {
@@ -53,7 +50,7 @@ async fn serve_assets(axum::extract::Path(file): axum::extract::Path<String>) ->
                 Some("svg") => "image/svg+xml",
                 _ => "application/octet-stream",
             };
-            
+
             ([("content-type", mime_type)], contents).into_response()
         }
         Err(_) => StatusCode::NOT_FOUND.into_response(),
@@ -62,8 +59,5 @@ async fn serve_assets(axum::extract::Path(file): axum::extract::Path<String>) ->
 
 /// Get the dashboard static files directory path
 pub fn static_dir() -> std::path::PathBuf {
-    Path::new(file!())
-        .parent()
-        .unwrap()
-        .join("static")
+    Path::new(file!()).parent().unwrap().join("static")
 }

@@ -156,9 +156,11 @@ fn verify_stripe_signature(
 
         match key {
             "t" => {
-                timestamp = Some(value.parse().map_err(|_| {
-                    Error::Validation("Invalid Stripe timestamp".to_string())
-                })?);
+                timestamp = Some(
+                    value
+                        .parse()
+                        .map_err(|_| Error::Validation("Invalid Stripe timestamp".to_string()))?,
+                );
             }
             "v1" => {
                 let sig = hex::decode(value)
@@ -443,12 +445,27 @@ mod tests {
     #[test]
     fn test_scheme_from_str() {
         use std::str::FromStr;
-        
-        assert_eq!(SignatureScheme::from_str("github"), Ok(SignatureScheme::GitHub));
-        assert_eq!(SignatureScheme::from_str("STRIPE"), Ok(SignatureScheme::Stripe));
-        assert_eq!(SignatureScheme::from_str("Slack"), Ok(SignatureScheme::Slack));
-        assert_eq!(SignatureScheme::from_str("generic"), Ok(SignatureScheme::Generic));
-        assert_eq!(SignatureScheme::from_str("hmac"), Ok(SignatureScheme::Generic));
+
+        assert_eq!(
+            SignatureScheme::from_str("github"),
+            Ok(SignatureScheme::GitHub)
+        );
+        assert_eq!(
+            SignatureScheme::from_str("STRIPE"),
+            Ok(SignatureScheme::Stripe)
+        );
+        assert_eq!(
+            SignatureScheme::from_str("Slack"),
+            Ok(SignatureScheme::Slack)
+        );
+        assert_eq!(
+            SignatureScheme::from_str("generic"),
+            Ok(SignatureScheme::Generic)
+        );
+        assert_eq!(
+            SignatureScheme::from_str("hmac"),
+            Ok(SignatureScheme::Generic)
+        );
         assert!(SignatureScheme::from_str("unknown").is_err());
     }
 

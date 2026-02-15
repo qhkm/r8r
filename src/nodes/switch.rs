@@ -85,13 +85,14 @@ impl Node for SwitchNode {
                     switch_value.to_string().trim_matches('"') == compare_val
                 }
                 // String starting with expression operators
-                Value::String(s) if s.starts_with('>') || s.starts_with('<') || s.starts_with('!') => {
+                Value::String(s)
+                    if s.starts_with('>') || s.starts_with('<') || s.starts_with('!') =>
+                {
                     evaluate_condition_expr(s, &switch_value)?
                 }
                 // String is a Rhai expression returning bool
                 Value::String(s) if s.contains("input") || s.contains("value") => {
-                    let expr_result = evaluate_bool_expression(s, &ctx.input, &switch_value)?;
-                    expr_result
+                    evaluate_bool_expression(s, &ctx.input, &switch_value)?
                 }
                 // Direct value comparison
                 _ => switch_value == case.value,
@@ -139,7 +140,7 @@ impl Node for SwitchNode {
 
 fn evaluate_expression(expr: &str, input: &Value) -> Result<Value> {
     let engine = rhai::Engine::new();
-    
+
     // Register input as a variable
     let input_str = serde_json::to_string(input).unwrap_or_default();
     let scope_expr = format!(
@@ -169,16 +170,28 @@ fn evaluate_condition_expr(expr: &str, value: &Value) -> Result<bool> {
     };
 
     if let Some(rest) = expr.strip_prefix(">=") {
-        let threshold: f64 = rest.trim().parse().map_err(|_| Error::Node("Invalid number".to_string()))?;
+        let threshold: f64 = rest
+            .trim()
+            .parse()
+            .map_err(|_| Error::Node("Invalid number".to_string()))?;
         Ok(num_value >= threshold)
     } else if let Some(rest) = expr.strip_prefix("<=") {
-        let threshold: f64 = rest.trim().parse().map_err(|_| Error::Node("Invalid number".to_string()))?;
+        let threshold: f64 = rest
+            .trim()
+            .parse()
+            .map_err(|_| Error::Node("Invalid number".to_string()))?;
         Ok(num_value <= threshold)
     } else if let Some(rest) = expr.strip_prefix('>') {
-        let threshold: f64 = rest.trim().parse().map_err(|_| Error::Node("Invalid number".to_string()))?;
+        let threshold: f64 = rest
+            .trim()
+            .parse()
+            .map_err(|_| Error::Node("Invalid number".to_string()))?;
         Ok(num_value > threshold)
     } else if let Some(rest) = expr.strip_prefix('<') {
-        let threshold: f64 = rest.trim().parse().map_err(|_| Error::Node("Invalid number".to_string()))?;
+        let threshold: f64 = rest
+            .trim()
+            .parse()
+            .map_err(|_| Error::Node("Invalid number".to_string()))?;
         Ok(num_value < threshold)
     } else if let Some(rest) = expr.strip_prefix("!=") {
         let compare = rest.trim();
@@ -190,10 +203,10 @@ fn evaluate_condition_expr(expr: &str, value: &Value) -> Result<bool> {
 
 fn evaluate_bool_expression(expr: &str, input: &Value, switch_value: &Value) -> Result<bool> {
     let engine = rhai::Engine::new();
-    
+
     let input_str = serde_json::to_string(input).unwrap_or_default();
     let value_str = serde_json::to_string(switch_value).unwrap_or_default();
-    
+
     let full_expr = format!(
         r#"let input = parse_json("{}"); let value = parse_json("{}"); {}"#,
         input_str.replace('\\', "\\\\").replace('"', "\\\""),
@@ -235,8 +248,7 @@ mod tests {
             ],
             "default": { "action": "skip" }
         });
-        let ctx = NodeContext::new("exec-1", "test")
-            .with_input(json!({ "status": "active" }));
+        let ctx = NodeContext::new("exec-1", "test").with_input(json!({ "status": "active" }));
 
         let result = node.execute(&config, &ctx).await.unwrap();
 
@@ -255,8 +267,7 @@ mod tests {
             ],
             "default": "default_output"
         });
-        let ctx = NodeContext::new("exec-1", "test")
-            .with_input(json!({ "status": "unknown" }));
+        let ctx = NodeContext::new("exec-1", "test").with_input(json!({ "status": "unknown" }));
 
         let result = node.execute(&config, &ctx).await.unwrap();
 
@@ -276,8 +287,7 @@ mod tests {
                 { "value": 2, "output": "two", "label": "two" },
             ]
         });
-        let ctx = NodeContext::new("exec-1", "test")
-            .with_input(json!({ "count": 1 }));
+        let ctx = NodeContext::new("exec-1", "test").with_input(json!({ "count": 1 }));
 
         let result = node.execute(&config, &ctx).await.unwrap();
 
@@ -297,8 +307,7 @@ mod tests {
             ],
             "default": "F"
         });
-        let ctx = NodeContext::new("exec-1", "test")
-            .with_input(json!({ "score": 85 }));
+        let ctx = NodeContext::new("exec-1", "test").with_input(json!({ "score": 85 }));
 
         let result = node.execute(&config, &ctx).await.unwrap();
 

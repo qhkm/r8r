@@ -1,165 +1,166 @@
 ---
-title: Building Custom Nodes
-description: Create your own nodes in Rust
+title: Custom Logic with Rhai
+description: Using Rhai expressions for data transformation and custom logic in r8r.
 ---
 
-Extend r8r with custom nodes written in Rust.
+r8r uses the [Rhai](https://rhai.rs) scripting engine for data transformation and conditional logic. Rhai expressions power the `transform` node, `condition` fields, and template rendering.
 
-## Project setup
+## Transform Node
 
-Create a new Rust library:
-
-```bash
-cargo new --lib my-nodes
-cd my-nodes
-```
-
-Add dependencies to `Cargo.toml`:
-
-```toml
-[dependencies]
-r8r-sdk = "0.1"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-async-trait = "0.1"
-```
-
-## Define a node
-
-```rust
-use r8r_sdk::{Node, Context, Result};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Deserialize)]
-pub struct Config {
-    pub message: String,
-    pub times: Option<u32>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Output {
-    pub repeated: Vec<String>,
-}
-
-pub struct RepeatNode {
-    config: Config,
-}
-
-#[async_trait::async_trait]
-impl Node for RepeatNode {
-    type Config = Config;
-    type Output = Output;
-
-    fn new(config: Config) -> Self {
-        Self { config }
-    }
-
-    async fn execute(&self, ctx: Context) -> Result<Output> {
-        let times = self.config.times.unwrap_or(1);
-        let repeated = (0..times)
-            .map(|_| self.config.message.clone())
-            .collect();
-        
-        Ok(Output { repeated })
-    }
-}
-```
-
-## Register the node
-
-```rust
-use r8r_sdk::register_node;
-
-register_node!("custom/repeat", RepeatNode);
-```
-
-## Build and install
-
-Build your node library:
-
-```bash
-cargo build --release
-```
-
-Reference it in `r8r.toml`:
-
-```toml
-[nodes]
-custom = "./my-nodes/target/release"
-```
-
-## Use your node
+The `transform` node evaluates a Rhai expression and returns the result:
 
 ```yaml
-nodes:
-  - name: "greet"
-    type: "custom/repeat"
-    config:
-      message: "Hello!"
-      times: 3
+- id: process
+  type: transform
+  config:
+    expression: |
+      let data = input;
+      let active = data.items.filter(|item| item.status == "active");
+      #{
+        total: data.items.len(),
+        active: active.len(),
+        items: active
+      }
 ```
 
-## Accessing context
+The `input` variable contains the data from upstream nodes (or workflow input for the first node).
 
-The `Context` provides access to:
+## Rhai Basics
 
-```rust
-impl Node for MyNode {
-    async fn execute(&self, ctx: Context) -> Result<Output> {
-        // Access workflow variables
-        let value: Value = ctx.get("previous_node.output")?;
-        
-        // Access environment
-        let api_key = ctx.env("API_KEY")?;
-        
-        // HTTP client
-        let response = ctx.http()
-            .get("https://api.example.com")
-            .send()
-            .await?;
-        
-        // Logging
-        ctx.log("Processing...");
-        
-        Ok(Output { ... })
-    }
+### Data Types
+
+```rhai
+// Numbers
+let count = 42;
+let ratio = 3.14;
+
+// Strings
+let name = "r8r";
+let greeting = `Hello, ${name}!`;  // String interpolation
+
+// Arrays
+let items = [1, 2, 3];
+let first = items[0];
+
+// Objects (maps)
+let obj = #{
+  key: "value",
+  nested: #{
+    inner: true
+  }
+};
+```
+
+### Array Operations
+
+```rhai
+let items = input.data;
+
+// Filter
+let active = items.filter(|item| item.active);
+
+// Map
+let names = items.map(|item| item.name);
+
+// Find
+let first = items.find(|item| item.id == target_id);
+
+// Reduce
+let total = items.reduce(|sum, item| sum + item.amount, 0);
+
+// Sort
+items.sort(|a, b| a.name < b.name);
+
+// Length
+let count = items.len();
+```
+
+### Conditional Logic
+
+```rhai
+if input.status == "ok" {
+  input.data
+} else {
+  throw "Unexpected status: " + input.status
 }
 ```
 
-## Testing nodes
+### Error Handling
 
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use r8r_sdk::test::*;
+Use `throw` to raise errors:
 
-    #[tokio::test]
-    async fn test_repeat() {
-        let node = RepeatNode::new(Config {
-            message: "Hi".to_string(),
-            times: Some(2),
-        });
-        
-        let ctx = test_context();
-        let output = node.execute(ctx).await.unwrap();
-        
-        assert_eq!(output.repeated, vec!["Hi", "Hi"]);
-    }
+```rhai
+if input.amount <= 0 {
+  throw "Invalid amount: " + input.amount.to_string()
 }
+input
 ```
 
-## Publishing
+## Conditions
 
-Publish to crates.io:
+The `condition` field on any node uses Rhai expressions:
 
-```bash
-cargo publish
+```yaml
+- id: send-alert
+  type: email
+  config:
+    to: admin@example.com
+    subject: "Alert: High error rate"
+  depends_on: [check]
+  condition: "nodes.check.error_rate > 0.05"
 ```
 
-Users can then install via:
+## Template Expressions
 
-```toml
-[dependencies]
-r8r-node-myawesome = "1.0"
+Template strings (`{{ }}`) are evaluated in a simpler context:
+
+```yaml
+config:
+  url: "https://api.example.com/users/{{ nodes.fetch.user_id }}"
+  headers:
+    Authorization: "Bearer {{ env.R8R_API_TOKEN }}"
+```
+
+Templates support accessing:
+- `nodes.<id>.<field>` -- Output from upstream nodes
+- `env.<VAR>` -- Environment variables (restricted to `R8R_*` or allowlisted)
+- `input.<field>` -- Workflow input data
+
+## Practical Examples
+
+### Data Enrichment
+
+```yaml
+- id: enrich
+  type: transform
+  config:
+    expression: |
+      let user = nodes.fetch;
+      #{
+        name: user.name,
+        email: user.email,
+        tier: if user.total_spend > 1000 { "gold" } else { "standard" },
+        joined_days: (timestamp() - user.created_at) / 86400
+      }
+  depends_on: [fetch]
+```
+
+### Validation
+
+```yaml
+- id: validate
+  type: transform
+  config:
+    expression: |
+      let errors = [];
+      if input.email == () || input.email == "" {
+        errors.push("Email is required");
+      }
+      if input.amount <= 0 {
+        errors.push("Amount must be positive");
+      }
+      if errors.len() > 0 {
+        throw "Validation failed: " + errors.join(", ")
+      }
+      input
 ```

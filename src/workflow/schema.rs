@@ -252,8 +252,7 @@ impl WorkflowSchemaValidator {
         if let Err(error) = result {
             return Err(Error::Validation(format!(
                 "Workflow validation failed: {} at {}",
-                error,
-                error.instance_path
+                error, error.instance_path
             )));
         }
         Ok(())

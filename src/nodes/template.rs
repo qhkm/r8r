@@ -13,8 +13,7 @@ use super::types::NodeContext;
 /// Get the regex for matching environment variable templates: {{ env.VAR }}
 pub fn env_template_regex() -> &'static Regex {
     static ENV_TEMPLATE_REGEX: OnceLock<Regex> = OnceLock::new();
-    ENV_TEMPLATE_REGEX
-        .get_or_init(|| Regex::new(r"\{\{\s*env\.(\w+)\s*\}\}").expect("valid regex"))
+    ENV_TEMPLATE_REGEX.get_or_init(|| Regex::new(r"\{\{\s*env\.(\w+)\s*\}\}").expect("valid regex"))
 }
 
 /// Check if an environment variable is safe to expose in templates.
@@ -185,8 +184,11 @@ mod tests {
 
         let ctx = make_ctx(Value::Null, outputs);
 
-        let result =
-            render_template("Got {{ nodes.fetch.output.data }}", &ctx, RenderMode::Compact);
+        let result = render_template(
+            "Got {{ nodes.fetch.output.data }}",
+            &ctx,
+            RenderMode::Compact,
+        );
         assert_eq!(result, "Got result");
     }
 
