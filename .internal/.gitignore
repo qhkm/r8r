@@ -1,0 +1,4 @@
+# Keep internal working notes local by default.
+# Un-ignore files explicitly only when they should be versioned.
+*
+!.gitignore
