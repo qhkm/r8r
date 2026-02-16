@@ -159,6 +159,7 @@ pub fn create_api_routes() -> Router<AppState> {
         .route("/api/workflows", get(list_workflows))
         .route("/api/workflows/{name}", get(get_workflow))
         .route("/api/workflows/{name}/execute", post(execute_workflow))
+        .route("/api/executions", get(list_executions))
         .route("/api/executions/{id}", get(get_execution))
         .route("/api/executions/{id}/trace", get(get_execution_trace))
 }
@@ -345,6 +346,70 @@ struct ExecuteResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     duration_ms: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct ListExecutionsQuery {
+    #[serde(default)]
+    workflow: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    trigger: Option<String>,
+    #[serde(default = "default_exec_limit")]
+    limit: usize,
+    #[serde(default)]
+    offset: usize,
+}
+
+fn default_exec_limit() -> usize {
+    50
+}
+
+async fn list_executions(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<ListExecutionsQuery>,
+) -> impl IntoResponse {
+    use crate::storage::{ExecutionQuery, ExecutionStatus};
+
+    let status_filter = params
+        .status
+        .and_then(|s| s.parse::<ExecutionStatus>().ok());
+
+    let query = ExecutionQuery {
+        workflow_name: params.workflow,
+        status: status_filter,
+        trigger_type: params.trigger,
+        search: None,
+        started_after: None,
+        started_before: None,
+        limit: params.limit,
+        offset: params.offset,
+    };
+
+    match state.storage.query_executions(&query).await {
+        Ok(executions) => {
+            let items: Vec<Value> = executions
+                .into_iter()
+                .map(|e| {
+                    let duration_ms = e.finished_at.map(|f| (f - e.started_at).num_milliseconds());
+                    json!({
+                        "id": e.id,
+                        "workflow_id": e.workflow_id,
+                        "workflow_name": e.workflow_name,
+                        "status": e.status.to_string(),
+                        "trigger_type": e.trigger_type,
+                        "started_at": e.started_at.to_rfc3339(),
+                        "finished_at": e.finished_at.map(|f| f.to_rfc3339()),
+                        "duration_ms": duration_ms,
+                        "error": e.error,
+                    })
+                })
+                .collect();
+            Json(json!({"executions": items})).into_response()
+        }
+        Err(e) => external_error_response(e).into_response(),
+    }
 }
 
 async fn execute_workflow(
