@@ -46,6 +46,15 @@ enum Commands {
         #[command(subcommand)]
         action: TemplateActions,
     },
+    /// Live TUI monitor for a running r8r server
+    Monitor {
+        /// Server URL to connect to
+        #[arg(short, long, default_value = "http://localhost:8080")]
+        url: String,
+        /// Authentication token
+        #[arg(short, long)]
+        token: Option<String>,
+    },
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
@@ -336,6 +345,7 @@ async fn main() -> anyhow::Result<()> {
                 create,
             } => cmd_templates_use(&name, output.as_deref(), &vars, create).await?,
         },
+        Commands::Monitor { url, token } => cmd_monitor(&url, token.as_deref()).await?,
         Commands::Completions { shell } => {
             cmd_completions(shell)?;
         }
@@ -1135,6 +1145,10 @@ async fn shutdown_signal() {
         .await
         .expect("Failed to install Ctrl+C handler");
     println!("\nShutting down gracefully...");
+}
+
+async fn cmd_monitor(url: &str, token: Option<&str>) -> anyhow::Result<()> {
+    r8r::tui::run_monitor(url, token).await
 }
 
 async fn cmd_dev(file: &str) -> anyhow::Result<()> {

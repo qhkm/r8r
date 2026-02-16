@@ -49,6 +49,7 @@ pub mod storage;
 pub mod telemetry;
 pub mod templates;
 pub mod triggers;
+pub mod tui;
 pub mod validation;
 pub mod workflow;
 

@@ -17,7 +17,7 @@ use super::AppState;
 const BROADCAST_CAPACITY: usize = 1024;
 
 /// Event types for WebSocket monitoring.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MonitorEvent {
     /// Connection established
