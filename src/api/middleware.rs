@@ -48,14 +48,18 @@ pub async fn request_id_middleware(mut request: Request<Body>, next: Next) -> Re
     Span::current().record("request_id", &request_id);
 
     // Add to request extensions for use by handlers
-    request.extensions_mut().insert(RequestId(request_id.clone()));
+    request
+        .extensions_mut()
+        .insert(RequestId(request_id.clone()));
 
     // Process request
     let mut response = next.run(request).await;
 
     // Add request ID to response headers
     if let Ok(header_value) = HeaderValue::from_str(&request_id) {
-        response.headers_mut().insert(REQUEST_ID_HEADER.clone(), header_value);
+        response
+            .headers_mut()
+            .insert(REQUEST_ID_HEADER.clone(), header_value);
     }
 
     response
@@ -112,10 +116,7 @@ pub async fn access_log_middleware(request: Request<Body>, next: Next) -> Respon
         .and_then(|s| s.split(',').next())
         .map(|s| s.trim().to_string());
 
-    let request_id = request
-        .extensions()
-        .get::<RequestId>()
-        .map(|r| r.0.clone());
+    let request_id = request.extensions().get::<RequestId>().map(|r| r.0.clone());
 
     // Process request
     let response = next.run(request).await;
@@ -228,6 +229,99 @@ pub async fn health_auth_middleware(
     }
 }
 
+// ============================================================================
+// API Key Authentication Middleware
+// ============================================================================
+
+/// Configuration for API-wide authentication.
+#[derive(Clone)]
+pub struct ApiAuthConfig {
+    /// API key required for API access. None means no auth required.
+    pub api_key: Option<String>,
+}
+
+impl Default for ApiAuthConfig {
+    fn default() -> Self {
+        Self {
+            api_key: std::env::var("R8R_API_KEY").ok().filter(|k| !k.is_empty()),
+        }
+    }
+}
+
+/// Public paths that bypass API authentication.
+const API_AUTH_PUBLIC_PATHS: &[&str] = &["/api/health", "/api/metrics", "/api/openapi.json"];
+
+/// Middleware that optionally requires authentication for all API endpoints.
+///
+/// When `R8R_API_KEY` is set, requests to `/api/*` must include a valid
+/// Authorization header. Public paths (`/api/health`, `/api/metrics`,
+/// `/api/openapi.json`) and non-API paths (webhooks, dashboard) are exempt.
+///
+/// Supported header formats:
+/// - `Authorization: Bearer <api_key>`
+/// - `Authorization: ApiKey <api_key>`
+///
+/// Environment:
+/// - R8R_API_KEY: API key for all API endpoints (default: none, no auth required)
+pub async fn api_auth_middleware(
+    State(config): State<ApiAuthConfig>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    // If no API key configured, allow all requests (backwards compatible)
+    let api_key = match &config.api_key {
+        Some(key) => key,
+        None => return next.run(request).await,
+    };
+
+    let path = request.uri().path();
+
+    // Skip non-API paths (webhooks, dashboard, static assets)
+    if !path.starts_with("/api/") {
+        return next.run(request).await;
+    }
+
+    // Skip public API paths
+    if API_AUTH_PUBLIC_PATHS.iter().any(|p| path.starts_with(p)) {
+        return next.run(request).await;
+    }
+
+    // Extract and validate authorization header
+    let auth_header = request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    let is_authorized = match auth_header {
+        Some(header) => {
+            let token = header
+                .strip_prefix("Bearer ")
+                .or_else(|| header.strip_prefix("ApiKey "))
+                .unwrap_or("");
+
+            // Use constant-time comparison to prevent timing attacks
+            use subtle::ConstantTimeEq;
+            token.as_bytes().ct_eq(api_key.as_bytes()).into()
+        }
+        None => false,
+    };
+
+    if is_authorized {
+        next.run(request).await
+    } else {
+        warn!(
+            path = %path,
+            "Unauthorized API access attempt"
+        );
+        (
+            StatusCode::UNAUTHORIZED,
+            [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
+            "Unauthorized",
+        )
+            .into_response()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,17 +339,17 @@ mod tests {
             .layer(axum::middleware::from_fn(request_id_middleware));
 
         let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/test")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
             .await
             .unwrap();
 
         assert!(response.headers().contains_key("x-request-id"));
-        let request_id = response.headers().get("x-request-id").unwrap().to_str().unwrap();
+        let request_id = response
+            .headers()
+            .get("x-request-id")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert!(Uuid::parse_str(request_id).is_ok());
     }
 
@@ -266,12 +360,9 @@ mod tests {
             protected_paths: vec!["/api/health".to_string()],
         };
 
-        let app = Router::new()
-            .route("/api/health", get(test_handler))
-            .layer(axum::middleware::from_fn_with_state(
-                config,
-                health_auth_middleware,
-            ));
+        let app = Router::new().route("/api/health", get(test_handler)).layer(
+            axum::middleware::from_fn_with_state(config, health_auth_middleware),
+        );
 
         let response = app
             .oneshot(
@@ -293,12 +384,9 @@ mod tests {
             protected_paths: vec!["/api/health".to_string()],
         };
 
-        let app = Router::new()
-            .route("/api/health", get(test_handler))
-            .layer(axum::middleware::from_fn_with_state(
-                config,
-                health_auth_middleware,
-            ));
+        let app = Router::new().route("/api/health", get(test_handler)).layer(
+            axum::middleware::from_fn_with_state(config, health_auth_middleware),
+        );
 
         let response = app
             .oneshot(
@@ -321,12 +409,9 @@ mod tests {
             protected_paths: vec!["/api/health".to_string()],
         };
 
-        let app = Router::new()
-            .route("/api/health", get(test_handler))
-            .layer(axum::middleware::from_fn_with_state(
-                config,
-                health_auth_middleware,
-            ));
+        let app = Router::new().route("/api/health", get(test_handler)).layer(
+            axum::middleware::from_fn_with_state(config, health_auth_middleware),
+        );
 
         let response = app
             .oneshot(
@@ -349,12 +434,9 @@ mod tests {
             protected_paths: vec!["/api/health".to_string()],
         };
 
-        let app = Router::new()
-            .route("/api/health", get(test_handler))
-            .layer(axum::middleware::from_fn_with_state(
-                config,
-                health_auth_middleware,
-            ));
+        let app = Router::new().route("/api/health", get(test_handler)).layer(
+            axum::middleware::from_fn_with_state(config, health_auth_middleware),
+        );
 
         let response = app
             .oneshot(
@@ -377,12 +459,9 @@ mod tests {
             protected_paths: vec!["/api/health".to_string()],
         };
 
-        let app = Router::new()
-            .route("/api/health", get(test_handler))
-            .layer(axum::middleware::from_fn_with_state(
-                config,
-                health_auth_middleware,
-            ));
+        let app = Router::new().route("/api/health", get(test_handler)).layer(
+            axum::middleware::from_fn_with_state(config, health_auth_middleware),
+        );
 
         let response = app
             .oneshot(
@@ -416,6 +495,152 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/workflows")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ========================================================================
+    // API Auth Middleware Tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_api_auth_no_key_configured() {
+        let config = ApiAuthConfig { api_key: None };
+
+        let app = Router::new()
+            .route("/api/workflows", get(test_handler))
+            .layer(axum::middleware::from_fn_with_state(
+                config,
+                api_auth_middleware,
+            ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/workflows")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_api_auth_valid_token() {
+        let config = ApiAuthConfig {
+            api_key: Some("test-api-key".to_string()),
+        };
+
+        let app = Router::new()
+            .route("/api/workflows", get(test_handler))
+            .layer(axum::middleware::from_fn_with_state(
+                config,
+                api_auth_middleware,
+            ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/workflows")
+                    .header("Authorization", "Bearer test-api-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_api_auth_invalid_token() {
+        let config = ApiAuthConfig {
+            api_key: Some("test-api-key".to_string()),
+        };
+
+        let app = Router::new()
+            .route("/api/workflows", get(test_handler))
+            .layer(axum::middleware::from_fn_with_state(
+                config,
+                api_auth_middleware,
+            ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/workflows")
+                    .header("Authorization", "Bearer wrong-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_api_auth_public_endpoints_bypass() {
+        let config = ApiAuthConfig {
+            api_key: Some("test-api-key".to_string()),
+        };
+
+        // Health endpoint should bypass auth
+        let app = Router::new().route("/api/health", get(test_handler)).layer(
+            axum::middleware::from_fn_with_state(config.clone(), api_auth_middleware),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Metrics endpoint should bypass auth
+        let app = Router::new()
+            .route("/api/metrics", get(test_handler))
+            .layer(axum::middleware::from_fn_with_state(
+                config.clone(),
+                api_auth_middleware,
+            ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // OpenAPI spec should bypass auth
+        let app = Router::new()
+            .route("/api/openapi.json", get(test_handler))
+            .layer(axum::middleware::from_fn_with_state(
+                config,
+                api_auth_middleware,
+            ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/openapi.json")
                     .body(Body::empty())
                     .unwrap(),
             )

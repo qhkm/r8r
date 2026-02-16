@@ -65,19 +65,18 @@ pub struct ConnectionPool {
 impl ConnectionPool {
     /// Create a new connection pool for the given database path.
     pub fn new(path: &Path, config: PoolConfig) -> Result<Self> {
-        let manager = SqliteConnectionManager::file(path)
-            .with_init(|conn| {
-                // Configure each connection
-                conn.execute_batch(
-                    r#"
+        let manager = SqliteConnectionManager::file(path).with_init(|conn| {
+            // Configure each connection
+            conn.execute_batch(
+                r#"
                     PRAGMA journal_mode = WAL;
                     PRAGMA busy_timeout = 5000;
                     PRAGMA synchronous = NORMAL;
                     PRAGMA foreign_keys = ON;
                     "#,
-                )?;
-                Ok(())
-            });
+            )?;
+            Ok(())
+        });
 
         let pool = Pool::builder()
             .max_size(config.pool_size)
@@ -95,15 +94,14 @@ impl ConnectionPool {
     /// For testing, prefer using `SqliteStorage::open_in_memory()`.
     pub fn new_in_memory(config: PoolConfig) -> Result<Self> {
         // Use shared cache for in-memory databases
-        let manager = SqliteConnectionManager::memory()
-            .with_init(|conn| {
-                conn.execute_batch(
-                    r#"
+        let manager = SqliteConnectionManager::memory().with_init(|conn| {
+            conn.execute_batch(
+                r#"
                     PRAGMA foreign_keys = ON;
                     "#,
-                )?;
-                Ok(())
-            });
+            )?;
+            Ok(())
+        });
 
         let pool = Pool::builder()
             .max_size(config.pool_size)
@@ -124,7 +122,10 @@ impl ConnectionPool {
     /// Get a connection, blocking the current thread.
     ///
     /// This is useful when you need synchronous access from an async context.
-    pub fn get_timeout(&self, timeout: Duration) -> Result<PooledConnection<SqliteConnectionManager>> {
+    pub fn get_timeout(
+        &self,
+        timeout: Duration,
+    ) -> Result<PooledConnection<SqliteConnectionManager>> {
         self.pool
             .get_timeout(timeout)
             .map_err(|e| Error::Storage(format!("Connection timeout: {}", e)))
@@ -289,7 +290,9 @@ mod tests {
         let count: i32 = pool
             .with_connection(|conn| {
                 let count: i32 =
-                    conn.query_row("SELECT count FROM counter WHERE id = 1", [], |row| row.get(0))?;
+                    conn.query_row("SELECT count FROM counter WHERE id = 1", [], |row| {
+                        row.get(0)
+                    })?;
                 Ok(count)
             })
             .await

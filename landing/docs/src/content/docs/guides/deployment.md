@@ -1,229 +1,145 @@
 ---
 title: Deployment
-description: Deploy r8r to production
+description: Deploy r8r to production with Docker.
 ---
 
-Deploy r8r workflows to various platforms and environments.
+## Docker
 
-## Binary deployment
-
-### Build optimized release
+### Build the Image
 
 ```bash
-cargo build --release
+docker build -t r8r .
 ```
 
-The binary is at `target/release/r8r` (~15MB).
+The multi-stage build produces a minimal Debian-based image (~50MB) containing the `r8r` and `r8r-mcp` binaries.
 
-### Deploy with systemd
-
-Create `/etc/systemd/system/r8r.service`:
-
-```ini
-[Unit]
-Description=r8r workflow server
-After=network.target
-
-[Service]
-Type=simple
-User=r8r
-WorkingDirectory=/opt/r8r
-ExecStart=/usr/local/bin/r8r run --workflows /opt/r8r/workflows
-Restart=on-failure
-Environment="R8R_PROFILE=production"
-Environment="SLACK_TOKEN=xxx"
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start:
+### Run
 
 ```bash
-sudo systemctl enable r8r
-sudo systemctl start r8r
+docker run -d \
+  --name r8r \
+  -p 8080:8080 \
+  -v r8r-data:/data \
+  -e RUST_LOG=r8r=info \
+  r8r:latest
 ```
 
-## Docker deployment
+### Docker Compose
 
-### Dockerfile
-
-```dockerfile
-FROM debian:bookworm-slim
-
-COPY target/release/r8r /usr/local/bin/r8r
-COPY workflows /workflows
-COPY r8r.toml /etc/r8r/
-
-ENV R8R_CONFIG=/etc/r8r/r8r.toml
-
-EXPOSE 3000
-
-CMD ["r8r", "run", "--workflows", "/workflows"]
-```
-
-Build and run:
-
-```bash
-docker build -t my-r8r .
-docker run -p 3000:3000 my-r8r
-```
-
-## Fly.io deployment
-
-```bash
-# Install flyctl
-curl -L https://fly.io/install.sh | sh
-
-# Launch app
-fly launch
-
-# Deploy
-fly deploy
-```
-
-`fly.toml`:
-
-```toml
-app = "my-r8r"
-
-[build]
-  dockerfile = "Dockerfile"
-
-[env]
-  R8R_PROFILE = "production"
-
-[[services]]
-  internal_port = 3000
-  protocol = "tcp"
-
-  [[services.ports]]
-    handlers = ["http"]
-    port = 80
-    force_https = true
-
-  [[services.ports]]
-    handlers = ["tls", "http"]
-    port = 443
-```
-
-## Railway deployment
-
-```bash
-# Install Railway CLI
-npm i -g @railway/cli
-
-# Login and link
-railway login
-railway link
-
-# Deploy
-railway up
-```
-
-## Kubernetes deployment
+Create a `docker-compose.yml`:
 
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: r8r
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: r8r
-  template:
-    metadata:
-      labels:
-        app: r8r
-    spec:
-      containers:
-        - name: r8r
-          image: ghcr.io/r8r/r8r:latest
-          ports:
-            - containerPort: 3000
-          env:
-            - name: R8R_PROFILE
-              value: production
-          resources:
-            requests:
-              memory: "32Mi"
-              cpu: "100m"
-            limits:
-              memory: "128Mi"
-              cpu: "500m"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: r8r
-spec:
-  selector:
-    app: r8r
-  ports:
-    - port: 80
-      targetPort: 3000
+services:
+  r8r:
+    build: .
+    image: r8r:latest
+    container_name: r8r
+    ports:
+      - "8080:8080"
+    volumes:
+      - r8r-data:/data
+    environment:
+      - RUST_LOG=r8r=info
+      - R8R_DB=/data/r8r.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "r8r", "workflows", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  r8r-data:
+    name: r8r-data
 ```
 
-## Environment-specific config
-
-```toml
-# Base config
-[server]
-port = 3000
-
-# Production overrides
-[profile.production]
-[profile.production.server]
-port = 8080
-
-[profile.production.logging]
-level = "warn"
-format = "json"
-```
-
-Deploy with profile:
+Start with:
 
 ```bash
-R8R_PROFILE=production r8r run
+docker compose up -d
+docker compose logs -f  # View logs
 ```
 
-## Health checks
+## Environment Variables
 
-Enable health endpoint:
+Key environment variables for production:
 
-```toml
-[server]
-health_check = true
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RUST_LOG` | `r8r=info` | Log level |
+| `R8R_DB` | `/data/r8r.db` | Database path (Docker) |
+| `R8R_DATABASE_PATH` | `~/.local/share/r8r/r8r.db` | Database path (native) |
+| `R8R_SERVER_PORT` | `8080` | HTTP port |
+| `R8R_SERVER_HOST` | `127.0.0.1` | Bind address |
+| `R8R_CORS_ORIGINS` | `http://localhost:3000` | Allowed CORS origins (comma-separated) |
+| `R8R_MAX_CONCURRENT_REQUESTS` | `100` | Request concurrency limit |
+| `R8R_MAX_REQUEST_BODY_BYTES` | `1048576` | Max request body (1MB) |
+| `R8R_MONITOR_TOKEN` | (none) | WebSocket auth token |
+| `R8R_HEALTH_API_KEY` | (none) | API key for health endpoints |
+
+See [Environment Variables](/reference/environment) for the full list.
+
+## Port Configuration
+
+The default port is **8080**. Override with:
+
+```bash
+# CLI flag
+r8r server --port 9090
+
+# Environment variable
+R8R_SERVER_PORT=9090 r8r server
 ```
 
-Kubernetes probe:
+## Credentials
 
-```yaml
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 3000
-  initialDelaySeconds: 5
-  periodSeconds: 10
+Store secrets securely with the credentials manager:
+
+```bash
+# Store a credential
+r8r credentials set slack-webhook --value "https://hooks.slack.com/..."
+
+# List stored credentials (values are masked)
+r8r credentials list
 ```
 
-## Monitoring
+Credentials are encrypted with AES-256-GCM and stored locally.
 
-Export metrics:
+## Health Check
 
-```toml
-[metrics]
-enabled = true
-path = "/metrics"
+The `/api/health` endpoint checks database integrity:
+
+```bash
+curl http://localhost:8080/api/health
 ```
 
-Prometheus scraping:
+For production monitoring, optionally protect with an API key:
 
-```yaml
-annotations:
-  prometheus.io/scrape: "true"
-  prometheus.io/port: "3000"
-  prometheus.io/path: "/metrics"
+```bash
+R8R_HEALTH_API_KEY=your-secret-key r8r server
+```
+
+## Reverse Proxy (Nginx)
+
+```nginx
+server {
+    listen 80;
+    server_name r8r.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/monitor {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
 ```

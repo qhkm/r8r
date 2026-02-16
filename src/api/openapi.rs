@@ -11,8 +11,8 @@ pub fn generate_openapi_spec() -> Value {
             "description": "Agent-first Rust workflow automation engine API",
             "version": env!("CARGO_PKG_VERSION"),
             "license": {
-                "name": "MIT",
-                "url": "https://opensource.org/licenses/MIT"
+                "name": "AGPL-3.0-or-later",
+                "url": "https://spdx.org/licenses/AGPL-3.0-or-later.html"
             },
             "contact": {
                 "name": "r8r",

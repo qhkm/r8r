@@ -522,10 +522,7 @@ impl Executor {
         // Record metrics
         metrics::dec_active_executions();
         metrics::record_workflow_duration(start_time.elapsed(), &workflow.name);
-        metrics::record_workflow_execution(
-            execution.status.to_string().as_str(),
-            trigger_type,
-        );
+        metrics::record_workflow_execution(execution.status.to_string().as_str(), trigger_type);
 
         self.storage.save_execution(&execution).await?;
         emit_execution_finished(self.monitor.as_ref(), &execution);

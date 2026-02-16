@@ -1,105 +1,135 @@
 ---
-title: Connections
-description: How data flows between nodes
+title: Connections & Data Flow
+description: How data flows between nodes in r8r workflows.
 ---
 
-Connections define how data flows from one node to another in a workflow.
+r8r uses a DAG (Directed Acyclic Graph) model for connecting nodes. Nodes declare their dependencies explicitly, and data flows through template expressions.
 
-## Implicit connections
+## depends_on
 
-By default, nodes execute sequentially:
-
-```yaml
-nodes:
-  - name: "step1"
-    type: "http/request"
-  - name: "step2"    # Runs after step1 completes
-    type: "core/log"
-```
-
-## Explicit connections
-
-Define explicit data flow:
+The `depends_on` field creates execution order between nodes:
 
 ```yaml
 nodes:
-  - name: "fetch_user"
-    type: "http/request"
+  - id: step-a
+    type: http
     config:
-      url: "https://api.example.com/users/{{ trigger.body.user_id }}"
+      url: https://api.example.com/a
 
-  - name: "fetch_orders"
-    type: "http/request"
+  - id: step-b
+    type: http
     config:
-      url: "https://api.example.com/users/{{ fetch_user.body.id }}/orders"
+      url: https://api.example.com/b
 
-  - name: "send_email"
-    type: "email/send"
-    input:
-      to: "{{ fetch_user.body.email }}"
-      orders: "{{ fetch_orders.body }}"
+  - id: step-c
+    type: transform
+    config:
+      expression: |
+        #{
+          a: nodes.`step-a`,
+          b: nodes.`step-b`
+        }
+    depends_on: [step-a, step-b]
 ```
 
-## Parallel execution
+In this example:
+- `step-a` and `step-b` have no dependencies and run **in parallel**
+- `step-c` waits for both to complete before executing
 
-Nodes without dependencies run in parallel:
+## Accessing Node Output
+
+Use the `{{ nodes.<id>.<field> }}` template syntax to reference output from upstream nodes:
 
 ```yaml
-nodes:
-  - name: "fetch_a"    # Starts immediately
-    type: "http/request"
-  - name: "fetch_b"    # Also starts immediately
-    type: "http/request"
-  - name: "combine"    # Waits for both
-    type: "core/template"
-    input:
-      a: "{{ fetch_a.body }}"
-      b: "{{ fetch_b.body }}"
+- id: fetch
+  type: http
+  config:
+    url: https://api.example.com/users
+
+- id: process
+  type: transform
+  config:
+    expression: "nodes.fetch.body.users.len()"
+  depends_on: [fetch]
+
+- id: log
+  type: debug
+  config:
+    message: "Found {{ nodes.process }} users"
+  depends_on: [process]
 ```
 
-## Conditional connections
+## Environment Variables
+
+Access environment variables (restricted to `R8R_*` prefix or allowlisted variables):
 
 ```yaml
-nodes:
-  - name: "check"
-    type: "http/request"
-
-  - name: "success_path"
-    type: "core/log"
-    if: "{{ check.status }} == 200"
-
-  - name: "error_path"
-    type: "slack/post"
-    if: "{{ check.status }} >= 400"
+config:
+  url: "https://api.example.com"
+  headers:
+    Authorization: "Bearer {{ env.R8R_API_TOKEN }}"
 ```
 
-## Templating syntax
+To allow additional env vars, set `R8R_ALLOWED_ENV_VARS`:
 
-Use [Tera](https://keats.github.io/tera/) templates:
+```bash
+export R8R_ALLOWED_ENV_VARS="MY_TOKEN, CUSTOM_KEY"
+```
+
+## Iteration with for_each
+
+The `for_each` field iterates over an array, executing the node once per item:
 
 ```yaml
-input:
-  # Variable access
-  name: "{{ user.name }}"
-  
-  # Filters
-  upper: "{{ user.name | upper }}"
-  default: "{{ user.nickname | default: 'Anonymous' }}"
-  
-  # Conditionals
-  status: "{% if score > 50 %}pass{% else %}fail{% endif %}"
+- id: fetch-list
+  type: http
+  config:
+    url: https://api.example.com/items
+
+- id: process-each
+  type: http
+  config:
+    url: "https://api.example.com/items/{{ item.id }}"
+    method: PUT
+    body: '{{ item }}'
+  depends_on: [fetch-list]
+  for_each: "nodes.fetch-list.items"
 ```
 
-## Error propagation
+The current item is available as `item` within the node's config.
 
-Failed nodes stop downstream execution unless configured otherwise:
+Concurrency for `for_each` is controlled by the workflow's `settings.max_concurrency` (default: 10).
+
+## Conditional Execution
+
+Use `condition` to skip nodes based on runtime values:
 
 ```yaml
-nodes:
-  - name: "optional_check"
-    type: "http/request"
-    on_error: ignore  # Continue even if this fails
+- id: check
+  type: transform
+  config:
+    expression: "input.items.len()"
+  depends_on: [fetch]
 
-  - name: "always_runs"
-    type: "core/log"  # Runs regardless
+- id: alert
+  type: email
+  config:
+    to: admin@example.com
+    subject: "No items found"
+  depends_on: [check]
+  condition: "nodes.check == 0"
 ```
+
+If the condition evaluates to `false`, the node is skipped and downstream nodes receive no output from it.
+
+## Inter-Workflow Dependencies
+
+Workflows can depend on other workflows using `depends_on_workflows`:
+
+```yaml
+name: downstream-workflow
+depends_on_workflows:
+  - workflow: upstream-workflow
+```
+
+Use `r8r workflows dag <name>` to visualize workflow dependency graphs.

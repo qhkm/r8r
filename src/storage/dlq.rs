@@ -100,7 +100,10 @@ impl SqliteStorage {
             )",
             [],
         )?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_dlq_status ON dead_letter_queue(status)", [])?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_dlq_status ON dead_letter_queue(status)",
+            [],
+        )?;
         Ok(())
     }
 
@@ -124,16 +127,24 @@ impl SqliteStorage {
         Ok(entry)
     }
 
-    pub async fn list_dlq_entries(&self, status: Option<DlqStatus>, limit: u32, offset: u32) -> Result<Vec<DeadLetterEntry>> {
+    pub async fn list_dlq_entries(
+        &self,
+        status: Option<DlqStatus>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<DeadLetterEntry>> {
         let conn = self.conn.lock().await;
         let entries = match status {
             Some(s) => {
                 let mut stmt = conn.prepare("SELECT * FROM dead_letter_queue WHERE status = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3")?;
-                let rows = stmt.query_map(params![s.to_string(), limit, offset], row_to_dlq_entry)?;
+                let rows =
+                    stmt.query_map(params![s.to_string(), limit, offset], row_to_dlq_entry)?;
                 rows.collect::<std::result::Result<Vec<_>, _>>()?
             }
             None => {
-                let mut stmt = conn.prepare("SELECT * FROM dead_letter_queue ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")?;
+                let mut stmt = conn.prepare(
+                    "SELECT * FROM dead_letter_queue ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+                )?;
                 let rows = stmt.query_map(params![limit, offset], row_to_dlq_entry)?;
                 rows.collect::<std::result::Result<Vec<_>, _>>()?
             }
@@ -151,14 +162,20 @@ impl SqliteStorage {
     pub async fn resolve_dlq_entry(&self, id: &str) -> Result<()> {
         let conn = self.conn.lock().await;
         let now = Utc::now().to_rfc3339();
-        conn.execute("UPDATE dead_letter_queue SET status = 'resolved', updated_at = ?1 WHERE id = ?2", params![now, id])?;
+        conn.execute(
+            "UPDATE dead_letter_queue SET status = 'resolved', updated_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
         Ok(())
     }
 
     pub async fn discard_dlq_entry(&self, id: &str) -> Result<()> {
         let conn = self.conn.lock().await;
         let now = Utc::now().to_rfc3339();
-        conn.execute("UPDATE dead_letter_queue SET status = 'discarded', updated_at = ?1 WHERE id = ?2", params![now, id])?;
+        conn.execute(
+            "UPDATE dead_letter_queue SET status = 'discarded', updated_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
         Ok(())
     }
 
@@ -166,18 +183,46 @@ impl SqliteStorage {
         let conn = self.conn.lock().await;
         let now = Utc::now().to_rfc3339();
         conn.execute("UPDATE dead_letter_queue SET retry_count = retry_count + 1, updated_at = ?1 WHERE id = ?2", params![now, id])?;
-        let count: u32 = conn.query_row("SELECT retry_count FROM dead_letter_queue WHERE id = ?1", [id], |row| row.get(0))?;
+        let count: u32 = conn.query_row(
+            "SELECT retry_count FROM dead_letter_queue WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )?;
         Ok(count)
     }
 
     pub async fn get_dlq_stats(&self) -> Result<DlqStats> {
         let conn = self.conn.lock().await;
-        let total: u64 = conn.query_row("SELECT COUNT(*) FROM dead_letter_queue", [], |row| row.get(0))?;
-        let pending: u64 = conn.query_row("SELECT COUNT(*) FROM dead_letter_queue WHERE status = 'pending'", [], |row| row.get(0))?;
-        let scheduled: u64 = conn.query_row("SELECT COUNT(*) FROM dead_letter_queue WHERE status = 'scheduled'", [], |row| row.get(0))?;
-        let resolved: u64 = conn.query_row("SELECT COUNT(*) FROM dead_letter_queue WHERE status = 'resolved'", [], |row| row.get(0))?;
-        let discarded: u64 = conn.query_row("SELECT COUNT(*) FROM dead_letter_queue WHERE status = 'discarded'", [], |row| row.get(0))?;
-        Ok(DlqStats { total, pending, scheduled, resolved, discarded })
+        let total: u64 = conn.query_row("SELECT COUNT(*) FROM dead_letter_queue", [], |row| {
+            row.get(0)
+        })?;
+        let pending: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM dead_letter_queue WHERE status = 'pending'",
+            [],
+            |row| row.get(0),
+        )?;
+        let scheduled: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM dead_letter_queue WHERE status = 'scheduled'",
+            [],
+            |row| row.get(0),
+        )?;
+        let resolved: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM dead_letter_queue WHERE status = 'resolved'",
+            [],
+            |row| row.get(0),
+        )?;
+        let discarded: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM dead_letter_queue WHERE status = 'discarded'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(DlqStats {
+            total,
+            pending,
+            scheduled,
+            resolved,
+            discarded,
+        })
     }
 }
 
@@ -205,9 +250,17 @@ fn row_to_dlq_entry(row: &Row) -> rusqlite::Result<DeadLetterEntry> {
         failed_node_id: row.get("failed_node_id")?,
         retry_count: row.get("retry_count")?,
         max_retries: row.get("max_retries")?,
-        created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("created_at")?).map(|dt| dt.with_timezone(&Utc)).unwrap_or_else(|_| Utc::now()),
-        updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("updated_at")?).map(|dt| dt.with_timezone(&Utc)).unwrap_or_else(|_| Utc::now()),
-        next_retry_at: next_retry_str.and_then(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)).ok()),
+        created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("created_at")?)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+        updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("updated_at")?)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+        next_retry_at: next_retry_str.and_then(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&Utc))
+                .ok()
+        }),
         status: status_str.parse().unwrap_or(DlqStatus::Pending),
     })
 }

@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "Agent-first Rust workflow automation engine"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/kitakod/r8r"
+repository = "https://github.com/qhkm/r8r"
+homepage = "https://r8r-docs.pages.dev"
+authors = ["Kitakod Ventures"]
+keywords = ["workflow", "automation", "mcp", "agent", "orchestration"]
+categories = ["asynchronous", "development-tools", "web-programming"]
+readme = "README.md"
 
 [[bin]]
 name = "r8r"

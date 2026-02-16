@@ -109,12 +109,18 @@ impl Node for DatabaseNode {
             "sqlite" => execute_sqlite(&config, connection_string).await,
             "postgres" => execute_postgres(&config, connection_string).await,
             "mysql" => execute_mysql(&config, connection_string).await,
-            _ => Err(Error::Node(format!("Unknown database type: {}", config.db_type))),
+            _ => Err(Error::Node(format!(
+                "Unknown database type: {}",
+                config.db_type
+            ))),
         }
     }
 }
 
-async fn execute_sqlite(config: &DatabaseConfig, connection_string: Option<String>) -> Result<NodeResult> {
+async fn execute_sqlite(
+    config: &DatabaseConfig,
+    connection_string: Option<String>,
+) -> Result<NodeResult> {
     let path = connection_string.unwrap_or_else(|| ":memory:".to_string());
 
     // Use tokio's spawn_blocking for synchronous rusqlite operations
@@ -130,11 +136,10 @@ async fn execute_sqlite(config: &DatabaseConfig, connection_string: Option<Strin
         if operation == "execute" {
             // Execute (INSERT, UPDATE, DELETE)
             let affected = if let Some(params) = params {
-                let params: Vec<Box<dyn rusqlite::ToSql>> = params
-                    .iter()
-                    .map(|v| value_to_sql(v))
-                    .collect();
-                let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+                let params: Vec<Box<dyn rusqlite::ToSql>> =
+                    params.iter().map(|v| value_to_sql(v)).collect();
+                let params_refs: Vec<&dyn rusqlite::ToSql> =
+                    params.iter().map(|p| p.as_ref()).collect();
                 conn.execute(&query, params_refs.as_slice())
             } else {
                 conn.execute(&query, [])
@@ -149,37 +154,41 @@ async fn execute_sqlite(config: &DatabaseConfig, connection_string: Option<Strin
             }))
         } else {
             // Query (SELECT)
-            let mut stmt = conn.prepare(&query)
+            let mut stmt = conn
+                .prepare(&query)
                 .map_err(|e| Error::Node(format!("SQLite prepare failed: {}", e)))?;
 
-            let column_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+            let column_names: Vec<String> =
+                stmt.column_names().iter().map(|s| s.to_string()).collect();
             let column_count = column_names.len();
 
-            let rows_result: std::result::Result<Vec<Vec<Value>>, rusqlite::Error> = if let Some(params) = params {
-                let params: Vec<Box<dyn rusqlite::ToSql>> = params
-                    .iter()
-                    .map(|v| value_to_sql(v))
-                    .collect();
-                let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-                stmt.query_map(params_refs.as_slice(), |row| {
-                    let mut values = Vec::with_capacity(column_count);
-                    for i in 0..column_count {
-                        values.push(row_value_to_json(row, i));
-                    }
-                    Ok(values)
-                })?.collect()
-            } else {
-                stmt.query_map([], |row| {
-                    let mut values = Vec::with_capacity(column_count);
-                    for i in 0..column_count {
-                        values.push(row_value_to_json(row, i));
-                    }
-                    Ok(values)
-                })?.collect()
-            };
+            let rows_result: std::result::Result<Vec<Vec<Value>>, rusqlite::Error> =
+                if let Some(params) = params {
+                    let params: Vec<Box<dyn rusqlite::ToSql>> =
+                        params.iter().map(|v| value_to_sql(v)).collect();
+                    let params_refs: Vec<&dyn rusqlite::ToSql> =
+                        params.iter().map(|p| p.as_ref()).collect();
+                    stmt.query_map(params_refs.as_slice(), |row| {
+                        let mut values = Vec::with_capacity(column_count);
+                        for i in 0..column_count {
+                            values.push(row_value_to_json(row, i));
+                        }
+                        Ok(values)
+                    })?
+                    .collect()
+                } else {
+                    stmt.query_map([], |row| {
+                        let mut values = Vec::with_capacity(column_count);
+                        for i in 0..column_count {
+                            values.push(row_value_to_json(row, i));
+                        }
+                        Ok(values)
+                    })?
+                    .collect()
+                };
 
-            let rows = rows_result
-                .map_err(|e| Error::Node(format!("SQLite query failed: {}", e)))?;
+            let rows =
+                rows_result.map_err(|e| Error::Node(format!("SQLite query failed: {}", e)))?;
 
             // Convert to array of objects
             let records: Vec<Value> = rows
@@ -243,15 +252,20 @@ fn row_value_to_json(row: &rusqlite::Row, idx: usize) -> Value {
         return json!(v);
     }
     if let Ok(v) = row.get::<_, Vec<u8>>(idx) {
-        return json!(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &v));
+        return json!(base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &v
+        ));
     }
     Value::Null
 }
 
-async fn execute_postgres(config: &DatabaseConfig, connection_string: Option<String>) -> Result<NodeResult> {
-    let _conn_str = connection_string.ok_or_else(|| {
-        Error::Node("PostgreSQL requires connection_string".to_string())
-    })?;
+async fn execute_postgres(
+    config: &DatabaseConfig,
+    connection_string: Option<String>,
+) -> Result<NodeResult> {
+    let _conn_str = connection_string
+        .ok_or_else(|| Error::Node("PostgreSQL requires connection_string".to_string()))?;
 
     // Note: Full PostgreSQL implementation would require tokio-postgres or sqlx
     warn!("PostgreSQL support requires tokio-postgres crate");
@@ -264,10 +278,12 @@ async fn execute_postgres(config: &DatabaseConfig, connection_string: Option<Str
     })))
 }
 
-async fn execute_mysql(config: &DatabaseConfig, connection_string: Option<String>) -> Result<NodeResult> {
-    let _conn_str = connection_string.ok_or_else(|| {
-        Error::Node("MySQL requires connection_string".to_string())
-    })?;
+async fn execute_mysql(
+    config: &DatabaseConfig,
+    connection_string: Option<String>,
+) -> Result<NodeResult> {
+    let _conn_str = connection_string
+        .ok_or_else(|| Error::Node("MySQL requires connection_string".to_string()))?;
 
     // Note: Full MySQL implementation would require mysql_async crate
     warn!("MySQL support requires mysql_async crate");
