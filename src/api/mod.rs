@@ -27,7 +27,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{error, warn};
 
-use crate::engine::Executor;
+use crate::engine::{Executor, PauseRegistry};
 use crate::error::Error;
 use crate::nodes::NodeRegistry;
 use crate::shutdown::ShutdownCoordinator;
@@ -150,6 +150,7 @@ pub struct AppState {
     pub registry: Arc<NodeRegistry>,
     pub monitor: Option<Arc<Monitor>>,
     pub shutdown: Arc<ShutdownCoordinator>,
+    pub pause_registry: PauseRegistry,
 }
 
 impl AppState {
@@ -162,6 +163,7 @@ impl AppState {
         if let Some(monitor) = self.monitor.clone() {
             executor = executor.with_monitor(monitor);
         }
+        executor = executor.with_pause_registry(self.pause_registry.clone());
         executor
     }
 }

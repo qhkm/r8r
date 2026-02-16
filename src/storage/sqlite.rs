@@ -984,6 +984,10 @@ impl SqliteStorage {
     }
 
     /// Get the latest checkpoint for an execution.
+    ///
+    /// TODO(review): DateTime::parse_from_rfc3339().unwrap() in checkpoint and
+    /// workflow_version deserialization will panic on malformed DB data. Replace
+    /// with proper error handling (.map_err or .unwrap_or_default).
     pub async fn get_latest_checkpoint(&self, execution_id: &str) -> Result<Option<Checkpoint>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(

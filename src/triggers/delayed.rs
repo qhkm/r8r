@@ -227,6 +227,10 @@ impl DelayedEventQueue {
     }
 
     /// Cancel a scheduled event by ID.
+    ///
+    /// TODO(review): This scans the entire sorted set (ZRANGE 0 -1) and deserializes
+    /// every entry to find one by ID. O(n) at scale. Consider a secondary Redis hash
+    /// mapping event ID to the sorted set member for O(1) lookup.
     pub async fn cancel_event(&self, event_id: &str) -> Result<bool, EventError> {
         let mut conn = self
             .client
@@ -309,11 +313,42 @@ impl DelayedEventQueue {
     }
 
     /// Process events that are due.
+    ///
+    /// Uses an atomic Lua script to fetch and remove due events in one
+    /// operation, preventing duplicate processing across instances.
     pub async fn process_due_events(&self) -> Result<usize, EventError> {
-        let due_events = self.get_due_events().await?;
+        let mut conn = self
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| EventError::Connection(e.to_string()))?;
+
+        let now = Utc::now().timestamp() as f64;
+
+        // Atomically pop due events
+        let script = redis::Script::new(ATOMIC_POP_DUE_EVENTS_LUA);
+        let event_jsons: Vec<String> = script
+            .key(DELAYED_EVENTS_KEY)
+            .arg(now)
+            .invoke_async(&mut conn)
+            .await
+            .map_err(|e| EventError::Storage(e.to_string()))?;
+
+        if event_jsons.is_empty() {
+            return Ok(0);
+        }
+
         let mut processed = 0;
 
-        for event in due_events {
+        for event_json in event_jsons {
+            let event = match serde_json::from_str::<DelayedEvent>(&event_json) {
+                Ok(e) => e,
+                Err(e) => {
+                    warn!("Failed to parse delayed event: {}", e);
+                    continue;
+                }
+            };
+
             if let Err(e) = self.process_event(&event).await {
                 error!("Failed to process delayed event '{}': {}", event.id, e);
 
@@ -322,7 +357,7 @@ impl DelayedEventQueue {
                     let mut retry_event = event.clone();
                     retry_event.retry_count += 1;
                     retry_event.scheduled_at = Utc::now()
-                        + ChronoDuration::seconds(60 * retry_event.retry_count as i64); // Exponential backoff
+                        + ChronoDuration::seconds(60 * retry_event.retry_count as i64);
 
                     if let Err(e) = self.schedule_delayed_event(&retry_event).await {
                         error!("Failed to reschedule event for retry: {}", e);
@@ -336,11 +371,7 @@ impl DelayedEventQueue {
             } else {
                 processed += 1;
             }
-
-            // Remove from queue regardless of success (retry was scheduled if needed)
-            if let Err(e) = self.remove_event(&event).await {
-                warn!("Failed to remove processed event from queue: {}", e);
-            }
+            // No need to remove from queue — Lua script already did it
         }
 
         if processed > 0 {
@@ -351,6 +382,11 @@ impl DelayedEventQueue {
     }
 
     /// Remove an event from the queue.
+    ///
+    /// TODO(review): This re-serializes the event to match the Redis member string.
+    /// If JSON field ordering differs between store and remove (e.g., HashMap fields),
+    /// the ZREM will silently fail. Store the original JSON string alongside the event
+    /// or use the event ID for lookup instead.
     async fn remove_event(&self, event: &DelayedEvent) -> Result<(), EventError> {
         let mut conn = self
             .client
@@ -535,6 +571,20 @@ impl DelayedEventQueue {
     }
 }
 
+/// Lua script that atomically fetches and removes due events from a sorted set.
+/// This prevents duplicate processing when multiple instances race.
+const ATOMIC_POP_DUE_EVENTS_LUA: &str = r#"
+local key = KEYS[1]
+local max_score = ARGV[1]
+local events = redis.call('ZRANGEBYSCORE', key, 0, max_score)
+if #events > 0 then
+    for _, ev in ipairs(events) do
+        redis.call('ZREM', key, ev)
+    end
+end
+return events
+"#;
+
 /// Internal function to process due events (used by background task).
 async fn process_due_events_internal(
     client: &Client,
@@ -549,9 +599,14 @@ async fn process_due_events_internal(
 
     let now = Utc::now().timestamp() as f64;
 
-    // Get and remove due events atomically using ZRANGEBYSCORE and ZREM
-    let events: Vec<String> = conn
-        .zrangebyscore(DELAYED_EVENTS_KEY, 0 as f64, now)
+    // Atomically fetch and remove due events using a Lua script.
+    // This prevents duplicate processing when the lock expires and
+    // another instance picks up the same events.
+    let script = redis::Script::new(ATOMIC_POP_DUE_EVENTS_LUA);
+    let events: Vec<String> = script
+        .key(DELAYED_EVENTS_KEY)
+        .arg(now)
+        .invoke_async(&mut conn)
         .await
         .map_err(|e| EventError::Storage(e.to_string()))?;
 
@@ -562,11 +617,6 @@ async fn process_due_events_internal(
     let mut processed = 0;
 
     for event_json in events {
-        // Remove the event
-        let _: i32 = conn
-            .zrem(DELAYED_EVENTS_KEY, &event_json)
-            .await
-            .map_err(|e| EventError::Storage(e.to_string()))?;
 
         // Parse and process
         match serde_json::from_str::<DelayedEvent>(&event_json) {
@@ -687,6 +737,9 @@ async fn process_single_event(
 }
 
 /// Errors specific to delayed event processing.
+///
+/// TODO(review): This enum is unused — all delayed event operations use EventError
+/// from event.rs. Either use this type or remove it.
 #[derive(Debug, thiserror::Error)]
 pub enum DelayedEventError {
     #[error("Redis connection error: {0}")]

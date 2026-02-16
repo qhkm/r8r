@@ -1084,6 +1084,7 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         registry: registry.clone(),
         monitor: Some(monitor.clone()),
         shutdown: shutdown.clone(),
+        pause_registry: r8r::engine::PauseRegistry::new(),
     };
 
     let monitored_state = MonitoredAppState {
