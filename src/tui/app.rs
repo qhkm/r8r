@@ -238,11 +238,8 @@ impl App {
             KeyCode::Char('j') | KeyCode::Down => {
                 if !self.history.is_empty() {
                     let max = self.history.len().saturating_sub(1);
-                    self.history_selected = Some(
-                        self.history_selected
-                            .map(|s| (s + 1).min(max))
-                            .unwrap_or(0),
-                    );
+                    self.history_selected =
+                        Some(self.history_selected.map(|s| (s + 1).min(max)).unwrap_or(0));
                     // Adjust scroll to keep selection visible
                     if let Some(sel) = self.history_selected {
                         if sel >= self.history_scroll + 20 {
@@ -272,10 +269,8 @@ impl App {
                 if let Some(sel) = self.history_selected {
                     if let Some(exec) = self.history.get(sel) {
                         let workflow_name = exec.workflow_name.clone();
-                        if let Some(idx) = self
-                            .workflows
-                            .iter()
-                            .position(|w| w.name == workflow_name)
+                        if let Some(idx) =
+                            self.workflows.iter().position(|w| w.name == workflow_name)
                         {
                             self.load_dag_from_workflow(idx);
                         }
@@ -368,11 +363,7 @@ impl App {
                 }
 
                 // Load DAG for this workflow
-                if let Some(idx) = self
-                    .workflows
-                    .iter()
-                    .position(|w| w.name == *workflow_name)
-                {
+                if let Some(idx) = self.workflows.iter().position(|w| w.name == *workflow_name) {
                     self.load_dag_from_workflow(idx);
                 }
             }
@@ -397,9 +388,12 @@ impl App {
                         });
                     }
                     // Update DAG status
-                    self.update_dag_node_status(node_id, NodeStatus::Running {
-                        started_at: Utc::now(),
-                    });
+                    self.update_dag_node_status(
+                        node_id,
+                        NodeStatus::Running {
+                            started_at: Utc::now(),
+                        },
+                    );
                 }
             }
             MonitorEvent::NodeCompleted {
@@ -533,10 +527,8 @@ impl App {
                         if depths.contains_key(&node.id) {
                             continue;
                         }
-                        let all_deps_resolved = node
-                            .depends_on
-                            .iter()
-                            .all(|dep| depths.contains_key(dep));
+                        let all_deps_resolved =
+                            node.depends_on.iter().all(|dep| depths.contains_key(dep));
                         if all_deps_resolved {
                             let max_dep_depth = node
                                 .depends_on
@@ -572,7 +564,10 @@ impl App {
 
     /// Spinner frame based on tick counter.
     pub fn spinner_frame(&self) -> &'static str {
-        const FRAMES: &[&str] = &["\u{2801}", "\u{2809}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{2830}", "\u{2820}", "\u{2800}"];
+        const FRAMES: &[&str] = &[
+            "\u{2801}", "\u{2809}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{2830}", "\u{2820}",
+            "\u{2800}",
+        ];
         FRAMES[(self.tick as usize / 2) % FRAMES.len()]
     }
 }

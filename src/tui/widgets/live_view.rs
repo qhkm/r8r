@@ -35,14 +35,12 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, is_active: bool) {
     let mut lines = Vec::new();
 
     // Header
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("  {:<20} {:<8} {}", "NODE", "TYPE", "STATUS"),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        format!("  {:<20} {:<8} {}", "NODE", "TYPE", "STATUS"),
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    )]));
 
     for exec in app.live_executions.iter() {
         // Execution header
@@ -68,11 +66,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, is_active: bool) {
             let (icon, status_text, color) = match &node.status {
                 NodeStatus::Running { started_at } => {
                     let elapsed = (chrono::Utc::now() - *started_at).num_milliseconds();
-                    (
-                        app.spinner_frame(),
-                        format!("{}ms", elapsed),
-                        Color::Yellow,
-                    )
+                    (app.spinner_frame(), format!("{}ms", elapsed), Color::Yellow)
                 }
                 NodeStatus::Completed { duration_ms } => {
                     ("\u{2713}", format!("{}ms", duration_ms), Color::Green)

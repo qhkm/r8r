@@ -65,7 +65,9 @@ pub enum LogLevel {
 impl LogLine {
     pub fn from_monitor_event(event: &MonitorEvent) -> Self {
         let (level, message) = match event {
-            MonitorEvent::Connected { message } => (LogLevel::Info, format!("connected: {}", message)),
+            MonitorEvent::Connected { message } => {
+                (LogLevel::Info, format!("connected: {}", message))
+            }
             MonitorEvent::ExecutionStarted {
                 execution_id,
                 workflow_name,

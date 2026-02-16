@@ -99,10 +99,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, is_active: bool) {
 
         lines.push(Line::from(vec![
             Span::styled("  ", bg_style),
-            Span::styled(
-                format!("{:<10} ", id_short),
-                bg_style.fg(Color::Blue),
-            ),
+            Span::styled(format!("{:<10} ", id_short), bg_style.fg(Color::Blue)),
             Span::styled(format!("{:<18} ", wf_name), bg_style.fg(Color::White)),
             Span::styled(
                 format!("{}{:<9} ", status_icon, exec.status),

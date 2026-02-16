@@ -19,8 +19,8 @@ pub fn render(f: &mut Frame, app: &App) {
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(0),       // content
-            Constraint::Length(1),     // status bar
+            Constraint::Min(0),    // content
+            Constraint::Length(1), // status bar
         ])
         .split(size);
 
@@ -39,19 +39,13 @@ pub fn render(f: &mut Frame, app: &App) {
     // Top: live view (55%) + DAG (45%)
     let top_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(55),
-            Constraint::Percentage(45),
-        ])
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(vertical_chunks[0]);
 
     // Bottom: history (55%) + log tail (45%)
     let bottom_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(55),
-            Constraint::Percentage(45),
-        ])
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(vertical_chunks[1]);
 
     // Render panels
@@ -101,10 +95,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
     let ws_display = app.server_url.replacen("http", "ws", 1);
 
     let status_line = Line::from(vec![
-        Span::styled(
-            format!(" {} ", conn_icon),
-            Style::default().fg(conn_color),
-        ),
+        Span::styled(format!(" {} ", conn_icon), Style::default().fg(conn_color)),
         Span::styled(
             format!("{} {} ", conn_label, ws_display),
             Style::default().fg(Color::White),
@@ -117,10 +108,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(": switch ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            "\u{2502} ",
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled("\u{2502} ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             "j/k",
             Style::default()
@@ -128,10 +116,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(": scroll ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            "\u{2502} ",
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled("\u{2502} ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             "Enter",
             Style::default()
@@ -139,10 +124,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(": select ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            "\u{2502} ",
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled("\u{2502} ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             "q",
             Style::default()
@@ -152,7 +134,6 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(": quit", Style::default().fg(Color::DarkGray)),
     ]);
 
-    let status = Paragraph::new(status_line)
-        .style(Style::default().bg(Color::Black));
+    let status = Paragraph::new(status_line).style(Style::default().bg(Color::Black));
     f.render_widget(status, area);
 }

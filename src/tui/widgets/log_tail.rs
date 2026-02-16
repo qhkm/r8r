@@ -47,12 +47,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, is_active: bool) {
     };
 
     let mut lines = Vec::new();
-    for log_line in app
-        .log_lines
-        .iter()
-        .skip(scroll_offset)
-        .take(inner_height)
-    {
+    for log_line in app.log_lines.iter().skip(scroll_offset).take(inner_height) {
         let time_str = log_line.timestamp.format("%H:%M:%S").to_string();
 
         let (level_str, level_color) = match log_line.level {

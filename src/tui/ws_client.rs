@@ -12,11 +12,7 @@ use super::event::TuiEvent;
 /// Connect to the WebSocket monitor endpoint and send events via the channel.
 ///
 /// Auto-reconnects with exponential backoff on disconnection.
-pub async fn connect(
-    base_url: &str,
-    token: Option<&str>,
-    tx: mpsc::Sender<TuiEvent>,
-) {
+pub async fn connect(base_url: &str, token: Option<&str>, tx: mpsc::Sender<TuiEvent>) {
     let ws_url = build_ws_url(base_url, token);
     let mut backoff = Duration::from_secs(1);
     let max_backoff = Duration::from_secs(30);
@@ -51,9 +47,7 @@ pub async fn connect(
                         }
                         Some(Err(e)) => {
                             warn!("WebSocket error: {}", e);
-                            let _ = tx
-                                .send(TuiEvent::WsDisconnected(Some(e.to_string())))
-                                .await;
+                            let _ = tx.send(TuiEvent::WsDisconnected(Some(e.to_string()))).await;
                             break;
                         }
                         None => {
@@ -66,9 +60,7 @@ pub async fn connect(
             }
             Err(e) => {
                 error!("WebSocket connection failed: {}", e);
-                let _ = tx
-                    .send(TuiEvent::WsDisconnected(Some(e.to_string())))
-                    .await;
+                let _ = tx.send(TuiEvent::WsDisconnected(Some(e.to_string()))).await;
             }
         }
 

@@ -372,7 +372,9 @@ async fn list_executions(
 ) -> impl IntoResponse {
     use crate::storage::{ExecutionQuery, ExecutionStatus};
 
-    let status_filter = params.status.and_then(|s| s.parse::<ExecutionStatus>().ok());
+    let status_filter = params
+        .status
+        .and_then(|s| s.parse::<ExecutionStatus>().ok());
 
     let query = ExecutionQuery {
         workflow_name: params.workflow,

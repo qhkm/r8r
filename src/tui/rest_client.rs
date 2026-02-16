@@ -43,11 +43,7 @@ struct WorkflowDetailResponse {
 }
 
 /// Load initial data from the REST API and send it via the channel.
-pub async fn load_initial_data(
-    base_url: &str,
-    token: Option<&str>,
-    tx: mpsc::Sender<TuiEvent>,
-) {
+pub async fn load_initial_data(base_url: &str, token: Option<&str>, tx: mpsc::Sender<TuiEvent>) {
     info!("Loading initial data from {}", base_url);
 
     let client = reqwest::Client::new();
@@ -121,10 +117,7 @@ pub async fn load_initial_data(
                             {
                                 Ok(detail_resp) => {
                                     if detail_resp.status().is_success() {
-                                        match detail_resp
-                                            .json::<WorkflowDetailResponse>()
-                                            .await
-                                        {
+                                        match detail_resp.json::<WorkflowDetailResponse>().await {
                                             Ok(detail) => {
                                                 workflows.push(WorkflowSummary {
                                                     name: detail.name,
@@ -132,10 +125,7 @@ pub async fn load_initial_data(
                                                 });
                                             }
                                             Err(e) => {
-                                                error!(
-                                                    "Failed to parse workflow detail: {}",
-                                                    e
-                                                );
+                                                error!("Failed to parse workflow detail: {}", e);
                                             }
                                         }
                                     }
