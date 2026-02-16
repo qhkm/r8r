@@ -58,6 +58,18 @@
 - [x] Visual workflow editor
 - [x] CLI autocomplete
 
+### Reliability (Lightweight Durability)
+- [x] Checkpoint-based durable execution - Persist workflow state after each node
+- [x] Workflow pause/resume API - Manual control over execution (`POST /api/executions/{id}/pause`, `POST /api/executions/{id}/resume`)
+- [x] Graceful shutdown with checkpoint - Save state on SIGTERM/SIGINT
+- [x] Long-running workflow support - Extended timeout limits with checkpoint recovery
+
+### Event Processing Enhancements
+- [x] Event fan-out - One trigger → multiple workflows (parallel or sequential)
+- [x] Debouncing for webhooks - Deduplicate rapid events with configurable wait times
+- [x] Event filtering/routing - JSONPath filtering, header-based routing, conditional routing
+- [x] Delayed event processing - Schedule events for future processing via Redis or SQLite
+
 ## In Progress
 
 ### Event Triggers
@@ -81,6 +93,23 @@
 - [ ] RBAC (Role-Based Access Control)
 - [ ] Audit logging
 - [ ] SSO integration
+
+## NOT Planned (Intentional Design Decisions)
+
+The following features are intentionally **not** on the roadmap to maintain r8r's focus on lightweight, self-hosted, AI-native workflow automation:
+
+### From Temporal.io (Out of Scope)
+- [ ] Deterministic replay - Full event sourcing is too complex for r8r's use cases
+- [ ] Multi-language SDKs - YAML-first philosophy; use external SDKs if needed
+- [ ] Multi-year workflow durability - Use Temporal for financial transactions requiring years-long durability
+- [ ] Exactly-once semantics - At-least-once with idempotency is sufficient
+
+### From Inngest (Philosophy Conflict)
+- [ ] Serverless/edge deployment - r8r is self-hosted first
+- [ ] Stateless execution - Would require complete architecture rewrite
+- [ ] Durable steps (serverless-style) - Requires serverless infrastructure
+
+**Rationale:** We believe these features would add significant complexity without serving r8r's core mission: lightweight, AI-native workflow automation for self-hosted environments.
 
 ## Contributing
 

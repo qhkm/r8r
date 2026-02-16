@@ -30,7 +30,8 @@ use tracing::{error, warn};
 use crate::engine::Executor;
 use crate::error::Error;
 use crate::nodes::NodeRegistry;
-use crate::storage::SqliteStorage;
+use crate::shutdown::ShutdownCoordinator;
+use crate::storage::{ExecutionStatus, SqliteStorage};
 use crate::workflow::parse_workflow;
 
 /// Create a sanitized error response for external consumers.
@@ -148,6 +149,21 @@ pub struct AppState {
     pub storage: SqliteStorage,
     pub registry: Arc<NodeRegistry>,
     pub monitor: Option<Arc<Monitor>>,
+    pub shutdown: Arc<ShutdownCoordinator>,
+}
+
+impl AppState {
+    /// Create a new executor with the current state.
+    pub fn create_executor(&self) -> Executor {
+        let mut executor = Executor::new(
+            (*self.registry).clone(),
+            self.storage.clone(),
+        );
+        if let Some(monitor) = self.monitor.clone() {
+            executor = executor.with_monitor(monitor);
+        }
+        executor
+    }
 }
 
 /// Create the API router (without state applied - call with_state on the result).
@@ -162,6 +178,8 @@ pub fn create_api_routes() -> Router<AppState> {
         .route("/api/executions", get(list_executions))
         .route("/api/executions/{id}", get(get_execution))
         .route("/api/executions/{id}/trace", get(get_execution_trace))
+        .route("/api/executions/{id}/pause", post(pause_execution_handler))
+        .route("/api/executions/{id}/resume", post(resume_execution_handler))
 }
 
 /// Create routes that require the monitored app state (WebSocket).
@@ -421,6 +439,15 @@ async fn execute_workflow(
     let _wait_requested = request.wait;
     let correlation_id = request_id.map(|r| r.0 .0.clone());
 
+    // Check if shutdown is requested
+    if state.shutdown.is_shutdown_requested() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "Server is shutting down, cannot start new executions"})),
+        )
+            .into_response();
+    }
+
     // Log execution start with correlation
     if let Some(ref id) = correlation_id {
         tracing::info!(request_id = %id, workflow = %name, "Starting workflow execution");
@@ -452,10 +479,7 @@ async fn execute_workflow(
     };
 
     // Create executor
-    let mut executor = Executor::new((*state.registry).clone(), state.storage.clone());
-    if let Some(monitor) = state.monitor.clone() {
-        executor = executor.with_monitor(monitor);
-    }
+    let executor = state.create_executor();
 
     // Execute
     let input = if request.input.is_null() {
@@ -547,6 +571,164 @@ async fn get_execution_trace(
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": format!("Execution '{}' not found", id)})),
+        )
+            .into_response(),
+        Err(e) => external_error_response(e).into_response(),
+    }
+}
+
+// ============================================================================
+// Pause/Resume Endpoints
+// ============================================================================
+
+/// Pause a running execution.
+///
+/// Returns 200 if the execution was paused successfully.
+/// Returns 404 if the execution is not found.
+/// Returns 409 if the execution is not in a running state.
+async fn pause_execution_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    // First check if execution exists
+    let execution = match state.storage.get_execution(&id).await {
+        Ok(Some(e)) => e,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": format!("Execution '{}' not found", id)})),
+            )
+                .into_response();
+        }
+        Err(e) => return external_error_response(e).into_response(),
+    };
+
+    // Check if execution is in a pausable state (running)
+    if execution.status != ExecutionStatus::Running {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": format!(
+                    "Cannot pause execution '{}': status is '{}', expected 'running'",
+                    id, execution.status
+                )
+            })),
+        )
+            .into_response();
+    }
+
+    // Create executor and pause the execution
+    let executor = state.create_executor();
+
+    match executor.pause_execution(&id).await {
+        Ok(paused_execution) => {
+            let duration_ms = paused_execution
+                .finished_at
+                .map(|f| (f - paused_execution.started_at).num_milliseconds());
+
+            Json(json!({
+                "execution_id": paused_execution.id,
+                "status": paused_execution.status.to_string(),
+                "workflow_name": paused_execution.workflow_name,
+                "started_at": paused_execution.started_at.to_rfc3339(),
+                "finished_at": paused_execution.finished_at.map(|f| f.to_rfc3339()),
+                "duration_ms": duration_ms,
+                "message": "Execution paused successfully",
+            }))
+            .into_response()
+        }
+        Err(Error::Execution(msg)) if msg.contains("not found") => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
+        Err(Error::Execution(msg)) if msg.contains("status is") => (
+            StatusCode::CONFLICT,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
+        Err(e) => external_error_response(e).into_response(),
+    }
+}
+
+/// Resume a paused execution from its checkpoint.
+///
+/// Returns 200 if the execution was resumed successfully.
+/// Returns 404 if the execution is not found.
+/// Returns 409 if the execution is not in a paused state.
+async fn resume_execution_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    // Check if shutdown is requested
+    if state.shutdown.is_shutdown_requested() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "Server is shutting down, cannot resume executions"})),
+        )
+            .into_response();
+    }
+
+    // First check if execution exists
+    let execution = match state.storage.get_execution(&id).await {
+        Ok(Some(e)) => e,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": format!("Execution '{}' not found", id)})),
+            )
+                .into_response();
+        }
+        Err(e) => return external_error_response(e).into_response(),
+    };
+
+    // Check if execution is in a resumable state (paused)
+    if execution.status != ExecutionStatus::Paused {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": format!(
+                    "Cannot resume execution '{}': status is '{}', expected 'paused'",
+                    id, execution.status
+                )
+            })),
+        )
+            .into_response();
+    }
+
+    // Create executor and resume the execution
+    let executor = state.create_executor();
+
+    match executor.resume_from_checkpoint(&id).await {
+        Ok(resumed_execution) => {
+            let duration_ms = resumed_execution
+                .finished_at
+                .map(|f| (f - resumed_execution.started_at).num_milliseconds());
+
+            Json(json!({
+                "execution_id": resumed_execution.id,
+                "status": resumed_execution.status.to_string(),
+                "workflow_name": resumed_execution.workflow_name,
+                "started_at": resumed_execution.started_at.to_rfc3339(),
+                "finished_at": resumed_execution.finished_at.map(|f| f.to_rfc3339()),
+                "duration_ms": duration_ms,
+                "message": "Execution resumed successfully",
+            }))
+            .into_response()
+        }
+        Err(Error::Execution(msg)) if msg.contains("not found") => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
+        Err(Error::Execution(msg)) if msg.contains("No checkpoint found") => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
+        Err(Error::Execution(msg)) if msg.contains("status is") => (
+            StatusCode::CONFLICT,
+            Json(json!({"error": msg})),
         )
             .into_response(),
         Err(e) => external_error_response(e).into_response(),

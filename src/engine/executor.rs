@@ -3,6 +3,7 @@
 use chrono::Utc;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
@@ -16,7 +17,8 @@ use crate::credentials::CredentialStore;
 use crate::engine::rate_limiter::RateLimiterRegistry;
 use crate::error::{Error, Result};
 use crate::nodes::{Node, NodeContext, NodeRegistry, NodeResult};
-use crate::storage::{Execution, ExecutionStatus, NodeExecution, SqliteStorage};
+use crate::shutdown::ShutdownCoordinator;
+use crate::storage::{Checkpoint, Execution, ExecutionStatus, NodeExecution, SqliteStorage};
 use crate::workflow::{
     parse_workflow, BackoffType, Node as WorkflowNode, OnErrorAction, RetryConfig, Workflow,
 };
@@ -29,6 +31,8 @@ pub struct Executor {
     inherited_credentials: Option<HashMap<String, String>>,
     timeout_override_seconds: Option<u64>,
     rate_limiter: Option<Arc<RateLimiterRegistry>>,
+    shutdown: Option<Arc<ShutdownCoordinator>>,
+    enable_checkpoints: AtomicBool,
 }
 
 impl Executor {
@@ -41,7 +45,18 @@ impl Executor {
             inherited_credentials: None,
             timeout_override_seconds: None,
             rate_limiter: None,
+            shutdown: None,
+            enable_checkpoints: AtomicBool::new(true), // Default to enabled for safety
         }
+    }
+
+    /// Disable checkpointing for this execution.
+    /// 
+    /// Use this for short-lived workflows where performance is critical
+    /// and durability is not required.
+    pub fn without_checkpoints(self) -> Self {
+        self.enable_checkpoints.store(false, Ordering::SeqCst);
+        self
     }
 
     /// Attach a live monitor for execution/node lifecycle events.
@@ -66,6 +81,23 @@ impl Executor {
     pub fn with_timeout_override(mut self, timeout_seconds: u64) -> Self {
         self.timeout_override_seconds = Some(timeout_seconds);
         self
+    }
+
+    /// Attach a shutdown coordinator to enable graceful shutdown handling.
+    pub fn with_shutdown(mut self, shutdown: Arc<ShutdownCoordinator>) -> Self {
+        self.shutdown = Some(shutdown);
+        self
+    }
+
+    /// Check if shutdown has been requested.
+    ///
+    /// Returns true if shutdown has been requested and the executor should
+    /// stop processing and save its current state.
+    fn is_shutdown_requested(&self) -> bool {
+        self.shutdown
+            .as_ref()
+            .map(|s| s.is_shutdown_requested())
+            .unwrap_or(false)
     }
 
     /// Execute a workflow.
@@ -114,6 +146,9 @@ impl Executor {
         input: Value,
         correlation_id: Option<String>,
     ) -> Result<Execution> {
+        // Configure checkpointing based on workflow settings
+        self.enable_checkpoints.store(workflow.settings.checkpoints_enabled(), Ordering::SeqCst);
+        
         // Check rate limit if configured
         if let Some(ref rate_limiter) = self.rate_limiter {
             if !rate_limiter.try_acquire(&workflow.name) {
@@ -209,6 +244,29 @@ impl Executor {
         let mut error_msg = None;
 
         for node_id in order {
+            // Check for shutdown signal
+            if self.is_shutdown_requested() {
+                info!("Shutdown requested, pausing execution {}", execution_id);
+                
+                // Save final checkpoint before pausing
+                self.save_checkpoint_for_execution(&execution_id, node_id, &ctx.node_outputs).await?;
+                
+                // Update execution status to paused
+                execution.status = ExecutionStatus::Paused;
+                execution.finished_at = Some(Utc::now());
+                self.storage.save_execution(&execution).await?;
+                emit_execution_finished(self.monitor.as_ref(), &execution);
+                
+                // Record metrics
+                metrics::dec_active_executions();
+                metrics::record_workflow_execution("paused", trigger_type);
+                
+                return Err(Error::Execution(format!(
+                    "Execution {} paused due to server shutdown",
+                    execution_id
+                )));
+            }
+
             if remaining_until(deadline).is_none() {
                 failed = true;
                 error_msg = Some(timeout_error_message(timeout_seconds));
@@ -285,6 +343,8 @@ impl Executor {
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
                         emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                        // Save checkpoint after skipped node
+                        self.save_checkpoint_for_execution(&execution_id, node_id, &ctx.node_outputs).await?;
                         continue;
                     }
                     Ok(true) => {}
@@ -332,6 +392,8 @@ impl Executor {
                 node_exec.finished_at = Some(Utc::now());
                 self.storage.save_node_execution(&node_exec).await?;
                 emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                // Save checkpoint after pinned data node
+                self.save_checkpoint_for_execution(&execution_id, node_id, &ctx.node_outputs).await?;
                 continue;
             }
 
@@ -353,6 +415,8 @@ impl Executor {
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
                         emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                        // Save checkpoint after recovered node
+                        self.save_checkpoint_for_execution(&execution_id, node_id, &ctx.node_outputs).await?;
                         continue;
                     }
 
@@ -386,6 +450,8 @@ impl Executor {
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
                         emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                        // Save checkpoint after recovered node
+                        self.save_checkpoint_for_execution(&execution_id, node_id, &ctx.node_outputs).await?;
                         continue;
                     }
 
@@ -443,6 +509,8 @@ impl Executor {
                 node_exec.finished_at = Some(Utc::now());
                 self.storage.save_node_execution(&node_exec).await?;
                 emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                // Save checkpoint after for_each node
+                self.save_checkpoint_for_execution(&execution_id, node_id, &ctx.node_outputs).await?;
             } else {
                 // Regular execution
                 let node_ctx = NodeContext {
@@ -479,6 +547,8 @@ impl Executor {
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
                         emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                        // Save checkpoint after successful node execution
+                        self.save_checkpoint_for_execution(&execution_id, node_id, &ctx.node_outputs).await?;
                     }
                     Err(e) => {
                         if let Some(recovery_output) = on_error_recovery_output(node) {
@@ -652,6 +722,9 @@ impl Executor {
         checkpoint: std::collections::HashMap<String, Value>,
         workflow_version: Option<u32>,
     ) -> Result<Execution> {
+        // Configure checkpointing based on workflow settings
+        self.enable_checkpoints.store(workflow.settings.checkpoints_enabled(), Ordering::SeqCst);
+        
         let execution_id = uuid::Uuid::new_v4().to_string();
         let started_at = Utc::now();
         let timeout_seconds = self
@@ -723,6 +796,25 @@ impl Executor {
                     last_output = output.clone();
                 }
                 continue;
+            }
+
+            // Check for shutdown signal
+            if self.is_shutdown_requested() {
+                info!("Shutdown requested, pausing resumed execution {}", execution_id);
+                
+                // Save final checkpoint before pausing
+                self.save_checkpoint_for_execution(&execution_id, node_id, &ctx.node_outputs).await?;
+                
+                // Update execution status to paused
+                execution.status = ExecutionStatus::Paused;
+                execution.finished_at = Some(Utc::now());
+                self.storage.save_execution(&execution).await?;
+                emit_execution_finished(self.monitor.as_ref(), &execution);
+                
+                return Err(Error::Execution(format!(
+                    "Execution {} paused due to server shutdown",
+                    execution_id
+                )));
             }
 
             if remaining_until(deadline).is_none() {
@@ -801,6 +893,8 @@ impl Executor {
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
                         emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                        // Save checkpoint after skipped node
+                        self.save_checkpoint_for_execution(&execution_id, node_id, &ctx.node_outputs).await?;
                         continue;
                     }
                     Ok(true) => {}
@@ -819,6 +913,8 @@ impl Executor {
                             node_exec.finished_at = Some(Utc::now());
                             self.storage.save_node_execution(&node_exec).await?;
                             emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                            // Save checkpoint after recovered node
+                            self.save_checkpoint_for_execution(&execution_id, node_id, &ctx.node_outputs).await?;
                             continue;
                         }
 
@@ -848,6 +944,8 @@ impl Executor {
                 node_exec.finished_at = Some(Utc::now());
                 self.storage.save_node_execution(&node_exec).await?;
                 emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                // Save checkpoint after pinned data node
+                self.save_checkpoint_for_execution(&execution_id, node_id, &ctx.node_outputs).await?;
                 continue;
             }
 
@@ -959,6 +1057,8 @@ impl Executor {
                 node_exec.finished_at = Some(Utc::now());
                 self.storage.save_node_execution(&node_exec).await?;
                 emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                // Save checkpoint after for_each node
+                self.save_checkpoint_for_execution(&execution_id, node_id, &ctx.node_outputs).await?;
             } else {
                 // Regular execution
                 let node_ctx = NodeContext {
@@ -995,6 +1095,8 @@ impl Executor {
                         node_exec.finished_at = Some(Utc::now());
                         self.storage.save_node_execution(&node_exec).await?;
                         emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
+                        // Save checkpoint after successful node execution
+                        self.save_checkpoint_for_execution(&execution_id, node_id, &ctx.node_outputs).await?;
                     }
                     Err(e) => {
                         if let Some(recovery_output) = on_error_recovery_output(node) {
@@ -1092,6 +1194,129 @@ impl Executor {
             .get_latest_workflow_version_number(&execution.workflow_id)
             .await?;
         Ok((workflow, version))
+    }
+
+    /// Save a checkpoint for the current execution state.
+    /// 
+    /// If checkpointing is disabled, this is a no-op.
+    async fn save_checkpoint_for_execution(
+        &self,
+        execution_id: &str,
+        node_id: &str,
+        node_outputs: &std::collections::HashMap<String, Value>,
+    ) -> Result<()> {
+        if !self.enable_checkpoints.load(Ordering::SeqCst) {
+            debug!("Checkpointing disabled for execution {}, skipping checkpoint", execution_id);
+            return Ok(());
+        }
+
+        let checkpoint = Checkpoint {
+            id: uuid::Uuid::new_v4().to_string(),
+            execution_id: execution_id.to_string(),
+            node_id: node_id.to_string(),
+            node_outputs: serde_json::to_value(node_outputs).unwrap_or_default(),
+            created_at: Utc::now(),
+        };
+
+        self.storage.save_checkpoint(&checkpoint).await?;
+        debug!("Checkpoint saved for execution {} at node {}", execution_id, node_id);
+        Ok(())
+    }
+
+    /// Pause an execution, saving a final checkpoint.
+    ///
+    /// Sets the execution status to `Paused` and saves the current state
+    /// as a checkpoint so execution can be resumed later.
+    pub async fn pause_execution(&self, execution_id: &str) -> Result<Execution> {
+        let mut execution = self
+            .storage
+            .get_execution(execution_id)
+            .await?
+            .ok_or_else(|| Error::Execution(format!("Execution not found: {}", execution_id)))?;
+
+        if execution.status != ExecutionStatus::Running {
+            return Err(Error::Execution(format!(
+                "Cannot pause execution '{}': status is '{}', expected 'running'",
+                execution_id, execution.status
+            )));
+        }
+
+        info!("Pausing execution {}", execution_id);
+
+        // Get the latest checkpoint to ensure we have the current state
+        if let Some(checkpoint) = self.storage.get_latest_checkpoint(execution_id).await? {
+            // Save a final pause checkpoint
+            let pause_checkpoint = Checkpoint {
+                id: uuid::Uuid::new_v4().to_string(),
+                execution_id: execution_id.to_string(),
+                node_id: format!("{}_pause", checkpoint.node_id),
+                node_outputs: checkpoint.node_outputs,
+                created_at: Utc::now(),
+            };
+            self.storage.save_checkpoint(&pause_checkpoint).await?;
+        }
+
+        // Update execution status
+        execution.status = ExecutionStatus::Paused;
+        execution.finished_at = Some(Utc::now());
+        self.storage.save_execution(&execution).await?;
+
+        info!("Execution {} paused", execution_id);
+        Ok(execution)
+    }
+
+    /// Resume execution from the latest checkpoint.
+    ///
+    /// Loads the latest checkpoint for the execution and continues
+    /// execution from where it left off.
+    pub async fn resume_from_checkpoint(&self, execution_id: &str) -> Result<Execution> {
+        let original = self
+            .storage
+            .get_execution(execution_id)
+            .await?
+            .ok_or_else(|| Error::Execution(format!("Execution not found: {}", execution_id)))?;
+
+        if original.status != ExecutionStatus::Paused {
+            return Err(Error::Execution(format!(
+                "Cannot resume execution '{}': status is '{}', expected 'paused'",
+                execution_id, original.status
+            )));
+        }
+
+        // Get the latest checkpoint
+        let checkpoint = self
+            .storage
+            .get_latest_checkpoint(execution_id)
+            .await?
+            .ok_or_else(|| {
+                Error::Execution(format!(
+                    "No checkpoint found for execution '{}', cannot resume",
+                    execution_id
+                ))
+            })?;
+
+        info!(
+            "Resuming execution {} from checkpoint at node {}",
+            execution_id, checkpoint.node_id
+        );
+
+        // Deserialize checkpoint outputs
+        let checkpoint_outputs: std::collections::HashMap<String, Value> =
+            serde_json::from_value(checkpoint.node_outputs.clone()).unwrap_or_default();
+
+        // Resolve workflow
+        let (workflow, resolved_version) = self.resolve_workflow_for_execution(&original).await?;
+
+        // Resume execution using the checkpoint
+        self.execute_with_checkpoint(
+            &workflow,
+            &original.workflow_id,
+            "resume",
+            original.input,
+            checkpoint_outputs,
+            resolved_version,
+        )
+        .await
     }
 }
 

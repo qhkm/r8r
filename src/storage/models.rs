@@ -37,6 +37,7 @@ pub enum ExecutionStatus {
     Completed,
     Failed,
     Cancelled,
+    Paused,
 }
 
 impl std::fmt::Display for ExecutionStatus {
@@ -47,6 +48,7 @@ impl std::fmt::Display for ExecutionStatus {
             Self::Completed => write!(f, "completed"),
             Self::Failed => write!(f, "failed"),
             Self::Cancelled => write!(f, "cancelled"),
+            Self::Paused => write!(f, "paused"),
         }
     }
 }
@@ -61,6 +63,7 @@ impl std::str::FromStr for ExecutionStatus {
             "completed" => Ok(Self::Completed),
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
+            "paused" => Ok(Self::Paused),
             _ => Err(format!("Unknown status: {}", s)),
         }
     }
@@ -154,4 +157,14 @@ pub struct ExecutionSummary {
     pub nodes_failed: u32,
     pub items_processed: u32,
     pub duration_ms: u64,
+}
+
+/// Execution checkpoint for durability.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Checkpoint {
+    pub id: String,
+    pub execution_id: String,
+    pub node_id: String,
+    pub node_outputs: serde_json::Value, // All outputs accumulated so far
+    pub created_at: DateTime<Utc>,
 }
