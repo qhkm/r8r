@@ -17,6 +17,7 @@ use crate::api::Monitor;
 use crate::engine::Executor;
 use crate::nodes::NodeRegistry;
 use crate::storage::SqliteStorage;
+use crate::triggers::delayed::{DelayedEvent, DelayedEventQueue};
 use crate::workflow::{parse_workflow, EventRouting, Trigger};
 
 /// Default Redis URL if not configured.
@@ -123,6 +124,7 @@ pub struct EventSubscriber {
     shutdown_tx: Option<mpsc::Sender<()>>,
     handle: Option<JoinHandle<()>>,
     fan_out_configs: Vec<EventFanOut>,
+    delayed_queue: Option<Arc<DelayedEventQueue>>,
 }
 
 impl EventSubscriber {
@@ -139,6 +141,7 @@ impl EventSubscriber {
             shutdown_tx: None,
             handle: None,
             fan_out_configs: Vec::new(),
+            delayed_queue: None,
         }
     }
 
@@ -157,6 +160,12 @@ impl EventSubscriber {
     /// Add fan-out configuration for an event.
     pub fn with_fan_out(mut self, fan_out: EventFanOut) -> Self {
         self.fan_out_configs.push(fan_out);
+        self
+    }
+
+    /// Attach a delayed event queue for scheduling delayed events via Redis sorted sets.
+    pub fn with_delayed_queue(mut self, queue: Arc<DelayedEventQueue>) -> Self {
+        self.delayed_queue = Some(queue);
         self
     }
 
@@ -271,6 +280,7 @@ impl EventSubscriber {
         let storage = self.storage.clone();
         let registry = self.registry.clone();
         let monitor = self.monitor.clone();
+        let delayed_queue = self.delayed_queue.clone();
 
         // Spawn message processing task
         let handle = tokio::spawn(async move {
@@ -281,6 +291,7 @@ impl EventSubscriber {
                 storage,
                 registry,
                 monitor,
+                delayed_queue,
                 &mut shutdown_rx,
             )
             .await;
@@ -338,6 +349,7 @@ async fn process_messages(
     storage: SqliteStorage,
     registry: Arc<NodeRegistry>,
     monitor: Option<Arc<Monitor>>,
+    delayed_queue: Option<Arc<DelayedEventQueue>>,
     shutdown_rx: &mut mpsc::Receiver<()>,
 ) {
     use futures_util::StreamExt;
@@ -368,7 +380,7 @@ async fn process_messages(
                                         // Check if this is a delayed event that should be scheduled
                                         if let Some(delay_seconds) = get_delay_from_subscriptions(&event, &subscriptions) {
                                             if delay_seconds > 0 {
-                                                if let Err(e) = schedule_delayed_event(&storage, &event, delay_seconds).await {
+                                                if let Err(e) = schedule_delayed_event(&storage, &delayed_queue, &event, delay_seconds).await {
                                                     error!("Failed to schedule delayed event: {}", e);
                                                 }
                                                 continue;
@@ -500,37 +512,38 @@ fn get_delay_from_subscriptions(event: &EventMessage, subscriptions: &[EventSubs
 
 /// Schedule a delayed event for future processing.
 ///
-/// TODO(review): This is a stub that only stores to SQLite. The full Redis-based
-/// implementation exists in delayed.rs (DelayedEventQueue) but is disconnected.
-/// Connect this to DelayedEventQueue or consolidate implementations.
+/// Uses the Redis-based DelayedEventQueue when available, with SQLite as fallback.
 async fn schedule_delayed_event(
     storage: &SqliteStorage,
+    delayed_queue: &Option<Arc<DelayedEventQueue>>,
     event: &EventMessage,
     delay_seconds: u64,
 ) -> Result<(), EventError> {
-    use chrono::Utc;
+    // Build a DelayedEvent from the EventMessage
+    let mut delayed = DelayedEvent::new(&event.event, event.data.clone(), delay_seconds);
+    if let Some(source) = &event.source {
+        delayed = delayed.with_source(source.clone());
+    }
+    if let Some(cid) = &event.correlation_id {
+        delayed = delayed.with_correlation_id(cid.clone());
+    }
 
-    let scheduled_at = Utc::now() + chrono::Duration::seconds(delay_seconds as i64);
-    let delayed_event = event.clone().with_schedule(scheduled_at);
+    // Use Redis sorted set queue when available
+    if let Some(queue) = delayed_queue {
+        queue.schedule_delayed_event(&delayed).await?;
+        return Ok(());
+    }
 
-    // Store in delayed events queue (using a simple storage mechanism)
-    // In production, this would use Redis sorted sets
-    let _queue_key = "r8r:delayed_events";
-    let _score = scheduled_at.timestamp() as f64;
-    let event_json = serde_json::to_string(&delayed_event)
-        .map_err(|e| EventError::Serialization(e.to_string()))?;
-
-    // For now, log the delayed event
-    info!(
-        "Scheduling event '{}' for processing at {} (delay: {}s)",
-        event.event, scheduled_at, delay_seconds
+    // Fallback: store in SQLite only (no Redis available)
+    warn!(
+        "DelayedEventQueue not configured; storing event '{}' in SQLite only (delay: {}s)",
+        event.event, delay_seconds
     );
-
-    // In a full implementation, this would add to Redis sorted set:
-    // conn.zadd(queue_key, event_json, score).await?;
-
-    // Store in SQLite for persistence
-    let _ = storage.store_delayed_event(&event.event, &event_json, scheduled_at).await;
+    let event_json = serde_json::to_string(&delayed)
+        .map_err(|e| EventError::Serialization(e.to_string()))?;
+    let _ = storage
+        .store_delayed_event(&event.event, &event_json, delayed.scheduled_at)
+        .await;
 
     Ok(())
 }

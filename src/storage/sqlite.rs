@@ -12,6 +12,22 @@ use tokio::sync::Mutex;
 use super::models::*;
 use crate::error::{Error, Result};
 
+/// Parse an RFC 3339 datetime string into a `chrono::DateTime<Utc>`.
+///
+/// Returns a `rusqlite::Error` on parse failure instead of panicking,
+/// so it is safe to use inside `query_row` / `query_map` closures.
+fn parse_datetime_utc(s: &str) -> rusqlite::Result<chrono::DateTime<Utc>> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(e),
+            )
+        })
+}
+
 /// Escape SQL LIKE pattern special characters to prevent injection.
 /// Characters % and _ have special meaning in LIKE patterns.
 fn escape_like_pattern(s: &str) -> String {
@@ -370,9 +386,8 @@ impl SqliteStorage {
                 name: workflow.name.clone(),
                 definition: workflow.definition.clone(),
                 enabled: workflow.enabled,
-                created_at: chrono::DateTime::parse_from_rfc3339(&existing_created_at)
-                    .unwrap()
-                    .with_timezone(&Utc),
+                created_at: parse_datetime_utc(&existing_created_at)
+                    .unwrap_or_else(|_| Utc::now()),
                 updated_at: workflow.updated_at,
             }
         } else {
@@ -410,12 +425,8 @@ impl SqliteStorage {
                     name: row.get(1)?,
                     definition: row.get(2)?,
                     enabled: row.get(3)?,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
+                    updated_at: parse_datetime_utc(&row.get::<_, String>(5)?)?,
                 })
             })
             .optional()?;
@@ -437,12 +448,8 @@ impl SqliteStorage {
                     name: row.get(1)?,
                     definition: row.get(2)?,
                     enabled: row.get(3)?,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
+                    updated_at: parse_datetime_utc(&row.get::<_, String>(5)?)?,
                 })
             })
             .optional()?;
@@ -464,12 +471,8 @@ impl SqliteStorage {
                     name: row.get(1)?,
                     definition: row.get(2)?,
                     enabled: row.get(3)?,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
+                    updated_at: parse_datetime_utc(&row.get::<_, String>(5)?)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -669,12 +672,8 @@ impl SqliteStorage {
                     name: row.get(1)?,
                     definition: row.get(2)?,
                     enabled: row.get(3)?,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
+                    updated_at: parse_datetime_utc(&row.get::<_, String>(5)?)?,
                 })
             })
             .optional()?
@@ -785,9 +784,7 @@ impl SqliteStorage {
                     trigger_type: row.get(5)?,
                     input: serde_json::from_str(&input_str).unwrap_or(serde_json::Value::Null),
                     output: output_str.and_then(|s| serde_json::from_str(&s).ok()),
-                    started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    started_at: parse_datetime_utc(&row.get::<_, String>(8)?)?,
                     finished_at: row
                         .get::<_, Option<String>>(9)?
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
@@ -942,9 +939,7 @@ impl SqliteStorage {
                     status,
                     input: serde_json::from_str(&input_str).unwrap_or(serde_json::Value::Null),
                     output: output_str.and_then(|s| serde_json::from_str(&s).ok()),
-                    started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    started_at: parse_datetime_utc(&row.get::<_, String>(6)?)?,
                     finished_at: row
                         .get::<_, Option<String>>(7)?
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
@@ -984,10 +979,6 @@ impl SqliteStorage {
     }
 
     /// Get the latest checkpoint for an execution.
-    ///
-    /// TODO(review): DateTime::parse_from_rfc3339().unwrap() in checkpoint and
-    /// workflow_version deserialization will panic on malformed DB data. Replace
-    /// with proper error handling (.map_err or .unwrap_or_default).
     pub async fn get_latest_checkpoint(&self, execution_id: &str) -> Result<Option<Checkpoint>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
@@ -1006,9 +997,7 @@ impl SqliteStorage {
                     execution_id: row.get(1)?,
                     node_id: row.get(2)?,
                     node_outputs: serde_json::from_str(&outputs_str).unwrap_or(serde_json::Value::Null),
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
                 })
             })
             .optional()?;
@@ -1034,9 +1023,7 @@ impl SqliteStorage {
                     execution_id: row.get(1)?,
                     node_id: row.get(2)?,
                     node_outputs: serde_json::from_str(&outputs_str).unwrap_or(serde_json::Value::Null),
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -1051,9 +1038,7 @@ impl SqliteStorage {
             workflow_name: row.get(2)?,
             version: row.get(3)?,
             definition: row.get(4)?,
-            created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
-                .unwrap()
-                .with_timezone(&Utc),
+            created_at: parse_datetime_utc(&row.get::<_, String>(5)?)?,
             created_by: row.get(6)?,
             changelog: row.get(7)?,
             checksum: row.get(8)?,
@@ -1075,9 +1060,7 @@ impl SqliteStorage {
             trigger_type: row.get(5)?,
             input: serde_json::from_str(&input_str).unwrap_or(serde_json::Value::Null),
             output: output_str.and_then(|s| serde_json::from_str(&s).ok()),
-            started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
-                .unwrap()
-                .with_timezone(&Utc),
+            started_at: parse_datetime_utc(&row.get::<_, String>(8)?)?,
             finished_at: row
                 .get::<_, Option<String>>(9)?
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
