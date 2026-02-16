@@ -30,6 +30,11 @@ use crate::workflow::{parse_workflow, DebounceConfig, HeaderFilter, Trigger};
 ///
 /// Tracks recent webhook requests by key and ensures they are only
 /// triggered once after a quiet period.
+///
+/// TODO(review): This struct and its methods are unused dead code. The actual
+/// "debounce" in handle_webhook uses tokio::time::sleep which is a fixed delay,
+/// not a true debounce (timer reset on each new request). Either integrate this
+/// Debouncer properly or remove it and implement real debouncing.
 pub struct Debouncer {
     /// In-memory cache tracking pending debounces
     pending: Cache<String, DebounceEntry>,
@@ -498,6 +503,9 @@ fn check_header_filters(filters: &[HeaderFilter], headers: &HeaderMap) -> bool {
             }
 
             // Check pattern match
+            // TODO(review): Regex is compiled from user-supplied pattern on every webhook
+            // request. This is a performance issue and a potential ReDoS vulnerability.
+            // Cache compiled regexes at startup and limit pattern complexity.
             if let Some(pattern) = &filter.pattern {
                 if let Ok(regex) = regex_lite::Regex::new(pattern) {
                     if !regex.is_match(value_str) {

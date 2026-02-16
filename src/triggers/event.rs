@@ -499,6 +499,10 @@ fn get_delay_from_subscriptions(event: &EventMessage, subscriptions: &[EventSubs
 }
 
 /// Schedule a delayed event for future processing.
+///
+/// TODO(review): This is a stub that only stores to SQLite. The full Redis-based
+/// implementation exists in delayed.rs (DelayedEventQueue) but is disconnected.
+/// Connect this to DelayedEventQueue or consolidate implementations.
 async fn schedule_delayed_event(
     storage: &SqliteStorage,
     event: &EventMessage,

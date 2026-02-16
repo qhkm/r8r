@@ -3,5 +3,5 @@
 mod executor;
 pub mod rate_limiter;
 
-pub use executor::Executor;
+pub use executor::{Executor, PauseRegistry};
 pub use rate_limiter::{RateLimitConfig, RateLimiterRegistry};
