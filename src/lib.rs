@@ -45,6 +45,7 @@ pub mod error;
 pub mod mcp;
 pub mod metrics;
 pub mod nodes;
+pub mod shutdown;
 pub mod storage;
 pub mod telemetry;
 pub mod templates;

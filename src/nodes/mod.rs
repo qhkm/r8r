@@ -26,7 +26,7 @@ mod split;
 mod subworkflow;
 mod summarize;
 mod switch;
-mod template;
+pub mod template;
 mod transform;
 mod types;
 mod variables;
