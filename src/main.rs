@@ -1028,7 +1028,7 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     };
     use r8r::nodes::NodeRegistry;
     use r8r::shutdown::ShutdownCoordinator;
-    use r8r::triggers::{create_webhook_routes, EventSubscriber, Scheduler};
+    use r8r::triggers::{create_webhook_routes, DelayedEventQueue, EventSubscriber, Scheduler};
     use std::sync::Arc;
     use tower_http::trace::TraceLayer;
 
@@ -1052,9 +1052,27 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
 
     let job_count = scheduler.job_count().await;
 
+    // Create delayed event queue (Redis sorted set) for scheduled event processing
+    let delayed_queue = match DelayedEventQueue::new(storage.clone(), registry.clone()) {
+        Ok(queue) => {
+            let queue = Arc::new(queue);
+            Some(queue)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to create delayed event queue: {}", e);
+            None
+        }
+    };
+
     // Create and start the event subscriber for Redis pub/sub triggers
-    let mut event_subscriber =
-        EventSubscriber::new(storage.clone(), registry.clone()).with_monitor(monitor.clone());
+    let mut event_subscriber = {
+        let mut sub =
+            EventSubscriber::new(storage.clone(), registry.clone()).with_monitor(monitor.clone());
+        if let Some(ref queue) = delayed_queue {
+            sub = sub.with_delayed_queue(queue.clone());
+        }
+        sub
+    };
     let event_status = match event_subscriber.start().await {
         Ok(()) => {
             if event_subscriber.is_running() {
