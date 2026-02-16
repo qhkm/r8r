@@ -11,13 +11,13 @@
 //! - `R8R_OTEL_SAMPLE_RATE`: Sampling rate 0.0-1.0 (default: 1.0)
 
 use opentelemetry::trace::TracerProvider;
+use opentelemetry::KeyValue;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     runtime,
     trace::{RandomIdGenerator, Sampler, TracerProvider as SdkTracerProvider},
     Resource,
 };
-use opentelemetry::KeyValue;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
@@ -56,7 +56,9 @@ impl Default for OtelConfig {
 ///
 /// Returns `Ok(())` if OpenTelemetry was initialized successfully or is disabled.
 /// Returns `Err` if initialization failed.
-pub fn init_telemetry(config: &OtelConfig) -> Result<Option<SdkTracerProvider>, Box<dyn std::error::Error + Send + Sync>> {
+pub fn init_telemetry(
+    config: &OtelConfig,
+) -> Result<Option<SdkTracerProvider>, Box<dyn std::error::Error + Send + Sync>> {
     if !config.enabled {
         // Just use standard tracing without OpenTelemetry
         tracing_subscriber::registry()

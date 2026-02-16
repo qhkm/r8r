@@ -141,7 +141,10 @@ impl Node for S3Node {
                 (None, None)
             }
         } else {
-            (config.access_key_id.clone(), config.secret_access_key.clone())
+            (
+                config.access_key_id.clone(),
+                config.secret_access_key.clone(),
+            )
         };
 
         debug!(
@@ -159,7 +162,10 @@ impl Node for S3Node {
             "copy" => s3_copy(&config, access_key, secret_key).await,
             "head" => s3_head(&config, access_key, secret_key).await,
             "presign" => s3_presign(&config, access_key, secret_key).await,
-            _ => Err(Error::Node(format!("Unknown S3 operation: {}", config.operation))),
+            _ => Err(Error::Node(format!(
+                "Unknown S3 operation: {}",
+                config.operation
+            ))),
         }
     }
 }
@@ -169,7 +175,9 @@ async fn s3_get(
     access_key: Option<String>,
     secret_key: Option<String>,
 ) -> Result<NodeResult> {
-    let key = config.key.as_ref()
+    let key = config
+        .key
+        .as_ref()
         .ok_or_else(|| Error::Node("S3 get requires 'key'".to_string()))?;
 
     // Build S3 URL
@@ -198,7 +206,9 @@ async fn s3_get(
             .to_string();
 
         let content_length = response.content_length();
-        let bytes = response.bytes().await
+        let bytes = response
+            .bytes()
+            .await
             .map_err(|e| Error::Node(format!("Failed to read S3 response: {}", e)))?;
 
         // For text content, return as string; for binary, base64 encode
@@ -220,7 +230,10 @@ async fn s3_get(
         })))
     } else {
         let error_body = response.text().await.unwrap_or_default();
-        Err(Error::Node(format!("S3 GET error {}: {}", status, error_body)))
+        Err(Error::Node(format!(
+            "S3 GET error {}: {}",
+            status, error_body
+        )))
     }
 }
 
@@ -229,7 +242,9 @@ async fn s3_put(
     access_key: Option<String>,
     secret_key: Option<String>,
 ) -> Result<NodeResult> {
-    let key = config.key.as_ref()
+    let key = config
+        .key
+        .as_ref()
         .ok_or_else(|| Error::Node("S3 put requires 'key'".to_string()))?;
 
     let body = if let Some(b64) = &config.content_base64 {
@@ -238,11 +253,16 @@ async fn s3_put(
     } else if let Some(content) = &config.content {
         content.as_bytes().to_vec()
     } else {
-        return Err(Error::Node("S3 put requires 'content' or 'content_base64'".to_string()));
+        return Err(Error::Node(
+            "S3 put requires 'content' or 'content_base64'".to_string(),
+        ));
     };
 
     let url = build_s3_url(config, key);
-    let content_type = config.content_type.as_deref().unwrap_or("application/octet-stream");
+    let content_type = config
+        .content_type
+        .as_deref()
+        .unwrap_or("application/octet-stream");
 
     let client = reqwest::Client::new();
     let mut request = client
@@ -278,7 +298,10 @@ async fn s3_put(
         })))
     } else {
         let error_body = response.text().await.unwrap_or_default();
-        Err(Error::Node(format!("S3 PUT error {}: {}", status, error_body)))
+        Err(Error::Node(format!(
+            "S3 PUT error {}: {}",
+            status, error_body
+        )))
     }
 }
 
@@ -287,7 +310,9 @@ async fn s3_delete(
     access_key: Option<String>,
     secret_key: Option<String>,
 ) -> Result<NodeResult> {
-    let key = config.key.as_ref()
+    let key = config
+        .key
+        .as_ref()
         .ok_or_else(|| Error::Node("S3 delete requires 'key'".to_string()))?;
 
     let url = build_s3_url(config, key);
@@ -296,7 +321,15 @@ async fn s3_delete(
     let mut request = client.delete(&url);
 
     if let (Some(ak), Some(sk)) = (&access_key, &secret_key) {
-        request = add_aws_auth(request, "DELETE", &config.bucket, key, &config.region, ak, sk);
+        request = add_aws_auth(
+            request,
+            "DELETE",
+            &config.bucket,
+            key,
+            &config.region,
+            ak,
+            sk,
+        );
     }
 
     let response = request
@@ -314,7 +347,10 @@ async fn s3_delete(
         })))
     } else {
         let error_body = response.text().await.unwrap_or_default();
-        Err(Error::Node(format!("S3 DELETE error {}: {}", status, error_body)))
+        Err(Error::Node(format!(
+            "S3 DELETE error {}: {}",
+            status, error_body
+        )))
     }
 }
 
@@ -326,7 +362,10 @@ async fn s3_list(
     let mut url = if let Some(endpoint) = &config.endpoint {
         format!("{}/{}", endpoint, config.bucket)
     } else {
-        format!("https://{}.s3.{}.amazonaws.com", config.bucket, config.region)
+        format!(
+            "https://{}.s3.{}.amazonaws.com",
+            config.bucket, config.region
+        )
     };
 
     // Add query parameters
@@ -375,7 +414,10 @@ async fn s3_list(
         })))
     } else {
         let error_body = response.text().await.unwrap_or_default();
-        Err(Error::Node(format!("S3 LIST error {}: {}", status, error_body)))
+        Err(Error::Node(format!(
+            "S3 LIST error {}: {}",
+            status, error_body
+        )))
     }
 }
 
@@ -384,9 +426,13 @@ async fn s3_copy(
     _access_key: Option<String>,
     _secret_key: Option<String>,
 ) -> Result<NodeResult> {
-    let dest_key = config.key.as_ref()
+    let dest_key = config
+        .key
+        .as_ref()
         .ok_or_else(|| Error::Node("S3 copy requires 'key' (destination)".to_string()))?;
-    let source_key = config.source_key.as_ref()
+    let source_key = config
+        .source_key
+        .as_ref()
         .ok_or_else(|| Error::Node("S3 copy requires 'source_key'".to_string()))?;
     let source_bucket = config.source_bucket.as_deref().unwrap_or(&config.bucket);
 
@@ -407,7 +453,9 @@ async fn s3_head(
     access_key: Option<String>,
     secret_key: Option<String>,
 ) -> Result<NodeResult> {
-    let key = config.key.as_ref()
+    let key = config
+        .key
+        .as_ref()
         .ok_or_else(|| Error::Node("S3 head requires 'key'".to_string()))?;
 
     let url = build_s3_url(config, key);
@@ -449,7 +497,10 @@ async fn s3_head(
         })))
     } else {
         let error_body = response.text().await.unwrap_or_default();
-        Err(Error::Node(format!("S3 HEAD error {}: {}", status, error_body)))
+        Err(Error::Node(format!(
+            "S3 HEAD error {}: {}",
+            status, error_body
+        )))
     }
 }
 
@@ -458,7 +509,9 @@ async fn s3_presign(
     _access_key: Option<String>,
     _secret_key: Option<String>,
 ) -> Result<NodeResult> {
-    let key = config.key.as_ref()
+    let key = config
+        .key
+        .as_ref()
         .ok_or_else(|| Error::Node("S3 presign requires 'key'".to_string()))?;
 
     // Note: Proper presigned URL generation requires AWS SigV4
@@ -586,7 +639,10 @@ mod tests {
         };
 
         let url = build_s3_url(&config, "file.txt");
-        assert_eq!(url, "https://test-bucket.s3.us-east-1.amazonaws.com/file.txt");
+        assert_eq!(
+            url,
+            "https://test-bucket.s3.us-east-1.amazonaws.com/file.txt"
+        );
     }
 
     #[test]

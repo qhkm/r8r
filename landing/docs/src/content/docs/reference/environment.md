@@ -1,117 +1,76 @@
 ---
 title: Environment Variables
-description: Environment variable reference
+description: Complete list of r8r environment variables.
 ---
 
-Complete reference for all environment variables supported by r8r.
+All r8r environment variables use the `R8R_` prefix.
 
-## Server configuration
+## Server
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `R8R_SERVER_HOST` | Bind address | `0.0.0.0` |
-| `R8R_SERVER_PORT` | HTTP port | `3000` |
-| `R8R_SERVER_REQUEST_TIMEOUT` | Request timeout | `30s` |
-| `R8R_SERVER_MAX_BODY_SIZE` | Max body size | `10MB` |
-| `R8R_SERVER_WORKERS` | Worker threads | CPU count |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `R8R_SERVER_PORT` | `8080` | HTTP server port |
+| `R8R_SERVER_HOST` | `127.0.0.1` | Bind address |
 
-## Workflow configuration
+## Database
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `R8R_WORKFLOWS_DIRECTORY` | Workflows directory | `./workflows` |
-| `R8R_WORKFLOWS_HOT_RELOAD` | Auto-reload on change | `true` |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `R8R_DATABASE_PATH` | `~/.local/share/r8r/r8r.db` | SQLite database path |
+| `R8R_DB` | (none) | Database path (Docker alias) |
+| `R8R_DB_POOL_SIZE` | `4` | Connection pool size |
+| `R8R_DB_POOL_TIMEOUT_SECS` | `30` | Pool connection timeout |
 
-## Logging
+## Agent (ZeptoClaw)
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `R8R_LOGGING_LEVEL` | Log level | `info` |
-| `R8R_LOGGING_FORMAT` | Output format | `pretty` |
-| `R8R_LOGGING_OUTPUT` | Log destination | `stdout` |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `R8R_AGENT_ENDPOINT` | `http://localhost:3000/api/chat` | Agent API endpoint |
+| `R8R_AGENT_TIMEOUT_SECONDS` | `30` | Agent call timeout |
 
-Log levels: `trace`, `debug`, `info`, `warn`, `error`
+## CORS
 
-Formats: `pretty` (colored), `json` (structured), `compact`
-
-## Integration variables
-
-### PostgreSQL
-
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string |
-
-### Redis
-
-| Variable | Description |
-|----------|-------------|
-| `REDIS_URL` | Redis connection string |
-
-### Slack
-
-| Variable | Description |
-|----------|-------------|
-| `SLACK_TOKEN` | Bot OAuth token |
-| `SLACK_SIGNING_SECRET` | Webhook signing secret |
-
-### Kafka
-
-| Variable | Description |
-|----------|-------------|
-| `KAFKA_BROKERS` | Comma-separated broker list |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `R8R_CORS_ORIGINS` | `http://localhost:3000` | Allowed origins (comma-separated) |
+| `R8R_CORS_ALLOW_ALL` | `false` | Allow all origins (NOT for production) |
 
 ## Security
 
-| Variable | Description |
-|----------|-------------|
-| `R8R_SECRET_KEY` | Encryption key for secrets |
-| `R8R_ALLOWED_HOSTS` | Comma-separated allowed hosts |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `R8R_ALLOW_INTERNAL_URLS` | `false` | Disable SSRF protection |
+| `R8R_HEALTH_API_KEY` | (none) | API key for /api/health and /api/metrics |
+| `R8R_MONITOR_TOKEN` | (none) | WebSocket monitor authentication token |
+| `R8R_MONITOR_PUBLIC` | `false` | Allow unauthenticated WebSocket access |
+| `R8R_TRUST_REQUEST_ID` | `false` | Trust incoming X-Request-ID headers |
 
-## Profile
+## Rate Limiting
 
-| Variable | Description |
-|----------|-------------|
-| `R8R_PROFILE` | Active profile (dev/staging/production) |
-| `R8R_ENV` | Environment name |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `R8R_MAX_CONCURRENT_REQUESTS` | `100` | Max concurrent API requests |
+| `R8R_MAX_REQUEST_BODY_BYTES` | `1048576` | Max request body size (bytes) |
 
-## Example .env file
+## Observability (OpenTelemetry)
 
-```bash
-# Server
-R8R_SERVER_PORT=8080
-R8R_SERVER_WORKERS=4
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `R8R_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
+| `R8R_OTEL_ENDPOINT` | `http://localhost:4317` | OTLP endpoint URL |
+| `R8R_OTEL_SERVICE_NAME` | `r8r` | Service name for traces |
+| `R8R_OTEL_SAMPLE_RATE` | `1.0` | Trace sampling rate (0.0-1.0) |
 
-# Logging
-R8R_LOGGING_LEVEL=debug
-R8R_LOGGING_FORMAT=json
+## Logging
 
-# Integrations
-DATABASE_URL=postgres://user:pass@localhost/db
-REDIS_URL=redis://localhost:6379
-SLACK_TOKEN=xoxb-your-token
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RUST_LOG` | `r8r=info` | Log level filter |
+| `R8R_ACCESS_LOG` | `true` | Enable HTTP access logging |
+| `R8R_ACCESS_LOG_BODY` | `false` | Log request/response bodies (not recommended) |
 
-# Profile
-R8R_PROFILE=production
-```
+## Template Engine
 
-## Loading .env files
-
-r8r automatically loads `.env` files:
-
-1. `.env` — Base environment
-2. `.env.local` — Local overrides (gitignored)
-3. `.env.{PROFILE}` — Profile-specific
-
-Example:
-
-```bash
-# .env
-R8R_SERVER_PORT=3000
-
-# .env.local
-R8R_SERVER_PORT=3001  # Local developer override
-
-# .env.production
-R8R_LOGGING_LEVEL=warn
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `R8R_ALLOWED_ENV_VARS` | (none) | Additional env vars accessible in `{{ env.* }}` templates (comma-separated) |

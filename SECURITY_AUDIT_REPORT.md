@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-A comprehensive security audit was performed on the r8r workflow automation engine. The audit identified and resolved **14 security issues** across critical, high, and medium priority levels. All 220 tests pass after the fixes.
+A comprehensive security audit was performed on the r8r workflow automation engine. The audit identified and resolved **14 security issues** across critical, high, and medium priority levels. All 335+ tests pass after the fixes.
 
 ### Issue Summary
 

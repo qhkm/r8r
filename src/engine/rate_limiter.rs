@@ -214,11 +214,7 @@ impl RateLimiterRegistry {
     }
 
     /// Try to acquire with a custom config for this workflow.
-    pub fn try_acquire_with_config(
-        &self,
-        workflow_name: &str,
-        config: &RateLimitConfig,
-    ) -> bool {
+    pub fn try_acquire_with_config(&self, workflow_name: &str, config: &RateLimitConfig) -> bool {
         let mut limiters = self.limiters.write().unwrap();
         let limiter = limiters
             .entry(workflow_name.to_string())

@@ -242,9 +242,9 @@ enum TemplateActions {
 }
 
 fn parse_var(s: &str) -> std::result::Result<(String, String), String> {
-    let pos = s.find('=').ok_or_else(|| {
-        format!("Invalid variable format '{}'. Expected key=value", s)
-    })?;
+    let pos = s
+        .find('=')
+        .ok_or_else(|| format!("Invalid variable format '{}'. Expected key=value", s))?;
     Ok((s[..pos].to_string(), s[pos + 1..].to_string()))
 }
 
@@ -264,9 +264,12 @@ async fn main() -> anyhow::Result<()> {
         Commands::Workflows { action } => match action {
             WorkflowActions::List => cmd_workflows_list().await?,
             WorkflowActions::Create { file } => cmd_workflows_create(&file).await?,
-            WorkflowActions::Run { name, input, params, wait } => {
-                cmd_workflows_run(&name, input.as_deref(), &params, wait).await?
-            }
+            WorkflowActions::Run {
+                name,
+                input,
+                params,
+                wait,
+            } => cmd_workflows_run(&name, input.as_deref(), &params, wait).await?,
             WorkflowActions::Logs { name, limit } => cmd_workflows_logs(&name, limit).await?,
             WorkflowActions::Search {
                 workflow,
@@ -472,14 +475,28 @@ async fn cmd_workflows_run(
     // Show parameter info if workflow has parameters and none provided
     if !workflow.inputs.is_empty() && params.is_empty() && input.is_none() {
         let param_info = get_parameter_info(&workflow);
-        let required: Vec<_> = param_info.iter().filter(|p| p.required && p.default.is_none()).collect();
+        let required: Vec<_> = param_info
+            .iter()
+            .filter(|p| p.required && p.default.is_none())
+            .collect();
 
         if !required.is_empty() {
             println!("Workflow '{}' requires parameters:", name);
             for p in &param_info {
-                let req = if p.required && p.default.is_none() { " (required)" } else { "" };
-                let def = p.default.as_ref().map(|d| format!(" [default: {}]", d)).unwrap_or_default();
-                println!("  --param {}=<{}>{}{}  {}", p.name, p.input_type, req, def, p.description);
+                let req = if p.required && p.default.is_none() {
+                    " (required)"
+                } else {
+                    ""
+                };
+                let def = p
+                    .default
+                    .as_ref()
+                    .map(|d| format!(" [default: {}]", d))
+                    .unwrap_or_default();
+                println!(
+                    "  --param {}=<{}>{}{}  {}",
+                    p.name, p.input_type, req, def, p.description
+                );
             }
             anyhow::bail!("Missing required parameters");
         }
@@ -967,7 +984,11 @@ async fn cmd_workflows_dag(name: &str, show_order: bool) -> anyhow::Result<()> {
                 println!("Execution order for '{}':", name);
                 println!();
                 for (i, workflow_name) in order.iter().enumerate() {
-                    let marker = if *workflow_name == name { " ← target" } else { "" };
+                    let marker = if *workflow_name == name {
+                        " ← target"
+                    } else {
+                        ""
+                    };
                     println!("  {}. {}{}", i + 1, workflow_name, marker);
                 }
             }
@@ -991,8 +1012,9 @@ async fn cmd_workflows_dag(name: &str, show_order: bool) -> anyhow::Result<()> {
 
 async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     use r8r::api::{
-        create_api_routes, create_concurrency_limit, create_cors_layer, create_monitored_routes,
-        create_request_body_limit, AppState, Monitor, MonitoredAppState,
+        api_auth_middleware, create_api_routes, create_concurrency_limit, create_cors_layer,
+        create_monitored_routes, create_request_body_limit, ApiAuthConfig, AppState, Monitor,
+        MonitoredAppState,
     };
     use r8r::nodes::NodeRegistry;
     use r8r::triggers::{create_webhook_routes, EventSubscriber, Scheduler};
@@ -1060,8 +1082,12 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         .layer(create_request_body_limit())
         .layer(create_concurrency_limit())
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn_with_state(
+            ApiAuthConfig::default(),
+            api_auth_middleware,
+        ))
         .layer(create_cors_layer());
-    
+
     // Add dashboard routes if UI is enabled
     if !_no_ui {
         use r8r::dashboard::create_dashboard_routes;
@@ -1345,15 +1371,13 @@ async fn cmd_templates_list(by_category: bool) -> anyhow::Result<()> {
             return Ok(());
         }
 
-        println!("{:<25} {:<15} {}", "NAME", "CATEGORY", "DESCRIPTION");
+        println!("{:<25} {:<15} DESCRIPTION", "NAME", "CATEGORY");
         println!("{}", "-".repeat(70));
 
         for template in templates {
             println!(
                 "{:<25} {:<15} {}",
-                template.name,
-                template.category,
-                template.description
+                template.name, template.category, template.description
             );
         }
     }
@@ -1476,7 +1500,10 @@ async fn cmd_templates_use(
 
         storage.save_workflow(&stored).await?;
 
-        println!("✓ Created workflow '{}' from template '{}'", workflow.name, name);
+        println!(
+            "✓ Created workflow '{}' from template '{}'",
+            workflow.name, name
+        );
         println!();
         println!("Run with: r8r workflows run {}", workflow.name);
 

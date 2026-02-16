@@ -1,168 +1,137 @@
 ---
 title: Error Handling
-description: Handle failures gracefully
+description: Configure retry policies and error handling in r8r workflows.
 ---
 
-Build resilient workflows with proper error handling.
+r8r provides per-node error handling with retry policies and fallback strategies.
 
-## Default behavior
+## Retry Policy
 
-By default, a failed node stops the workflow:
+Configure automatic retries for transient failures:
 
 ```yaml
-nodes:
-  - name: "api"        # If this fails...
-    type: "http/request"
-    
-  - name: "process"    # ...this never runs
-    type: "core/log"
+- id: call-api
+  type: http
+  config:
+    url: https://api.example.com/data
+    method: GET
+  retry:
+    max_attempts: 3           # 1-10 attempts (default: 3)
+    backoff: exponential      # fixed | linear | exponential (default: exponential)
+    delay_seconds: 2          # Initial delay, 1-300s (default: 1)
+    max_delay_seconds: 60     # Max delay cap, 1-3600s
 ```
 
-## Continue on error
+### Backoff Strategies
 
-Process continues even if the node fails:
+| Strategy | Behavior |
+|----------|----------|
+| `fixed` | Same delay between each retry |
+| `linear` | Delay increases linearly (delay * attempt) |
+| `exponential` | Delay doubles each retry (delay * 2^attempt), capped by `max_delay_seconds` |
 
-```yaml
-nodes:
-  - name: "api"
-    type: "http/request"
-    on_error: continue   # Workflow continues
+Example with `exponential`, `delay_seconds: 2`:
+- Attempt 1: 2s delay
+- Attempt 2: 4s delay
+- Attempt 3: 8s delay
 
-  - name: "process"      # This still runs
-    type: "core/log"
-```
+## Error Actions
 
-Access error info:
-
-```yaml
-{{ api.error }}         # true if failed
-{{ api.error_message }} # Error description
-```
-
-## Ignore error
-
-Completely ignore the failure:
+The `on_error` field controls what happens when a node fails (after all retries are exhausted):
 
 ```yaml
-nodes:
-  - name: "optional"
-    type: "http/request"
-    on_error: ignore    # No error output, continues silently
-```
-
-## Retry with backoff
-
-```yaml
-nodes:
-  - name: "api"
-    type: "http/request"
-    on_error:
-      action: retry
-      max_attempts: 5
-      delay: "exponential"  # 1s, 2s, 4s, 8s...
-      max_delay: "30s"
-```
-
-## Conditional error handling
-
-```yaml
-nodes:
-  - name: "api"
-    type: "http/request"
-    on_error:
-      action: continue
-      
-  - name: "notify_error"
-    type: "slack/post"
-    if: "{{ api.error }}"
-    config:
-      channel: "#alerts"
-      message: "API failed: {{ api.error_message }}"
-
-  - name: "process_success"
-    type: "core/log"
-    if: "{{ not api.error }}"
-    config:
-      message: "Success: {{ api.body }}"
-```
-
-## Timeout handling
-
-```yaml
-nodes:
-  - name: "slow_api"
-    type: "http/request"
-    config:
-      url: "https://slow.example.com"
-      timeout: "5s"        # Fail if > 5 seconds
-    on_error:
-      action: continue
-      
-  - name: "fallback"
-    type: "core/log"
-    if: "{{ slow_api.error }}"
-    config:
-      message: "Using cached data"
-```
-
-## Circuit breaker
-
-Prevent cascading failures:
-
-```yaml
-nodes:
-  - name: "fragile_api"
-    type: "http/request"
-    config:
-      url: "https://unreliable.example.com"
-    circuit_breaker:
-      failure_threshold: 5
-      recovery_timeout: "30s"
-      half_open_max_calls: 3
-```
-
-## Global error handler
-
-Define a workflow-wide error handler:
-
-```yaml
-name: "my-workflow"
-
 on_error:
-  - name: "log_error"
-    type: "core/log"
-    config:
-      message: "Workflow failed: {{ error.message }}"
-  - name: "notify"
-    type: "slack/post"
-    config:
-      channel: "#errors"
-      message: "🚨 Workflow {{ workflow.name }} failed"
-
-nodes:
-  - name: "step1"
-    type: "http/request"
+  action: continue    # fail | continue | fallback
 ```
 
-## Validation errors
+### fail (default)
 
-Validate inputs before processing:
+Stop the entire workflow immediately:
 
 ```yaml
-trigger:
-  http:
-    path: /api/users
-    validate:
-      body:
-        type: object
-        required: ["email"]
-        properties:
-          email:
-            type: string
-            format: email
-          age:
-            type: integer
-            minimum: 0
+- id: critical-step
+  type: http
+  config:
+    url: https://api.example.com/important
+  on_error:
+    action: fail
 ```
 
-Invalid requests return 400 without starting the workflow.
+### continue
+
+Skip the failed node and continue executing downstream nodes:
+
+```yaml
+- id: optional-notification
+  type: slack
+  config:
+    channel: "#alerts"
+    message: "Something happened"
+  on_error:
+    action: continue
+```
+
+Downstream nodes that depend on the failed node will receive no output from it.
+
+### fallback
+
+Use a fallback value as the node's output when it fails:
+
+```yaml
+- id: fetch-config
+  type: http
+  config:
+    url: https://config-service.example.com/settings
+  on_error:
+    action: fallback
+    fallback_value:
+      theme: "default"
+      max_items: 100
+```
+
+The `fallback_value` can be any JSON value -- object, array, string, number, or boolean.
+
+## Combining Retry and Error Handling
+
+A common pattern is to retry transient failures, then fall back gracefully:
+
+```yaml
+- id: fetch-data
+  type: http
+  config:
+    url: https://api.example.com/data
+  retry:
+    max_attempts: 3
+    backoff: exponential
+    delay_seconds: 1
+  on_error:
+    action: fallback
+    fallback_value: []
+```
+
+This will:
+1. Try the HTTP request up to 3 times with exponential backoff
+2. If all retries fail, use `[]` as the node's output instead of failing
+
+## Per-Node Timeout
+
+Set a maximum execution time for individual nodes:
+
+```yaml
+- id: slow-operation
+  type: http
+  config:
+    url: https://slow-api.example.com/process
+  timeout_seconds: 30    # 1-3600 seconds
+```
+
+If the node exceeds the timeout, it fails and error handling kicks in.
+
+## Workflow-Level Timeout
+
+Set a maximum execution time for the entire workflow:
+
+```yaml
+settings:
+  timeout_seconds: 300   # 5 minutes (1-86400, default: 3600)
+```

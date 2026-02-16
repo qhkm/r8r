@@ -1,170 +1,250 @@
 ---
 title: CLI Reference
-description: Command-line interface for r8r
+description: Complete reference for the r8r command-line interface.
 ---
 
-The `r8r` command-line tool provides everything you need to create, run, and manage workflows.
+## Overview
 
-## Global options
-
-```
-Options:
-  -c, --config <FILE>    Config file path [default: r8r.toml]
-  -v, --verbose          Enable verbose logging
-  -q, --quiet            Suppress non-error output
-  -h, --help             Print help
-  -V, --version          Print version
+```bash
+r8r <command> [options]
 ```
 
 ## Commands
 
-### `r8r init`
+### server
 
-Create a new workflow from a template.
-
-```bash
-r8r init <name> [options]
-
-Options:
-  -t, --template <NAME>   Template to use [default: http]
-  -d, --dir <PATH>        Target directory
-```
-
-Examples:
+Start the API server with scheduler and web dashboard:
 
 ```bash
-# Create basic HTTP-triggered workflow
-r8r init my-workflow
-
-# Create scheduled workflow
-r8r init daily-report --template schedule
-
-# Create from custom template
-r8r init custom --template ./templates/custom.yaml
+r8r server [--port 8080] [--no-ui]
 ```
 
-### `r8r run`
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--port`, `-p` | `8080` | HTTP port to listen on |
+| `--no-ui` | false | Disable the web dashboard (API only) |
 
-Start the r8r server and execute workflows.
+### dev
+
+Watch a workflow file and validate on changes (hot reload):
 
 ```bash
-r8r run [options]
-
-Options:
-  -w, --workflows <DIR>   Workflows directory [default: ./]
-  -p, --port <PORT>       HTTP port [default: 3000]
-  -H, --host <HOST>       Bind address [default: 0.0.0.0]
+r8r dev <file>
 ```
 
-Examples:
+### workflows
+
+Manage workflows and executions.
+
+#### workflows list
 
 ```bash
-# Run with defaults
-r8r run
-
-# Custom port
-r8r run --port 8080
-
-# Specific workflows directory
-r8r run --workflows ./my-flows
+r8r workflows list
 ```
 
-### `r8r trigger`
-
-Manually trigger a workflow.
+#### workflows create
 
 ```bash
-r8r trigger <workflow> [options]
-
-Options:
-  -d, --data <JSON>       Trigger data
-  -f, --file <PATH>       Load data from file
+r8r workflows create <file.yaml>
 ```
 
-Examples:
+Parse, validate, and store a workflow from a YAML file.
+
+#### workflows run
 
 ```bash
-# Trigger with inline data
-r8r trigger my-workflow --data '{"key": "value"}'
-
-# Trigger from file
-r8r trigger my-workflow --file ./payload.json
+r8r workflows run <name> [--input '{"key":"value"}'] [-p key=value] [--wait]
 ```
 
-### `r8r validate`
+| Flag | Description |
+|------|-------------|
+| `--input`, `-i` | JSON input data |
+| `--param`, `-p` | Parameter key=value (repeatable) |
+| `--wait`, `-w` | Wait for completion (default: true) |
 
-Validate workflow files without running them.
+#### workflows logs
 
 ```bash
-r8r validate [options] [files...]
-
-Options:
-  --strict               Strict validation mode
+r8r workflows logs <name> [--limit 10]
 ```
 
-Examples:
+Show recent execution logs for a workflow.
+
+#### workflows search
 
 ```bash
-# Validate all workflows
-r8r validate
-
-# Validate specific file
-r8r validate ./my-workflow.yaml
+r8r workflows search [options]
 ```
 
-### `r8r build`
+| Flag | Description |
+|------|-------------|
+| `--workflow` | Filter by workflow name |
+| `--status` | Filter: pending, running, completed, failed, cancelled |
+| `--trigger` | Filter by trigger type |
+| `--search` | Full-text search in input/output/error |
+| `--started-after` | RFC3339 timestamp lower bound |
+| `--started-before` | RFC3339 timestamp upper bound |
+| `--limit` | Page size (default: 20) |
+| `--offset` | Pagination offset (default: 0) |
 
-Build optimized release binary.
+#### workflows replay
 
 ```bash
-r8r build [options]
-
-Options:
-  --release              Release build (optimized)
-  --target <TRIPLE>      Cross-compilation target
+r8r workflows replay <execution-id> [--input '{"key":"value"}']
 ```
 
-### `r8r deploy`
+Re-run a previous execution, optionally with different input.
 
-Deploy to cloud platforms.
+#### workflows resume
 
 ```bash
-r8r deploy [options]
-
-Options:
-  -p, --platform <NAME>   Target platform (fly, railway, render)
-  --dry-run              Show what would be deployed
+r8r workflows resume <execution-id>
 ```
 
-### `r8r logs`
+Resume a failed execution from its last checkpoint. Completed nodes are skipped.
 
-View workflow execution logs.
+#### workflows history
 
 ```bash
-r8r logs [options]
-
-Options:
-  -f, --follow           Follow log output
-  -n, --lines <N>        Number of lines [default: 100]
-  -w, --workflow <NAME>  Filter by workflow
+r8r workflows history <name> [--limit 20]
 ```
 
-### `r8r completions`
+Show version history with changelog entries.
 
-Generate shell completions.
+#### workflows rollback
 
 ```bash
-r8r completions <SHELL>
-
-Supported shells: bash, zsh, fish, powershell, elvish
+r8r workflows rollback <name> <version>
 ```
 
-Examples:
+Roll back a workflow to a previous version.
+
+#### workflows trace
 
 ```bash
-# Bash
-r8r completions bash > /etc/bash_completion.d/r8r
-
-# Zsh
-r8r completions zsh > ~/.zsh/completions/_r8r
+r8r workflows trace <execution-id>
 ```
+
+Show per-node execution trace with timing and errors.
+
+#### workflows show
+
+```bash
+r8r workflows show <name>
+```
+
+Display workflow details: description, version, triggers, and nodes.
+
+#### workflows delete
+
+```bash
+r8r workflows delete <name>
+```
+
+#### workflows validate
+
+```bash
+r8r workflows validate <file.yaml>
+```
+
+Validate a workflow file without creating it.
+
+#### workflows export
+
+```bash
+r8r workflows export <name> [--output file.yaml]
+```
+
+Export a workflow to YAML. Outputs to stdout if no `--output` specified.
+
+#### workflows export-all
+
+```bash
+r8r workflows export-all [--output ./workflows]
+```
+
+Export all workflows to a directory (default: `./workflows`).
+
+#### workflows dag
+
+```bash
+r8r workflows dag <name> [--order]
+```
+
+Show the workflow dependency graph. Use `--order` to display topological execution order.
+
+### credentials
+
+Manage encrypted credential storage.
+
+#### credentials set
+
+```bash
+r8r credentials set <service> [--key key] [--value value]
+```
+
+If `--value` is omitted, reads from stdin.
+
+#### credentials list
+
+```bash
+r8r credentials list
+```
+
+Lists stored credentials with masked values.
+
+#### credentials delete
+
+```bash
+r8r credentials delete <service>
+```
+
+### templates
+
+Manage workflow templates.
+
+#### templates list
+
+```bash
+r8r templates list [--by-category]
+```
+
+#### templates show
+
+```bash
+r8r templates show <name>
+```
+
+Shows template details including required variables.
+
+#### templates use
+
+```bash
+r8r templates use <name> [--output file.yaml] [--var key=value] [--create]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--output`, `-o` | Write to file (stdout if omitted) |
+| `--var`, `-v` | Set template variable (repeatable) |
+| `--create` | Also create the workflow in the database |
+
+### db
+
+Database maintenance.
+
+#### db check
+
+```bash
+r8r db check
+```
+
+Run integrity checks, foreign key validation, and orphan detection.
+
+### completions
+
+```bash
+r8r completions <shell>
+```
+
+Generate shell completions. Supported shells: `bash`, `zsh`, `fish`, `power-shell`, `elvish`.

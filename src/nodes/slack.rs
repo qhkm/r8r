@@ -101,7 +101,9 @@ impl Node for SlackNode {
 
         // Validate we have either text or blocks
         if config.text.is_none() && config.blocks.is_none() {
-            return Err(Error::Node("Slack message requires 'text' or 'blocks'".to_string()));
+            return Err(Error::Node(
+                "Slack message requires 'text' or 'blocks'".to_string(),
+            ));
         }
 
         // Resolve credential
@@ -133,7 +135,7 @@ async fn send_via_webhook(webhook_url: &str, config: &SlackConfig) -> Result<Nod
     let client = reqwest::Client::new();
 
     let mut payload = json!({});
-    
+
     if let Some(text) = &config.text {
         payload["text"] = json!(text);
     }

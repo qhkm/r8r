@@ -1,142 +1,121 @@
 ---
 title: Quick Start
-description: Build your first workflow in under 5 minutes
+description: Create and run your first r8r workflow in minutes.
 ---
 
-Let's create a simple workflow that fetches data from an API and sends a notification. This will take under 5 minutes.
+## Create a Workflow
 
-## 1. Initialize a new workflow
-
-Create a new directory and initialize your first workflow:
-
-```bash
-mkdir my-workflows && cd my-workflows
-r8r init hello-world
-```
-
-This creates a `hello-world.yaml` file with a basic structure:
+Create a file called `hello.yaml`:
 
 ```yaml
-name: "hello-world"
-trigger:
-  http:
-    path: /webhook
-    method: POST
-
+name: hello-world
 nodes:
-  - name: "echo"
-    type: "core/log"
+  - id: greet
+    type: transform
     config:
-      message: "Hello, World!"
+      expression: '"Hello, " + (input.name ?? "World") + "!"'
 ```
 
-## 2. Run the workflow
-
-Start the r8r server:
+## Start the Server
 
 ```bash
-r8r run
+r8r server --workflows .
 ```
 
-You should see:
+This loads all `.yaml` workflow files from the current directory and starts the API server on port 8080.
 
-```
-🚀 r8r server running on http://localhost:3000
-📁 Loaded 1 workflow from ./
-⚡ Press Ctrl+C to stop
-```
-
-## 3. Test it
-
-Trigger the workflow with curl:
+## Execute the Workflow
 
 ```bash
-curl -X POST http://localhost:3000/webhook \
+curl -X POST http://localhost:8080/api/workflows/hello-world/execute \
   -H "Content-Type: application/json" \
-  -d '{"name": "r8r"}'
+  -d '{"input": {"name": "Agent"}}'
 ```
 
-Check the logs — you'll see the echo node printed "Hello, World!".
-
-## 4. Make it dynamic
-
-Edit `hello-world.yaml` to use the input data:
-
-```yaml
-name: "hello-world"
-trigger:
-  http:
-    path: /webhook
-    method: POST
-
-nodes:
-  - name: "greet"
-    type: "core/log"
-    config:
-      message: "Hello, {{ trigger.body.name | default: 'World' }}!"
-```
-
-Restart r8r (`Ctrl+C`, then `r8r run`) and test again:
+Or use the CLI:
 
 ```bash
-curl -X POST http://localhost:3000/webhook \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Alice"}'
+r8r workflows run hello-world -p name=Agent
 ```
 
-Now it prints: `Hello, Alice!`
+## A More Complete Example
 
-## 5. Add more nodes
-
-Let's fetch data from an API and process it:
+Create `data-pipeline.yaml`:
 
 ```yaml
-name: "weather-check"
-trigger:
-  schedule: "0 */6 * * *"  # Every 6 hours
+name: data-pipeline
+description: Fetch, transform, and notify
+
+triggers:
+  - type: cron
+    schedule: "*/30 * * * *"
+  - type: manual
 
 nodes:
-  - name: "fetch_weather"
-    type: "http/request"
+  - id: fetch
+    type: http
     config:
-      url: "https://api.open-meteo.com/v1/forecast"
+      url: https://api.example.com/data
       method: GET
-      query:
-        latitude: 51.5074
-        longitude: -0.1278
-        current_weather: true
+      headers:
+        Authorization: "Bearer {{ env.R8R_API_TOKEN }}"
+    retry:
+      max_attempts: 3
+      backoff: exponential
 
-  - name: "check_temperature"
-    type: "core/condition"
+  - id: process
+    type: transform
     config:
-      condition: "{{ fetch_weather.body.current_weather.temperature }} > 25"
-      then:
-        - name: "notify_hot"
-          type: "slack/post"
-          config:
-            channel: "#weather"
-            message: "🔥 It's hot! {{ fetch_weather.body.current_weather.temperature }}°C"
-      else:
-        - name: "notify_normal"
-          type: "core/log"
-          config:
-            message: "Temperature is normal"
+      expression: |
+        let data = input;
+        data.items.filter(|item| item.status == "active")
+    depends_on: [fetch]
+
+  - id: log-result
+    type: debug
+    config:
+      message: "Processed {{ nodes.process.length }} items"
+    depends_on: [process]
 ```
 
-## 6. Deploy it
+## Using Templates
 
-When you're ready to deploy:
+r8r includes built-in workflow templates:
 
 ```bash
-# Build optimized binary
-r8r build --release
+# List available templates
+r8r templates list
 
-# Or deploy to cloud
-r8r deploy --platform=fly
+# Show template details
+r8r templates show api-monitor
+
+# Create a workflow from a template
+r8r templates use api-monitor \
+  --var url=https://api.example.com/health \
+  --var interval="*/5 * * * *" \
+  -o monitor.yaml
 ```
 
-## What's next?
+## Development Mode
 
-- Learn about [workflows](/concepts/workflows/) and how they're structured
-- Explore [built-in node types](/reference/node-types/)
-- Build [custom nodes](/guides/custom-nodes/) in Rust
+Use `dev` mode for hot-reload during development:
+
+```bash
+r8r dev ./my-workflow.yaml
+```
+
+This watches the file for changes and validates automatically on save.
+
+## Validate Workflows
+
+Check a workflow file for errors without running it:
+
+```bash
+r8r workflows validate hello.yaml
+```
+
+## Next Steps
+
+- Learn about [Workflows](/concepts/workflows) in depth
+- Explore [Node Types](/reference/node-types)
+- Set up [API Integration](/guides/api-integration)
