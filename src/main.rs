@@ -1028,7 +1028,10 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     };
     use r8r::nodes::NodeRegistry;
     use r8r::shutdown::ShutdownCoordinator;
-    use r8r::triggers::{create_webhook_routes, DelayedEventQueue, EventSubscriber, Scheduler};
+    use r8r::triggers::{
+        create_webhook_routes, DelayedEventProcessor, EventSubscriber, NativeEventBackend,
+        Scheduler,
+    };
     use std::sync::Arc;
     use tower_http::trace::TraceLayer;
 
@@ -1052,27 +1055,49 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
 
     let job_count = scheduler.job_count().await;
 
-    // Create delayed event queue (Redis sorted set) for scheduled event processing
-    let delayed_queue = match DelayedEventQueue::new(storage.clone(), registry.clone()) {
-        Ok(queue) => {
-            let queue = Arc::new(queue);
-            Some(queue)
+    // Create event backend (native by default, Redis when feature-enabled + REDIS_URL set)
+    let event_backend: Arc<dyn r8r::triggers::EventBackend> = {
+        #[cfg(feature = "redis")]
+        {
+            if let Ok(url) = std::env::var("REDIS_URL") {
+                match r8r::triggers::RedisEventBackend::new(&url) {
+                    Ok(rb) => {
+                        tracing::info!("Using Redis event backend");
+                        Arc::new(rb)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to create Redis event backend: {}. Falling back to native.",
+                            e
+                        );
+                        Arc::new(NativeEventBackend::new())
+                    }
+                }
+            } else {
+                Arc::new(NativeEventBackend::new())
+            }
         }
-        Err(e) => {
-            tracing::warn!("Failed to create delayed event queue: {}", e);
-            None
+        #[cfg(not(feature = "redis"))]
+        {
+            Arc::new(NativeEventBackend::new())
         }
     };
 
-    // Create and start the event subscriber for Redis pub/sub triggers
-    let mut event_subscriber = {
-        let mut sub =
-            EventSubscriber::new(storage.clone(), registry.clone()).with_monitor(monitor.clone());
-        if let Some(ref queue) = delayed_queue {
-            sub = sub.with_delayed_queue(queue.clone());
-        }
-        sub
-    };
+    // Create delayed event processor (polls SQLite, re-publishes via backend)
+    let mut delayed_processor =
+        DelayedEventProcessor::new(storage.clone(), registry.clone(), event_backend.clone())
+            .with_monitor(monitor.clone());
+    delayed_processor.start().await?;
+
+    // Create and start the event subscriber
+    let mut event_subscriber =
+        EventSubscriber::new(storage.clone(), registry.clone(), event_backend.clone())
+            .with_monitor(monitor.clone())
+            .with_delayed_processor(Arc::new(DelayedEventProcessor::new(
+                storage.clone(),
+                registry.clone(),
+                event_backend.clone(),
+            )));
     let event_status = match event_subscriber.start().await {
         Ok(()) => {
             if event_subscriber.is_running() {
@@ -1083,7 +1108,7 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         }
         Err(e) => {
             tracing::warn!("Failed to start event subscriber: {}", e);
-            "unavailable (Redis not connected)"
+            "unavailable"
         }
     };
 
@@ -1103,6 +1128,7 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         monitor: Some(monitor.clone()),
         shutdown: shutdown.clone(),
         pause_registry: r8r::engine::PauseRegistry::new(),
+        event_backend: Some(event_backend.clone()),
     };
 
     let monitored_state = MonitoredAppState {
@@ -1170,8 +1196,9 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         }
     }
 
-    // Gracefully stop the event subscriber and scheduler
+    // Gracefully stop the event subscriber, delayed processor, and scheduler
     let _ = event_subscriber.stop().await;
+    let _ = delayed_processor.stop().await;
     scheduler.stop().await?;
 
     println!("Server stopped.");
