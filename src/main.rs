@@ -1160,7 +1160,7 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
 
     // Start the server with graceful shutdown
     let server = axum::serve(listener, app);
-    
+
     tokio::select! {
         result = server => {
             result?;

@@ -301,8 +301,7 @@ impl EventSubscriber {
 
         info!(
             "Event subscriber started with {} subscription(s) and {} fan-out config(s)",
-            subscription_count,
-            fan_out_count
+            subscription_count, fan_out_count
         );
         Ok(())
     }
@@ -342,6 +341,7 @@ struct EventSubscription {
 }
 
 /// Process messages from Redis pub/sub.
+#[allow(clippy::too_many_arguments)]
 async fn process_messages(
     mut pubsub: PubSub,
     subscriptions: Vec<EventSubscription>,
@@ -498,7 +498,10 @@ async fn process_messages(
 }
 
 /// Get delay seconds from matching subscription.
-fn get_delay_from_subscriptions(event: &EventMessage, subscriptions: &[EventSubscription]) -> Option<u64> {
+fn get_delay_from_subscriptions(
+    event: &EventMessage,
+    subscriptions: &[EventSubscription],
+) -> Option<u64> {
     // Check if event has scheduled_at (already delayed)
     if event.scheduled_at.is_some() {
         return Some(0); // No additional delay needed
@@ -539,8 +542,8 @@ async fn schedule_delayed_event(
         "DelayedEventQueue not configured; storing event '{}' in SQLite only (delay: {}s)",
         event.event, delay_seconds
     );
-    let event_json = serde_json::to_string(&delayed)
-        .map_err(|e| EventError::Serialization(e.to_string()))?;
+    let event_json =
+        serde_json::to_string(&delayed).map_err(|e| EventError::Serialization(e.to_string()))?;
     let _ = storage
         .store_delayed_event(&event.event, &event_json, delayed.scheduled_at)
         .await;
@@ -690,10 +693,10 @@ fn evaluate_json_path(path: &str, data: &Value) -> bool {
     // Simple JSON path implementation
     // Supports basic path like "$.user.name" or "user.name"
     let path = path.trim();
-    let path = if path.starts_with("$.") {
-        &path[2..]
-    } else if path.starts_with('$') {
-        &path[1..]
+    let path = if let Some(stripped) = path.strip_prefix("$.") {
+        stripped
+    } else if let Some(stripped) = path.strip_prefix('$') {
+        stripped
     } else {
         path
     };
@@ -949,8 +952,8 @@ mod tests {
     fn test_event_message_with_schedule() {
         use chrono::Utc;
         let scheduled = Utc::now();
-        let event = EventMessage::new("order.created", json!({"order_id": 123}))
-            .with_schedule(scheduled);
+        let event =
+            EventMessage::new("order.created", json!({"order_id": 123})).with_schedule(scheduled);
 
         assert_eq!(event.scheduled_at, Some(scheduled));
     }
