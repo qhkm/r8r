@@ -92,6 +92,15 @@ pub struct InputDefinition {
     pub required: bool,
 }
 
+/// Event routing rule for conditional workflow triggering.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventRouting {
+    /// Rhai expression condition to evaluate
+    pub condition: String,
+    /// Target workflow name to trigger if condition matches
+    pub target_workflow: String,
+}
+
 /// Workflow trigger definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -114,6 +123,12 @@ pub enum Trigger {
         /// HTTP method (default: POST)
         #[serde(default)]
         method: Option<String>,
+        /// Debounce configuration for webhook deduplication
+        #[serde(default)]
+        debounce: Option<DebounceConfig>,
+        /// Header-based filter conditions
+        #[serde(default)]
+        header_filter: Option<Vec<HeaderFilter>>,
     },
     /// Event-based trigger (from another workflow or external system)
     Event {
@@ -122,7 +137,53 @@ pub enum Trigger {
         /// Optional filter expression
         #[serde(default)]
         filter: Option<String>,
+        /// JSONPath expression for filtering event data
+        #[serde(default)]
+        json_path: Option<String>,
+        /// Delay in seconds before processing the event
+        #[serde(default)]
+        delay: Option<u64>,
+        /// Routing rules for conditional workflow triggering
+        #[serde(default)]
+        routing: Option<Vec<EventRouting>>,
     },
+}
+
+/// Header filter condition for webhook triggers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeaderFilter {
+    /// Header name to check
+    pub name: String,
+    /// Expected header value (exact match)
+    #[serde(default)]
+    pub value: Option<String>,
+    /// Header value pattern (regex match)
+    #[serde(default)]
+    pub pattern: Option<String>,
+    /// Whether the header must exist
+    #[serde(default)]
+    pub required: bool,
+}
+
+/// Debounce configuration for webhook triggers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebounceConfig {
+    /// Template for dedupe key (e.g., "{{ input.repository.id }}")
+    pub key: String,
+    /// Wait time after last event in seconds
+    #[serde(default = "default_wait_seconds")]
+    pub wait_seconds: u64,
+    /// Maximum time to wait in seconds
+    #[serde(default = "default_max_wait_seconds")]
+    pub max_wait_seconds: u64,
+}
+
+fn default_wait_seconds() -> u64 {
+    5
+}
+
+fn default_max_wait_seconds() -> u64 {
+    60
 }
 
 /// A node (step) in the workflow.
@@ -277,6 +338,14 @@ pub struct WorkflowSettings {
     /// When enabled, captures full input/output data for each node.
     #[serde(default)]
     pub debug: bool,
+
+    /// Enable checkpoint-based durable execution.
+    /// When enabled, workflow state is persisted after each node completion,
+    /// allowing recovery from crashes and graceful shutdown.
+    /// Disable for short-lived workflows where performance is critical.
+    /// Default: true (can be overridden via R8R_ENABLE_CHECKPOINTS env var)
+    #[serde(default = "default_enable_checkpoints")]
+    pub enable_checkpoints: bool,
 }
 
 impl Default for WorkflowSettings {
@@ -289,7 +358,29 @@ impl Default for WorkflowSettings {
             max_for_each_items: default_max_for_each_items(),
             error_workflow: None,
             debug: false,
+            enable_checkpoints: default_enable_checkpoints(),
         }
+    }
+}
+
+/// Get the default checkpoint setting from environment or return true.
+///
+/// Environment variable: `R8R_ENABLE_CHECKPOINTS`
+/// - "false" - Disable checkpoints by default
+/// - "true" or unset - Enable checkpoints by default
+fn default_enable_checkpoints() -> bool {
+    std::env::var("R8R_ENABLE_CHECKPOINTS")
+        .map(|v| v.to_lowercase() != "false")
+        .unwrap_or(true)
+}
+
+impl WorkflowSettings {
+    /// Get the effective checkpoint setting considering both workflow config and environment.
+    ///
+    /// The workflow-level setting takes precedence over the global default.
+    /// To disable checkpoints globally, set `R8R_ENABLE_CHECKPOINTS=false`.
+    pub fn checkpoints_enabled(&self) -> bool {
+        self.enable_checkpoints
     }
 }
 

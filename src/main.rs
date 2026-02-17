@@ -1027,12 +1027,19 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         MonitoredAppState,
     };
     use r8r::nodes::NodeRegistry;
-    use r8r::triggers::{create_webhook_routes, EventSubscriber, Scheduler};
+    use r8r::shutdown::ShutdownCoordinator;
+    use r8r::triggers::{create_webhook_routes, DelayedEventQueue, EventSubscriber, Scheduler};
     use std::sync::Arc;
     use tower_http::trace::TraceLayer;
 
     let storage = get_storage()?;
     let registry = Arc::new(NodeRegistry::default());
+
+    // Create shutdown coordinator
+    let shutdown = Arc::new(ShutdownCoordinator::new());
+
+    // Start signal listener for graceful shutdown
+    shutdown.start_cross_platform_signal_listener();
 
     // Create monitor for live WebSocket updates
     let monitor = Arc::new(Monitor::new());
@@ -1045,9 +1052,27 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
 
     let job_count = scheduler.job_count().await;
 
+    // Create delayed event queue (Redis sorted set) for scheduled event processing
+    let delayed_queue = match DelayedEventQueue::new(storage.clone(), registry.clone()) {
+        Ok(queue) => {
+            let queue = Arc::new(queue);
+            Some(queue)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to create delayed event queue: {}", e);
+            None
+        }
+    };
+
     // Create and start the event subscriber for Redis pub/sub triggers
-    let mut event_subscriber =
-        EventSubscriber::new(storage.clone(), registry.clone()).with_monitor(monitor.clone());
+    let mut event_subscriber = {
+        let mut sub =
+            EventSubscriber::new(storage.clone(), registry.clone()).with_monitor(monitor.clone());
+        if let Some(ref queue) = delayed_queue {
+            sub = sub.with_delayed_queue(queue.clone());
+        }
+        sub
+    };
     let event_status = match event_subscriber.start().await {
         Ok(()) => {
             if event_subscriber.is_running() {
@@ -1076,6 +1101,8 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         storage: storage.clone(),
         registry: registry.clone(),
         monitor: Some(monitor.clone()),
+        shutdown: shutdown.clone(),
+        pause_registry: r8r::engine::PauseRegistry::new(),
     };
 
     let monitored_state = MonitoredAppState {
@@ -1104,9 +1131,6 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         app = app.merge(create_dashboard_routes());
     }
 
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-
     println!("r8r server running on http://0.0.0.0:{}", port);
     println!();
     println!("Scheduler: {} cron job(s) active", job_count);
@@ -1117,8 +1141,11 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     println!("  GET  /api/workflows");
     println!("  GET  /api/workflows/:name");
     println!("  POST /api/workflows/:name/execute");
+    println!("  GET  /api/executions");
     println!("  GET  /api/executions/:id");
     println!("  GET  /api/executions/:id/trace");
+    println!("  POST /api/executions/:id/pause");
+    println!("  POST /api/executions/:id/resume");
     println!("  WS   /api/monitor (live execution monitoring)");
     println!();
     println!("Webhooks: /webhooks/:workflow_name (see workflow definitions)");
@@ -1128,9 +1155,20 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     println!();
     println!("Press Ctrl+C to stop");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    // Start the server with graceful shutdown
+    let server = axum::serve(listener, app);
+
+    tokio::select! {
+        result = server => {
+            result?;
+        }
+        _ = shutdown.wait_for_shutdown() => {
+            println!("\nShutting down gracefully...");
+        }
+    }
 
     // Gracefully stop the event subscriber and scheduler
     let _ = event_subscriber.stop().await;
@@ -1138,13 +1176,6 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
 
     println!("Server stopped.");
     Ok(())
-}
-
-async fn shutdown_signal() {
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Failed to install Ctrl+C handler");
-    println!("\nShutting down gracefully...");
 }
 
 async fn cmd_monitor(url: &str, token: Option<&str>) -> anyhow::Result<()> {
