@@ -198,7 +198,8 @@ impl Executor {
         correlation_id: Option<String>,
     ) -> Result<Execution> {
         // Determine checkpointing for this execution (per-workflow setting overrides global default)
-        let checkpoints_enabled = workflow.settings.checkpoints_enabled() && self.enable_checkpoints;
+        let checkpoints_enabled =
+            workflow.settings.checkpoints_enabled() && self.enable_checkpoints;
 
         // Check rate limit if configured
         if let Some(ref rate_limiter) = self.rate_limiter {
@@ -308,11 +309,21 @@ impl Executor {
                 .unwrap_or(false);
 
             if self.is_shutdown_requested() || pause_requested {
-                let reason = if pause_requested { "API pause request" } else { "server shutdown" };
+                let reason = if pause_requested {
+                    "API pause request"
+                } else {
+                    "server shutdown"
+                };
                 info!("Pausing execution {} due to {}", execution_id, reason);
 
                 // Save final checkpoint before pausing
-                self.save_checkpoint(&execution_id, node_id, &ctx.node_outputs, checkpoints_enabled).await?;
+                self.save_checkpoint(
+                    &execution_id,
+                    node_id,
+                    &ctx.node_outputs,
+                    checkpoints_enabled,
+                )
+                .await?;
 
                 // Update execution status to paused
                 execution.status = ExecutionStatus::Paused;
@@ -412,7 +423,13 @@ impl Executor {
                         self.storage.save_node_execution(&node_exec).await?;
                         emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         // Save checkpoint after skipped node
-                        self.save_checkpoint(&execution_id, node_id, &ctx.node_outputs, checkpoints_enabled).await?;
+                        self.save_checkpoint(
+                            &execution_id,
+                            node_id,
+                            &ctx.node_outputs,
+                            checkpoints_enabled,
+                        )
+                        .await?;
                         continue;
                     }
                     Ok(true) => {}
@@ -461,7 +478,13 @@ impl Executor {
                 self.storage.save_node_execution(&node_exec).await?;
                 emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                 // Save checkpoint after pinned data node
-                self.save_checkpoint(&execution_id, node_id, &ctx.node_outputs, checkpoints_enabled).await?;
+                self.save_checkpoint(
+                    &execution_id,
+                    node_id,
+                    &ctx.node_outputs,
+                    checkpoints_enabled,
+                )
+                .await?;
                 continue;
             }
 
@@ -484,7 +507,13 @@ impl Executor {
                         self.storage.save_node_execution(&node_exec).await?;
                         emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         // Save checkpoint after recovered node
-                        self.save_checkpoint(&execution_id, node_id, &ctx.node_outputs, checkpoints_enabled).await?;
+                        self.save_checkpoint(
+                            &execution_id,
+                            node_id,
+                            &ctx.node_outputs,
+                            checkpoints_enabled,
+                        )
+                        .await?;
                         continue;
                     }
 
@@ -519,7 +548,13 @@ impl Executor {
                         self.storage.save_node_execution(&node_exec).await?;
                         emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         // Save checkpoint after recovered node
-                        self.save_checkpoint(&execution_id, node_id, &ctx.node_outputs, checkpoints_enabled).await?;
+                        self.save_checkpoint(
+                            &execution_id,
+                            node_id,
+                            &ctx.node_outputs,
+                            checkpoints_enabled,
+                        )
+                        .await?;
                         continue;
                     }
 
@@ -578,7 +613,13 @@ impl Executor {
                 self.storage.save_node_execution(&node_exec).await?;
                 emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                 // Save checkpoint after for_each node
-                self.save_checkpoint(&execution_id, node_id, &ctx.node_outputs, checkpoints_enabled).await?;
+                self.save_checkpoint(
+                    &execution_id,
+                    node_id,
+                    &ctx.node_outputs,
+                    checkpoints_enabled,
+                )
+                .await?;
             } else {
                 // Regular execution
                 let node_ctx = NodeContext {
@@ -616,7 +657,13 @@ impl Executor {
                         self.storage.save_node_execution(&node_exec).await?;
                         emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         // Save checkpoint after successful node execution
-                        self.save_checkpoint(&execution_id, node_id, &ctx.node_outputs, checkpoints_enabled).await?;
+                        self.save_checkpoint(
+                            &execution_id,
+                            node_id,
+                            &ctx.node_outputs,
+                            checkpoints_enabled,
+                        )
+                        .await?;
                     }
                     Err(e) => {
                         if let Some(recovery_output) = on_error_recovery_output(node) {
@@ -796,7 +843,8 @@ impl Executor {
         workflow_version: Option<u32>,
     ) -> Result<Execution> {
         // Determine checkpointing for this execution (per-workflow setting overrides global default)
-        let checkpoints_enabled = workflow.settings.checkpoints_enabled() && self.enable_checkpoints;
+        let checkpoints_enabled =
+            workflow.settings.checkpoints_enabled() && self.enable_checkpoints;
 
         let execution_id = uuid::Uuid::new_v4().to_string();
         let started_at = Utc::now();
@@ -885,11 +933,24 @@ impl Executor {
                 .unwrap_or(false);
 
             if self.is_shutdown_requested() || pause_requested {
-                let reason = if pause_requested { "API pause request" } else { "server shutdown" };
-                info!("Pausing resumed execution {} due to {}", execution_id, reason);
+                let reason = if pause_requested {
+                    "API pause request"
+                } else {
+                    "server shutdown"
+                };
+                info!(
+                    "Pausing resumed execution {} due to {}",
+                    execution_id, reason
+                );
 
                 // Save final checkpoint before pausing
-                self.save_checkpoint(&execution_id, node_id, &ctx.node_outputs, checkpoints_enabled).await?;
+                self.save_checkpoint(
+                    &execution_id,
+                    node_id,
+                    &ctx.node_outputs,
+                    checkpoints_enabled,
+                )
+                .await?;
 
                 // Update execution status to paused
                 execution.status = ExecutionStatus::Paused;
@@ -985,7 +1046,13 @@ impl Executor {
                         self.storage.save_node_execution(&node_exec).await?;
                         emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         // Save checkpoint after skipped node
-                        self.save_checkpoint(&execution_id, node_id, &ctx.node_outputs, checkpoints_enabled).await?;
+                        self.save_checkpoint(
+                            &execution_id,
+                            node_id,
+                            &ctx.node_outputs,
+                            checkpoints_enabled,
+                        )
+                        .await?;
                         continue;
                     }
                     Ok(true) => {}
@@ -1005,7 +1072,13 @@ impl Executor {
                             self.storage.save_node_execution(&node_exec).await?;
                             emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                             // Save checkpoint after recovered node
-                            self.save_checkpoint(&execution_id, node_id, &ctx.node_outputs, checkpoints_enabled).await?;
+                            self.save_checkpoint(
+                                &execution_id,
+                                node_id,
+                                &ctx.node_outputs,
+                                checkpoints_enabled,
+                            )
+                            .await?;
                             continue;
                         }
 
@@ -1036,7 +1109,13 @@ impl Executor {
                 self.storage.save_node_execution(&node_exec).await?;
                 emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                 // Save checkpoint after pinned data node
-                self.save_checkpoint(&execution_id, node_id, &ctx.node_outputs, checkpoints_enabled).await?;
+                self.save_checkpoint(
+                    &execution_id,
+                    node_id,
+                    &ctx.node_outputs,
+                    checkpoints_enabled,
+                )
+                .await?;
                 continue;
             }
 
@@ -1149,7 +1228,13 @@ impl Executor {
                 self.storage.save_node_execution(&node_exec).await?;
                 emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                 // Save checkpoint after for_each node
-                self.save_checkpoint(&execution_id, node_id, &ctx.node_outputs, checkpoints_enabled).await?;
+                self.save_checkpoint(
+                    &execution_id,
+                    node_id,
+                    &ctx.node_outputs,
+                    checkpoints_enabled,
+                )
+                .await?;
             } else {
                 // Regular execution
                 let node_ctx = NodeContext {
@@ -1187,7 +1272,13 @@ impl Executor {
                         self.storage.save_node_execution(&node_exec).await?;
                         emit_node_terminal_event(self.monitor.as_ref(), &node_exec);
                         // Save checkpoint after successful node execution
-                        self.save_checkpoint(&execution_id, node_id, &ctx.node_outputs, checkpoints_enabled).await?;
+                        self.save_checkpoint(
+                            &execution_id,
+                            node_id,
+                            &ctx.node_outputs,
+                            checkpoints_enabled,
+                        )
+                        .await?;
                     }
                     Err(e) => {
                         if let Some(recovery_output) = on_error_recovery_output(node) {
@@ -1303,7 +1394,10 @@ impl Executor {
         checkpoints_enabled: bool,
     ) -> Result<()> {
         if !checkpoints_enabled {
-            debug!("Checkpointing disabled for execution {}, skipping checkpoint", execution_id);
+            debug!(
+                "Checkpointing disabled for execution {}, skipping checkpoint",
+                execution_id
+            );
             return Ok(());
         }
 
@@ -1316,7 +1410,10 @@ impl Executor {
         };
 
         self.storage.save_checkpoint(&checkpoint).await?;
-        debug!("Checkpoint saved for execution {} at node {}", execution_id, node_id);
+        debug!(
+            "Checkpoint saved for execution {} at node {}",
+            execution_id, node_id
+        );
         Ok(())
     }
 
@@ -1359,7 +1456,10 @@ impl Executor {
                 .get_execution(execution_id)
                 .await?
                 .unwrap_or(execution);
-            info!("Execution {} pause signalled (status: {})", execution_id, updated.status);
+            info!(
+                "Execution {} pause signalled (status: {})",
+                execution_id, updated.status
+            );
             Ok(updated)
         } else {
             // Execution not in registry (may have just finished). Fall back to
