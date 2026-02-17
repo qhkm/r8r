@@ -14,6 +14,7 @@
 |----------|-------------|
 | [Architecture](ARCHITECTURE.md) | System design and internals |
 | [Roadmap](TODO.md) | Planned features and contributions |
+| [Runner Plan](RUNNER_PLAN.md) | Edge/fleet runner implementation plan |
 
 ## Security
 
