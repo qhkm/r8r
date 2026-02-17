@@ -36,20 +36,21 @@ struct CompiledHeaderFilter {
 impl CompiledHeaderFilter {
     /// Compile a HeaderFilter, rejecting patterns that are too long.
     fn compile(filter: &HeaderFilter) -> Result<Self, String> {
-        let compiled_pattern = match &filter.pattern {
-            Some(pattern) => {
-                if pattern.len() > MAX_HEADER_PATTERN_LEN {
-                    return Err(format!(
-                        "Header filter pattern for '{}' exceeds {} chars (ReDoS guard)",
-                        filter.name, MAX_HEADER_PATTERN_LEN
-                    ));
+        let compiled_pattern =
+            match &filter.pattern {
+                Some(pattern) => {
+                    if pattern.len() > MAX_HEADER_PATTERN_LEN {
+                        return Err(format!(
+                            "Header filter pattern for '{}' exceeds {} chars (ReDoS guard)",
+                            filter.name, MAX_HEADER_PATTERN_LEN
+                        ));
+                    }
+                    Some(regex_lite::Regex::new(pattern).map_err(|e| {
+                        format!("Invalid regex for header '{}': {}", filter.name, e)
+                    })?)
                 }
-                Some(regex_lite::Regex::new(pattern).map_err(|e| {
-                    format!("Invalid regex for header '{}': {}", filter.name, e)
-                })?)
-            }
-            None => None,
-        };
+                None => None,
+            };
 
         Ok(Self {
             name: filter.name.clone(),
@@ -169,10 +170,7 @@ pub async fn create_webhook_routes(
 
                 info!(
                     "Registered webhook: {} {} (debounce: {}, header_filter: {})",
-                    route_method,
-                    route_path,
-                    has_debounce,
-                    has_header_filter
+                    route_method, route_path, has_debounce, has_header_filter
                 );
                 webhook_count += 1;
             }
@@ -261,7 +259,16 @@ async fn handle_webhook(
     }
 
     // Execute workflow immediately
-    execute_webhook_workflow(state, workflow_name, workflow_id, method, headers, body_value).await.into_response()
+    execute_webhook_workflow(
+        state,
+        workflow_name,
+        workflow_id,
+        method,
+        headers,
+        body_value,
+    )
+    .await
+    .into_response()
 }
 
 /// Check if header filters match the incoming request.
@@ -470,7 +477,11 @@ mod tests {
         let key = generate_debounce_key("{{ invalid", &body, &headers);
         // The template "{{ invalid" contains {{ but no matching data
         // After processing it remains unchanged and should trigger fallback
-        assert!(key.starts_with("fallback-"), "Expected fallback key but got: {}", key);
+        assert!(
+            key.starts_with("fallback-"),
+            "Expected fallback key but got: {}",
+            key
+        );
     }
 
     #[test]
@@ -524,5 +535,4 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("ReDoS guard"));
     }
-
 }

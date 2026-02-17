@@ -364,7 +364,7 @@ impl Default for WorkflowSettings {
 }
 
 /// Get the default checkpoint setting from environment or return true.
-/// 
+///
 /// Environment variable: `R8R_ENABLE_CHECKPOINTS`
 /// - "false" - Disable checkpoints by default
 /// - "true" or unset - Enable checkpoints by default
