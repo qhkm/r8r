@@ -32,6 +32,7 @@ use crate::error::Error;
 use crate::nodes::NodeRegistry;
 use crate::shutdown::ShutdownCoordinator;
 use crate::storage::{ExecutionStatus, SqliteStorage};
+use crate::triggers::EventBackend;
 use crate::workflow::parse_workflow;
 
 /// Create a sanitized error response for external consumers.
@@ -151,6 +152,7 @@ pub struct AppState {
     pub monitor: Option<Arc<Monitor>>,
     pub shutdown: Arc<ShutdownCoordinator>,
     pub pause_registry: PauseRegistry,
+    pub event_backend: Option<Arc<dyn EventBackend>>,
 }
 
 impl AppState {
