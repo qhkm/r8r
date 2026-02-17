@@ -376,7 +376,7 @@ fn default_enable_checkpoints() -> bool {
 
 impl WorkflowSettings {
     /// Get the effective checkpoint setting considering both workflow config and environment.
-    /// 
+    ///
     /// The workflow-level setting takes precedence over the global default.
     /// To disable checkpoints globally, set `R8R_ENABLE_CHECKPOINTS=false`.
     pub fn checkpoints_enabled(&self) -> bool {
