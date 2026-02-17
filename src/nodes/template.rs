@@ -135,7 +135,7 @@ pub fn render_template(template: &str, ctx: &NodeContext, mode: RenderMode) -> S
 /// Used by webhook debouncing and other non-node contexts.
 pub fn render_template_simple(template: &str, context: &Value) -> Result<String, String> {
     let mut result = template.to_string();
-    
+
     // Handle {{ input.path }} patterns
     if let Some(obj) = context.as_object() {
         // Handle 'input' key specially
@@ -144,7 +144,7 @@ pub fn render_template_simple(template: &str, context: &Value) -> Result<String,
             let input_str = serde_json::to_string(input).unwrap_or_default();
             result = result.replace("{{ input }}", &input_str);
             result = result.replace("{{input}}", &input_str);
-            
+
             // Replace {{ input.field }}
             if let Some(input_obj) = input.as_object() {
                 for (key, value) in input_obj {
@@ -156,7 +156,7 @@ pub fn render_template_simple(template: &str, context: &Value) -> Result<String,
                     };
                     result = result.replace(&pattern1, &replacement);
                     result = result.replace(&pattern2, &replacement);
-                    
+
                     // Handle nested paths like {{ input.repository.id }}
                     if let Some(nested_obj) = value.as_object() {
                         for (nested_key, nested_value) in nested_obj {
@@ -173,7 +173,7 @@ pub fn render_template_simple(template: &str, context: &Value) -> Result<String,
                 }
             }
         }
-        
+
         // Handle 'headers' key
         if let Some(headers) = obj.get("headers") {
             if let Some(headers_obj) = headers.as_object() {
@@ -190,13 +190,13 @@ pub fn render_template_simple(template: &str, context: &Value) -> Result<String,
             }
         }
     }
-    
+
     // Check if there are any unresolved template patterns
     // Look for patterns like {{ ... }} that weren't substituted
     if result.contains("{{") {
         return Err(format!("Unresolved template placeholders in: {}", result));
     }
-    
+
     Ok(result)
 }
 

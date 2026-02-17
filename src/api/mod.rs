@@ -156,10 +156,7 @@ pub struct AppState {
 impl AppState {
     /// Create a new executor with the current state.
     pub fn create_executor(&self) -> Executor {
-        let mut executor = Executor::new(
-            (*self.registry).clone(),
-            self.storage.clone(),
-        );
+        let mut executor = Executor::new((*self.registry).clone(), self.storage.clone());
         if let Some(monitor) = self.monitor.clone() {
             executor = executor.with_monitor(monitor);
         }
@@ -181,7 +178,10 @@ pub fn create_api_routes() -> Router<AppState> {
         .route("/api/executions/{id}", get(get_execution))
         .route("/api/executions/{id}/trace", get(get_execution_trace))
         .route("/api/executions/{id}/pause", post(pause_execution_handler))
-        .route("/api/executions/{id}/resume", post(resume_execution_handler))
+        .route(
+            "/api/executions/{id}/resume",
+            post(resume_execution_handler),
+        )
 }
 
 /// Create routes that require the monitored app state (WebSocket).
@@ -639,16 +639,12 @@ async fn pause_execution_handler(
             }))
             .into_response()
         }
-        Err(Error::Execution(msg)) if msg.contains("not found") => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": msg})),
-        )
-            .into_response(),
-        Err(Error::Execution(msg)) if msg.contains("status is") => (
-            StatusCode::CONFLICT,
-            Json(json!({"error": msg})),
-        )
-            .into_response(),
+        Err(Error::Execution(msg)) if msg.contains("not found") => {
+            (StatusCode::NOT_FOUND, Json(json!({"error": msg}))).into_response()
+        }
+        Err(Error::Execution(msg)) if msg.contains("status is") => {
+            (StatusCode::CONFLICT, Json(json!({"error": msg}))).into_response()
+        }
         Err(e) => external_error_response(e).into_response(),
     }
 }
@@ -718,21 +714,15 @@ async fn resume_execution_handler(
             }))
             .into_response()
         }
-        Err(Error::Execution(msg)) if msg.contains("not found") => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": msg})),
-        )
-            .into_response(),
-        Err(Error::Execution(msg)) if msg.contains("No checkpoint found") => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": msg})),
-        )
-            .into_response(),
-        Err(Error::Execution(msg)) if msg.contains("status is") => (
-            StatusCode::CONFLICT,
-            Json(json!({"error": msg})),
-        )
-            .into_response(),
+        Err(Error::Execution(msg)) if msg.contains("not found") => {
+            (StatusCode::NOT_FOUND, Json(json!({"error": msg}))).into_response()
+        }
+        Err(Error::Execution(msg)) if msg.contains("No checkpoint found") => {
+            (StatusCode::NOT_FOUND, Json(json!({"error": msg}))).into_response()
+        }
+        Err(Error::Execution(msg)) if msg.contains("status is") => {
+            (StatusCode::CONFLICT, Json(json!({"error": msg}))).into_response()
+        }
         Err(e) => external_error_response(e).into_response(),
     }
 }
