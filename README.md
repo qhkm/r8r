@@ -202,6 +202,7 @@ See [Security Audit](SECURITY_AUDIT_REPORT.md) for details.
 | [Environment Variables](docs/ENVIRONMENT_VARIABLES.md) | Configuration |
 | [Architecture](docs/ARCHITECTURE.md) | System design |
 | [Roadmap](docs/TODO.md) | Planned features |
+| [Runner Plan](docs/RUNNER_PLAN.md) | Edge/fleet runner roadmap |
 
 ## 🤝 Contributing
 
