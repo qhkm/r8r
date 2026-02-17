@@ -700,7 +700,10 @@ async fn process_single_event(
 
         let trigger_type = format!("delayed_event:{}", event.event);
 
-        match executor.execute(&workflow, &stored.id, &trigger_type, input).await {
+        match executor
+            .execute(&workflow, &stored.id, &trigger_type, input)
+            .await
+        {
             Ok(execution) => {
                 info!(
                     "Delayed event '{}' triggered workflow '{}' (execution: {})",
