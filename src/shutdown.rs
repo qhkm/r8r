@@ -116,7 +116,8 @@ impl ShutdownCoordinator {
         tokio::spawn(async move {
             #[cfg(unix)]
             {
-                let mut sigterm = match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+                let mut sigterm = match signal::unix::signal(signal::unix::SignalKind::terminate())
+                {
                     Ok(s) => s,
                     Err(e) => {
                         warn!("Failed to create SIGTERM handler: {}", e);
@@ -196,26 +197,24 @@ mod tests {
     #[tokio::test]
     async fn test_shutdown_request() {
         let coordinator = ShutdownCoordinator::new();
-        
+
         assert!(!coordinator.is_shutdown_requested());
-        
+
         coordinator.request_shutdown();
-        
+
         assert!(coordinator.is_shutdown_requested());
     }
 
     #[tokio::test]
     async fn test_shutdown_wait_already_requested() {
         let coordinator = ShutdownCoordinator::new();
-        
+
         coordinator.request_shutdown();
-        
+
         // Should return immediately since shutdown is already requested
-        let result = tokio::time::timeout(
-            Duration::from_millis(100),
-            coordinator.wait_for_shutdown()
-        ).await;
-        
+        let result =
+            tokio::time::timeout(Duration::from_millis(100), coordinator.wait_for_shutdown()).await;
+
         assert!(result.is_ok());
     }
 
@@ -223,19 +222,17 @@ mod tests {
     async fn test_shutdown_wait_then_request() {
         let coordinator = ShutdownCoordinator::new();
         let coordinator2 = coordinator.clone();
-        
+
         // Spawn a task that will request shutdown after a short delay
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
             coordinator2.request_shutdown();
         });
-        
+
         // Wait for shutdown - should complete when the other task requests it
-        let result = tokio::time::timeout(
-            Duration::from_secs(1),
-            coordinator.wait_for_shutdown()
-        ).await;
-        
+        let result =
+            tokio::time::timeout(Duration::from_secs(1), coordinator.wait_for_shutdown()).await;
+
         assert!(result.is_ok());
         assert!(coordinator.is_shutdown_requested());
     }
@@ -243,12 +240,12 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_shutdown_requests() {
         let coordinator = ShutdownCoordinator::new();
-        
+
         // Multiple requests should not cause issues
         coordinator.request_shutdown();
         coordinator.request_shutdown();
         coordinator.request_shutdown();
-        
+
         assert!(coordinator.is_shutdown_requested());
     }
 }

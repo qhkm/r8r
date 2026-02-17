@@ -162,10 +162,7 @@ impl DelayedEventQueue {
     }
 
     /// Create with a custom Redis URL.
-    pub fn with_redis_url(
-        mut self,
-        url: impl Into<String>,
-    ) -> Result<Self, EventError> {
+    pub fn with_redis_url(mut self, url: impl Into<String>) -> Result<Self, EventError> {
         let client = Client::open(url.into()).map_err(|e| EventError::Connection(e.to_string()))?;
         self.client = client;
         Ok(self)
@@ -195,10 +192,7 @@ impl DelayedEventQueue {
     }
 
     /// Schedule a pre-built delayed event.
-    pub async fn schedule_delayed_event(
-        &self,
-        event: &DelayedEvent,
-    ) -> Result<String, EventError> {
+    pub async fn schedule_delayed_event(&self, event: &DelayedEvent) -> Result<String, EventError> {
         let mut conn = self
             .client
             .get_multiplexed_async_connection()
@@ -369,8 +363,8 @@ impl DelayedEventQueue {
                 if event.retry_count < event.max_retries {
                     let mut retry_event = event.clone();
                     retry_event.retry_count += 1;
-                    retry_event.scheduled_at = Utc::now()
-                        + ChronoDuration::seconds(60 * retry_event.retry_count as i64);
+                    retry_event.scheduled_at =
+                        Utc::now() + ChronoDuration::seconds(60 * retry_event.retry_count as i64);
 
                     if let Err(e) = self.schedule_delayed_event(&retry_event).await {
                         error!("Failed to reschedule event for retry: {}", e);
@@ -433,8 +427,8 @@ impl DelayedEventQueue {
             .map_err(|e| EventError::Storage(e.to_string()))?
             .ok_or_else(|| EventError::WorkflowNotFound(workflow_name.to_string()))?;
 
-        let workflow =
-            parse_workflow(&stored.definition).map_err(|e| EventError::WorkflowParse(e.to_string()))?;
+        let workflow = parse_workflow(&stored.definition)
+            .map_err(|e| EventError::WorkflowParse(e.to_string()))?;
 
         let input = serde_json::json!({
             "event": event.event,
@@ -535,7 +529,10 @@ impl DelayedEventQueue {
         });
 
         self.handle = Some(handle);
-        info!("Delayed event queue started with {}ms poll interval", self.poll_interval_ms);
+        info!(
+            "Delayed event queue started with {}ms poll interval",
+            self.poll_interval_ms
+        );
         Ok(())
     }
 
@@ -615,7 +612,6 @@ async fn process_due_events_internal(
     let mut processed = 0;
 
     for event_json in events {
-
         // Parse and process
         match serde_json::from_str::<DelayedEvent>(&event_json) {
             Ok(event) => {
@@ -684,8 +680,8 @@ async fn process_single_event(
             .map_err(|e| EventError::Storage(e.to_string()))?
             .ok_or_else(|| EventError::WorkflowNotFound(workflow_name.to_string()))?;
 
-        let workflow =
-            parse_workflow(&stored.definition).map_err(|e| EventError::WorkflowParse(e.to_string()))?;
+        let workflow = parse_workflow(&stored.definition)
+            .map_err(|e| EventError::WorkflowParse(e.to_string()))?;
 
         let input = serde_json::json!({
             "event": event.event,

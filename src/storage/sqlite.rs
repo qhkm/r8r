@@ -20,11 +20,7 @@ fn parse_datetime_utc(s: &str) -> rusqlite::Result<chrono::DateTime<Utc>> {
     chrono::DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
         .map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(
-                0,
-                rusqlite::types::Type::Text,
-                Box::new(e),
-            )
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
         })
 }
 
@@ -386,8 +382,7 @@ impl SqliteStorage {
                 name: workflow.name.clone(),
                 definition: workflow.definition.clone(),
                 enabled: workflow.enabled,
-                created_at: parse_datetime_utc(&existing_created_at)
-                    .unwrap_or_else(|_| Utc::now()),
+                created_at: parse_datetime_utc(&existing_created_at).unwrap_or_else(|_| Utc::now()),
                 updated_at: workflow.updated_at,
             }
         } else {
@@ -996,7 +991,8 @@ impl SqliteStorage {
                     id: row.get(0)?,
                     execution_id: row.get(1)?,
                     node_id: row.get(2)?,
-                    node_outputs: serde_json::from_str(&outputs_str).unwrap_or(serde_json::Value::Null),
+                    node_outputs: serde_json::from_str(&outputs_str)
+                        .unwrap_or(serde_json::Value::Null),
                     created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
                 })
             })
@@ -1022,7 +1018,8 @@ impl SqliteStorage {
                     id: row.get(0)?,
                     execution_id: row.get(1)?,
                     node_id: row.get(2)?,
-                    node_outputs: serde_json::from_str(&outputs_str).unwrap_or(serde_json::Value::Null),
+                    node_outputs: serde_json::from_str(&outputs_str)
+                        .unwrap_or(serde_json::Value::Null),
                     created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
                 })
             })?
@@ -1140,7 +1137,7 @@ impl SqliteStorage {
     ) -> Result<String> {
         let conn = self.conn.lock().await;
         let id = uuid::Uuid::new_v4().to_string();
-        
+
         conn.execute(
             "INSERT INTO delayed_events (id, event_name, event_data, scheduled_at, created_at, retry_count)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -1158,7 +1155,7 @@ impl SqliteStorage {
                 0,
             ],
         )?;
-        
+
         Ok(id)
     }
 
@@ -1166,14 +1163,14 @@ impl SqliteStorage {
     pub async fn get_due_delayed_events(&self) -> Result<Vec<(String, String, String)>> {
         let conn = self.conn.lock().await;
         let now = Utc::now().to_rfc3339();
-        
+
         let mut stmt = conn.prepare(
             "SELECT id, event_name, event_data 
              FROM delayed_events 
              WHERE scheduled_at <= ?1 
-             ORDER BY scheduled_at ASC"
+             ORDER BY scheduled_at ASC",
         )?;
-        
+
         let events = stmt
             .query_map([&now], |row| {
                 Ok((
@@ -1183,17 +1180,14 @@ impl SqliteStorage {
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        
+
         Ok(events)
     }
 
     /// Delete a delayed event by ID.
     pub async fn delete_delayed_event(&self, event_id: &str) -> Result<()> {
         let conn = self.conn.lock().await;
-        conn.execute(
-            "DELETE FROM delayed_events WHERE id = ?1",
-            [event_id],
-        )?;
+        conn.execute("DELETE FROM delayed_events WHERE id = ?1", [event_id])?;
         Ok(())
     }
 
