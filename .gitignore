@@ -20,5 +20,10 @@
 .DS_Store
 Thumbs.db
 
+# Landing page build artifacts
+landing/docs/.astro/
+landing/docs/dist/
+landing/docs/node_modules/
+
 # Business strategy (confidential)
 BUSINESS_STRATEGY.md
