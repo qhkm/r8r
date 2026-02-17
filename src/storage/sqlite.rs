@@ -12,6 +12,18 @@ use tokio::sync::Mutex;
 use super::models::*;
 use crate::error::{Error, Result};
 
+/// Parse an RFC 3339 datetime string into a `chrono::DateTime<Utc>`.
+///
+/// Returns a `rusqlite::Error` on parse failure instead of panicking,
+/// so it is safe to use inside `query_row` / `query_map` closures.
+fn parse_datetime_utc(s: &str) -> rusqlite::Result<chrono::DateTime<Utc>> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+        })
+}
+
 /// Escape SQL LIKE pattern special characters to prevent injection.
 /// Characters % and _ have special meaning in LIKE patterns.
 fn escape_like_pattern(s: &str) -> String {
@@ -130,6 +142,27 @@ impl SqliteStorage {
             CREATE INDEX IF NOT EXISTS idx_executions_workflow ON executions(workflow_id);
             CREATE INDEX IF NOT EXISTS idx_executions_workflow_name ON executions(workflow_name);
             CREATE INDEX IF NOT EXISTS idx_node_executions_execution ON node_executions(execution_id);
+
+            CREATE TABLE IF NOT EXISTS checkpoints (
+                id TEXT PRIMARY KEY,
+                execution_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                node_outputs TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_checkpoints_execution ON checkpoints(execution_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS delayed_events (
+                id TEXT PRIMARY KEY,
+                event_name TEXT NOT NULL,
+                event_data TEXT NOT NULL,
+                scheduled_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                retry_count INTEGER DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_delayed_events_scheduled ON delayed_events(scheduled_at);
+            CREATE INDEX IF NOT EXISTS idx_delayed_events_name ON delayed_events(event_name);
             "#,
         )?;
 
@@ -309,6 +342,11 @@ impl SqliteStorage {
              WHERE workflow_id NOT IN (SELECT id FROM workflows)",
             [],
         )?;
+        conn.execute(
+            "DELETE FROM checkpoints
+             WHERE execution_id NOT IN (SELECT id FROM executions)",
+            [],
+        )?;
         Ok(())
     }
 
@@ -344,9 +382,7 @@ impl SqliteStorage {
                 name: workflow.name.clone(),
                 definition: workflow.definition.clone(),
                 enabled: workflow.enabled,
-                created_at: chrono::DateTime::parse_from_rfc3339(&existing_created_at)
-                    .unwrap()
-                    .with_timezone(&Utc),
+                created_at: parse_datetime_utc(&existing_created_at).unwrap_or_else(|_| Utc::now()),
                 updated_at: workflow.updated_at,
             }
         } else {
@@ -384,12 +420,8 @@ impl SqliteStorage {
                     name: row.get(1)?,
                     definition: row.get(2)?,
                     enabled: row.get(3)?,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
+                    updated_at: parse_datetime_utc(&row.get::<_, String>(5)?)?,
                 })
             })
             .optional()?;
@@ -411,12 +443,8 @@ impl SqliteStorage {
                     name: row.get(1)?,
                     definition: row.get(2)?,
                     enabled: row.get(3)?,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
+                    updated_at: parse_datetime_utc(&row.get::<_, String>(5)?)?,
                 })
             })
             .optional()?;
@@ -438,12 +466,8 @@ impl SqliteStorage {
                     name: row.get(1)?,
                     definition: row.get(2)?,
                     enabled: row.get(3)?,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
+                    updated_at: parse_datetime_utc(&row.get::<_, String>(5)?)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -643,12 +667,8 @@ impl SqliteStorage {
                     name: row.get(1)?,
                     definition: row.get(2)?,
                     enabled: row.get(3)?,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
+                    updated_at: parse_datetime_utc(&row.get::<_, String>(5)?)?,
                 })
             })
             .optional()?
@@ -759,9 +779,7 @@ impl SqliteStorage {
                     trigger_type: row.get(5)?,
                     input: serde_json::from_str(&input_str).unwrap_or(serde_json::Value::Null),
                     output: output_str.and_then(|s| serde_json::from_str(&s).ok()),
-                    started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    started_at: parse_datetime_utc(&row.get::<_, String>(8)?)?,
                     finished_at: row
                         .get::<_, Option<String>>(9)?
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
@@ -916,9 +934,7 @@ impl SqliteStorage {
                     status,
                     input: serde_json::from_str(&input_str).unwrap_or(serde_json::Value::Null),
                     output: output_str.and_then(|s| serde_json::from_str(&s).ok()),
-                    started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    started_at: parse_datetime_utc(&row.get::<_, String>(6)?)?,
                     finished_at: row
                         .get::<_, Option<String>>(7)?
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
@@ -931,6 +947,87 @@ impl SqliteStorage {
         Ok(node_execs)
     }
 
+    // ========================================================================
+    // Checkpoint operations
+    // ========================================================================
+
+    /// Save a checkpoint for an execution.
+    pub async fn save_checkpoint(&self, checkpoint: &Checkpoint) -> Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO checkpoints (id, execution_id, node_id, node_outputs, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                execution_id = excluded.execution_id,
+                node_id = excluded.node_id,
+                node_outputs = excluded.node_outputs,
+                created_at = excluded.created_at",
+            params![
+                checkpoint.id,
+                checkpoint.execution_id,
+                checkpoint.node_id,
+                serde_json::to_string(&checkpoint.node_outputs).unwrap_or_default(),
+                checkpoint.created_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get the latest checkpoint for an execution.
+    pub async fn get_latest_checkpoint(&self, execution_id: &str) -> Result<Option<Checkpoint>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, execution_id, node_id, node_outputs, created_at
+             FROM checkpoints
+             WHERE execution_id = ?1
+             ORDER BY created_at DESC
+             LIMIT 1",
+        )?;
+
+        let checkpoint = stmt
+            .query_row([execution_id], |row| {
+                let outputs_str: String = row.get(3)?;
+                Ok(Checkpoint {
+                    id: row.get(0)?,
+                    execution_id: row.get(1)?,
+                    node_id: row.get(2)?,
+                    node_outputs: serde_json::from_str(&outputs_str)
+                        .unwrap_or(serde_json::Value::Null),
+                    created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
+                })
+            })
+            .optional()?;
+
+        Ok(checkpoint)
+    }
+
+    /// List all checkpoints for an execution, ordered by creation time (newest first).
+    pub async fn list_checkpoints(&self, execution_id: &str) -> Result<Vec<Checkpoint>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, execution_id, node_id, node_outputs, created_at
+             FROM checkpoints
+             WHERE execution_id = ?1
+             ORDER BY created_at DESC",
+        )?;
+
+        let checkpoints = stmt
+            .query_map([execution_id], |row| {
+                let outputs_str: String = row.get(3)?;
+                Ok(Checkpoint {
+                    id: row.get(0)?,
+                    execution_id: row.get(1)?,
+                    node_id: row.get(2)?,
+                    node_outputs: serde_json::from_str(&outputs_str)
+                        .unwrap_or(serde_json::Value::Null),
+                    created_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(checkpoints)
+    }
+
     fn row_to_workflow_version(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkflowVersion> {
         Ok(WorkflowVersion {
             id: row.get(0)?,
@@ -938,9 +1035,7 @@ impl SqliteStorage {
             workflow_name: row.get(2)?,
             version: row.get(3)?,
             definition: row.get(4)?,
-            created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
-                .unwrap()
-                .with_timezone(&Utc),
+            created_at: parse_datetime_utc(&row.get::<_, String>(5)?)?,
             created_by: row.get(6)?,
             changelog: row.get(7)?,
             checksum: row.get(8)?,
@@ -962,9 +1057,7 @@ impl SqliteStorage {
             trigger_type: row.get(5)?,
             input: serde_json::from_str(&input_str).unwrap_or(serde_json::Value::Null),
             output: output_str.and_then(|s| serde_json::from_str(&s).ok()),
-            started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
-                .unwrap()
-                .with_timezone(&Utc),
+            started_at: parse_datetime_utc(&row.get::<_, String>(8)?)?,
             finished_at: row
                 .get::<_, Option<String>>(9)?
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
@@ -1029,6 +1122,84 @@ impl SqliteStorage {
         )?;
 
         Ok(Some(version))
+    }
+
+    // ========================================================================
+    // Delayed events operations
+    // ========================================================================
+
+    /// Store a delayed event for future processing.
+    pub async fn store_delayed_event(
+        &self,
+        event_name: &str,
+        event_data: &str,
+        scheduled_at: chrono::DateTime<Utc>,
+    ) -> Result<String> {
+        let conn = self.conn.lock().await;
+        let id = uuid::Uuid::new_v4().to_string();
+
+        conn.execute(
+            "INSERT INTO delayed_events (id, event_name, event_data, scheduled_at, created_at, retry_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+                event_name = excluded.event_name,
+                event_data = excluded.event_data,
+                scheduled_at = excluded.scheduled_at,
+                retry_count = excluded.retry_count",
+            params![
+                &id,
+                event_name,
+                event_data,
+                scheduled_at.to_rfc3339(),
+                Utc::now().to_rfc3339(),
+                0,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Get delayed events that are due for processing.
+    pub async fn get_due_delayed_events(&self) -> Result<Vec<(String, String, String)>> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+
+        let mut stmt = conn.prepare(
+            "SELECT id, event_name, event_data 
+             FROM delayed_events 
+             WHERE scheduled_at <= ?1 
+             ORDER BY scheduled_at ASC",
+        )?;
+
+        let events = stmt
+            .query_map([&now], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(events)
+    }
+
+    /// Delete a delayed event by ID.
+    pub async fn delete_delayed_event(&self, event_id: &str) -> Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute("DELETE FROM delayed_events WHERE id = ?1", [event_id])?;
+        Ok(())
+    }
+
+    /// Get count of pending delayed events.
+    pub async fn count_pending_delayed_events(&self) -> Result<u64> {
+        let conn = self.conn.lock().await;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM delayed_events WHERE scheduled_at > ?1",
+            [Utc::now().to_rfc3339()],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as u64)
     }
 }
 

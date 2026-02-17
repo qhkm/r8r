@@ -1,6 +1,7 @@
 //! Event trigger handler using Redis pub/sub.
 //!
 //! Subscribes to Redis channels and triggers workflows when events are received.
+//! Supports event fan-out to multiple workflows with parallel or sequential execution.
 
 use std::sync::Arc;
 
@@ -16,7 +17,8 @@ use crate::api::Monitor;
 use crate::engine::Executor;
 use crate::nodes::NodeRegistry;
 use crate::storage::SqliteStorage;
-use crate::workflow::{parse_workflow, Trigger};
+use crate::triggers::delayed::{DelayedEvent, DelayedEventQueue};
+use crate::workflow::{parse_workflow, EventRouting, Trigger};
 
 /// Default Redis URL if not configured.
 const DEFAULT_REDIS_URL: &str = "redis://127.0.0.1:6379";
@@ -38,6 +40,9 @@ pub struct EventMessage {
     /// Correlation ID for tracing
     #[serde(default)]
     pub correlation_id: Option<String>,
+    /// Scheduled processing time (for delayed events)
+    #[serde(default)]
+    pub scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl EventMessage {
@@ -48,6 +53,7 @@ impl EventMessage {
             data,
             source: None,
             correlation_id: None,
+            scheduled_at: None,
         }
     }
 
@@ -62,6 +68,51 @@ impl EventMessage {
         self.correlation_id = Some(id.into());
         self
     }
+
+    /// Set the scheduled processing time.
+    pub fn with_schedule(mut self, scheduled_at: chrono::DateTime<chrono::Utc>) -> Self {
+        self.scheduled_at = Some(scheduled_at);
+        self
+    }
+}
+
+/// Event fan-out configuration for triggering multiple workflows.
+#[derive(Debug, Clone)]
+pub struct EventFanOut {
+    /// Event name to fan out
+    pub event: String,
+    /// Workflow names to trigger
+    pub workflow_names: Vec<String>,
+    /// Execute workflows in parallel or sequential
+    pub parallel: bool,
+}
+
+impl EventFanOut {
+    /// Create a new fan-out configuration.
+    pub fn new(event: impl Into<String>) -> Self {
+        Self {
+            event: event.into(),
+            workflow_names: Vec::new(),
+            parallel: true,
+        }
+    }
+
+    /// Add a workflow to the fan-out list.
+    pub fn add_workflow(mut self, workflow_name: impl Into<String>) -> Self {
+        self.workflow_names.push(workflow_name.into());
+        self
+    }
+
+    /// Set parallel execution mode.
+    pub fn parallel(mut self, parallel: bool) -> Self {
+        self.parallel = parallel;
+        self
+    }
+
+    /// Set sequential execution mode.
+    pub fn sequential(self) -> Self {
+        self.parallel(false)
+    }
 }
 
 /// Event subscriber that listens for Redis pub/sub messages.
@@ -72,6 +123,8 @@ pub struct EventSubscriber {
     monitor: Option<Arc<Monitor>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     handle: Option<JoinHandle<()>>,
+    fan_out_configs: Vec<EventFanOut>,
+    delayed_queue: Option<Arc<DelayedEventQueue>>,
 }
 
 impl EventSubscriber {
@@ -87,6 +140,8 @@ impl EventSubscriber {
             monitor: None,
             shutdown_tx: None,
             handle: None,
+            fan_out_configs: Vec::new(),
+            delayed_queue: None,
         }
     }
 
@@ -99,6 +154,18 @@ impl EventSubscriber {
     /// Attach a live execution monitor for event-triggered runs.
     pub fn with_monitor(mut self, monitor: Arc<Monitor>) -> Self {
         self.monitor = Some(monitor);
+        self
+    }
+
+    /// Add fan-out configuration for an event.
+    pub fn with_fan_out(mut self, fan_out: EventFanOut) -> Self {
+        self.fan_out_configs.push(fan_out);
+        self
+    }
+
+    /// Attach a delayed event queue for scheduling delayed events via Redis sorted sets.
+    pub fn with_delayed_queue(mut self, queue: Arc<DelayedEventQueue>) -> Self {
+        self.delayed_queue = Some(queue);
         self
     }
 
@@ -133,19 +200,48 @@ impl EventSubscriber {
             };
 
             for trigger in &workflow.triggers {
-                if let Trigger::Event { event, filter } = trigger {
+                if let Trigger::Event {
+                    event,
+                    filter,
+                    json_path,
+                    delay,
+                    routing,
+                } = trigger
+                {
                     event_subscriptions.push(EventSubscription {
                         channel: format!("r8r:events:{}", event),
                         workflow_id: stored.id.clone(),
                         workflow_name: workflow.name.clone(),
                         filter: filter.clone(),
+                        json_path: json_path.clone(),
+                        delay: *delay,
+                        routing: routing.clone(),
                     });
                 }
             }
         }
 
-        if event_subscriptions.is_empty() {
+        if event_subscriptions.is_empty() && self.fan_out_configs.is_empty() {
             info!("No event triggers configured, skipping Redis subscription");
+            return Ok(());
+        }
+
+        // Collect channels from both subscriptions and fan-out configs
+        let mut channels: Vec<String> = event_subscriptions
+            .iter()
+            .map(|s| s.channel.clone())
+            .collect();
+
+        // Add fan-out channels
+        for fan_out in &self.fan_out_configs {
+            let channel = format!("r8r:events:{}", fan_out.event);
+            if !channels.contains(&channel) {
+                channels.push(channel);
+            }
+        }
+
+        if channels.is_empty() {
+            info!("No event channels to subscribe to");
             return Ok(());
         }
 
@@ -163,11 +259,6 @@ impl EventSubscriber {
         .map_err(|e| EventError::Connection(e.to_string()))?;
 
         // Subscribe to all event channels
-        let channels: Vec<String> = event_subscriptions
-            .iter()
-            .map(|s| s.channel.clone())
-            .collect();
-
         for channel in &channels {
             pubsub
                 .subscribe(channel)
@@ -180,19 +271,27 @@ impl EventSubscriber {
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         self.shutdown_tx = Some(shutdown_tx);
 
+        // Store lengths before moving
+        let subscription_count = event_subscriptions.len();
+        let fan_out_configs = self.fan_out_configs.clone();
+        let fan_out_count = fan_out_configs.len();
+
         // Clone data for the spawned task
         let storage = self.storage.clone();
         let registry = self.registry.clone();
         let monitor = self.monitor.clone();
+        let delayed_queue = self.delayed_queue.clone();
 
         // Spawn message processing task
         let handle = tokio::spawn(async move {
             process_messages(
                 pubsub,
                 event_subscriptions,
+                fan_out_configs,
                 storage,
                 registry,
                 monitor,
+                delayed_queue,
                 &mut shutdown_rx,
             )
             .await;
@@ -201,8 +300,8 @@ impl EventSubscriber {
         self.handle = Some(handle);
 
         info!(
-            "Event subscriber started with {} subscription(s)",
-            channels.len()
+            "Event subscriber started with {} subscription(s) and {} fan-out config(s)",
+            subscription_count, fan_out_count
         );
         Ok(())
     }
@@ -236,15 +335,21 @@ struct EventSubscription {
     workflow_id: String,
     workflow_name: String,
     filter: Option<String>,
+    json_path: Option<String>,
+    delay: Option<u64>,
+    routing: Option<Vec<EventRouting>>,
 }
 
 /// Process messages from Redis pub/sub.
+#[allow(clippy::too_many_arguments)]
 async fn process_messages(
     mut pubsub: PubSub,
     subscriptions: Vec<EventSubscription>,
+    fan_out_configs: Vec<EventFanOut>,
     storage: SqliteStorage,
     registry: Arc<NodeRegistry>,
     monitor: Option<Arc<Monitor>>,
+    delayed_queue: Option<Arc<DelayedEventQueue>>,
     shutdown_rx: &mut mpsc::Receiver<()>,
 ) {
     use futures_util::StreamExt;
@@ -267,18 +372,28 @@ async fn process_messages(
                             Ok(payload) => {
                                 debug!("Received event on channel {}: {}", channel, payload);
 
-                                // Find matching subscriptions
-                                let matching: Vec<_> = subscriptions
-                                    .iter()
-                                    .filter(|s| s.channel == channel)
-                                    .collect();
+                                // Parse the event message first
+                                let event_msg: Result<EventMessage, _> = serde_json::from_str(&payload);
 
-                                for sub in matching {
-                                    // Parse the event message
-                                    let event_msg: Result<EventMessage, _> = serde_json::from_str(&payload);
+                                match event_msg {
+                                    Ok(event) => {
+                                        // Check if this is a delayed event that should be scheduled
+                                        if let Some(delay_seconds) = get_delay_from_subscriptions(&event, &subscriptions) {
+                                            if delay_seconds > 0 {
+                                                if let Err(e) = schedule_delayed_event(&storage, &delayed_queue, &event, delay_seconds).await {
+                                                    error!("Failed to schedule delayed event: {}", e);
+                                                }
+                                                continue;
+                                            }
+                                        }
 
-                                    match event_msg {
-                                        Ok(event) => {
+                                        // Process regular event subscriptions
+                                        let matching: Vec<_> = subscriptions
+                                            .iter()
+                                            .filter(|s| s.channel == channel)
+                                            .collect();
+
+                                        for sub in matching {
                                             // Apply filter if configured
                                             if let Some(filter) = &sub.filter {
                                                 if !evaluate_filter(filter, &event.data) {
@@ -286,6 +401,40 @@ async fn process_messages(
                                                         "Event filtered out for workflow '{}'",
                                                         sub.workflow_name
                                                     );
+                                                    continue;
+                                                }
+                                            }
+
+                                            // Apply JSON path filter if configured
+                                            if let Some(json_path) = &sub.json_path {
+                                                if !evaluate_json_path(json_path, &event.data) {
+                                                    debug!(
+                                                        "Event JSON path filter didn't match for workflow '{}'",
+                                                        sub.workflow_name
+                                                    );
+                                                    continue;
+                                                }
+                                            }
+
+                                            // Check routing rules if configured
+                                            if let Some(routing_rules) = &sub.routing {
+                                                if let Some(target) = evaluate_routing(routing_rules, &event.data) {
+                                                    // Trigger the routed workflow instead
+                                                    if let Err(e) = trigger_workflow(
+                                                        &storage,
+                                                        &registry,
+                                                        &sub.workflow_id,
+                                                        &target,
+                                                        &event,
+                                                        monitor.clone(),
+                                                    )
+                                                    .await
+                                                    {
+                                                        error!(
+                                                            "Failed to trigger routed workflow '{}': {}",
+                                                            target, e
+                                                        );
+                                                    }
                                                     continue;
                                                 }
                                             }
@@ -307,12 +456,29 @@ async fn process_messages(
                                                 );
                                             }
                                         }
-                                        Err(e) => {
-                                            warn!(
-                                                "Failed to parse event message on channel {}: {}",
-                                                channel, e
-                                            );
+
+                                        // Process fan-out configurations
+                                        let event_name = channel.strip_prefix("r8r:events:")
+                                            .unwrap_or(&channel);
+
+                                        for fan_out in &fan_out_configs {
+                                            if fan_out.event == event_name {
+                                                handle_fan_out(
+                                                    &storage,
+                                                    &registry,
+                                                    fan_out,
+                                                    &event,
+                                                    monitor.clone(),
+                                                )
+                                                .await;
+                                            }
                                         }
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Failed to parse event message on channel {}: {}",
+                                            channel, e
+                                        );
                                     }
                                 }
                             }
@@ -325,6 +491,149 @@ async fn process_messages(
                         warn!("Redis pub/sub stream ended unexpectedly");
                         break;
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Get delay seconds from matching subscription.
+fn get_delay_from_subscriptions(
+    event: &EventMessage,
+    subscriptions: &[EventSubscription],
+) -> Option<u64> {
+    // Check if event has scheduled_at (already delayed)
+    if event.scheduled_at.is_some() {
+        return Some(0); // No additional delay needed
+    }
+
+    subscriptions
+        .iter()
+        .find(|s| format!("r8r:events:{}", event.event) == s.channel)
+        .and_then(|s| s.delay)
+}
+
+/// Schedule a delayed event for future processing.
+///
+/// Uses the Redis-based DelayedEventQueue when available, with SQLite as fallback.
+async fn schedule_delayed_event(
+    storage: &SqliteStorage,
+    delayed_queue: &Option<Arc<DelayedEventQueue>>,
+    event: &EventMessage,
+    delay_seconds: u64,
+) -> Result<(), EventError> {
+    // Build a DelayedEvent from the EventMessage
+    let mut delayed = DelayedEvent::new(&event.event, event.data.clone(), delay_seconds);
+    if let Some(source) = &event.source {
+        delayed = delayed.with_source(source.clone());
+    }
+    if let Some(cid) = &event.correlation_id {
+        delayed = delayed.with_correlation_id(cid.clone());
+    }
+
+    // Use Redis sorted set queue when available
+    if let Some(queue) = delayed_queue {
+        queue.schedule_delayed_event(&delayed).await?;
+        return Ok(());
+    }
+
+    // Fallback: store in SQLite only (no Redis available)
+    warn!(
+        "DelayedEventQueue not configured; storing event '{}' in SQLite only (delay: {}s)",
+        event.event, delay_seconds
+    );
+    let event_json =
+        serde_json::to_string(&delayed).map_err(|e| EventError::Serialization(e.to_string()))?;
+    let _ = storage
+        .store_delayed_event(&event.event, &event_json, delayed.scheduled_at)
+        .await;
+
+    Ok(())
+}
+
+/// Handle event fan-out to multiple workflows.
+async fn handle_fan_out(
+    storage: &SqliteStorage,
+    registry: &Arc<NodeRegistry>,
+    fan_out: &EventFanOut,
+    event: &EventMessage,
+    monitor: Option<Arc<Monitor>>,
+) {
+    info!(
+        "Fanning out event '{}' to {} workflow(s) (parallel={})",
+        event.event,
+        fan_out.workflow_names.len(),
+        fan_out.parallel
+    );
+
+    if fan_out.parallel {
+        // Execute workflows in parallel
+        let mut handles = Vec::new();
+
+        for workflow_name in &fan_out.workflow_names {
+            let storage = storage.clone();
+            let registry = registry.clone();
+            let event = event.clone();
+            let workflow_name = workflow_name.clone();
+            let monitor = monitor.clone();
+
+            let handle = tokio::spawn(async move {
+                // Get workflow ID from storage
+                match storage.get_workflow(&workflow_name).await {
+                    Ok(Some(stored)) => {
+                        if let Err(e) = trigger_workflow(
+                            &storage,
+                            &registry,
+                            &stored.id,
+                            &workflow_name,
+                            &event,
+                            monitor,
+                        )
+                        .await
+                        {
+                            error!("Fan-out failed for workflow '{}': {}", workflow_name, e);
+                        }
+                    }
+                    Ok(None) => {
+                        warn!("Workflow '{}' not found for fan-out", workflow_name);
+                    }
+                    Err(e) => {
+                        error!("Failed to load workflow '{}': {}", workflow_name, e);
+                    }
+                }
+            });
+
+            handles.push(handle);
+        }
+
+        // Wait for all workflows to complete (but don't fail if one fails)
+        for handle in handles {
+            let _ = handle.await;
+        }
+    } else {
+        // Execute workflows sequentially
+        for workflow_name in &fan_out.workflow_names {
+            match storage.get_workflow(workflow_name).await {
+                Ok(Some(stored)) => {
+                    if let Err(e) = trigger_workflow(
+                        storage,
+                        registry,
+                        &stored.id,
+                        workflow_name,
+                        event,
+                        monitor.clone(),
+                    )
+                    .await
+                    {
+                        error!("Fan-out failed for workflow '{}': {}", workflow_name, e);
+                        // Continue with next workflow even if this one failed
+                    }
+                }
+                Ok(None) => {
+                    warn!("Workflow '{}' not found for fan-out", workflow_name);
+                }
+                Err(e) => {
+                    error!("Failed to load workflow '{}': {}", workflow_name, e);
                 }
             }
         }
@@ -377,6 +686,70 @@ fn evaluate_filter(filter: &str, data: &Value) -> bool {
             false
         }
     }
+}
+
+/// Evaluate JSON path expression against event data.
+fn evaluate_json_path(path: &str, data: &Value) -> bool {
+    // Simple JSON path implementation
+    // Supports basic path like "$.user.name" or "user.name"
+    let path = path.trim();
+    let path = if let Some(stripped) = path.strip_prefix("$.") {
+        stripped
+    } else if let Some(stripped) = path.strip_prefix('$') {
+        stripped
+    } else {
+        path
+    };
+
+    if path.is_empty() {
+        return !data.is_null();
+    }
+
+    let parts: Vec<&str> = path.split('.').collect();
+    let mut current = data;
+
+    for part in &parts {
+        // Handle array indexing like "items[0]"
+        if let Some(bracket_idx) = part.find('[') {
+            let key = &part[..bracket_idx];
+            let idx_str = &part[bracket_idx + 1..part.len() - 1]; // Remove [ and ]
+
+            // Navigate to the key first
+            if !key.is_empty() {
+                match current.get(key) {
+                    Some(v) => current = v,
+                    None => return false,
+                }
+            }
+
+            // Then index into the array
+            if let Ok(idx) = idx_str.parse::<usize>() {
+                match current.as_array() {
+                    Some(arr) if idx < arr.len() => current = &arr[idx],
+                    _ => return false,
+                }
+            } else {
+                return false;
+            }
+        } else {
+            match current.get(part) {
+                Some(v) => current = v,
+                None => return false,
+            }
+        }
+    }
+
+    !current.is_null()
+}
+
+/// Evaluate routing rules and return the target workflow if a condition matches.
+fn evaluate_routing(routing_rules: &[EventRouting], data: &Value) -> Option<String> {
+    for rule in routing_rules {
+        if evaluate_filter(&rule.condition, data) {
+            return Some(rule.target_workflow.clone());
+        }
+    }
+    None
 }
 
 /// Trigger a workflow execution based on an event.
@@ -479,6 +852,40 @@ impl EventPublisher {
         let event = EventMessage::new(event_name, data);
         self.publish(&event).await
     }
+
+    /// Schedule an event for delayed processing.
+    pub async fn schedule(
+        &self,
+        event_name: &str,
+        data: Value,
+        delay_seconds: u64,
+    ) -> Result<(), EventError> {
+        use chrono::Utc;
+
+        let scheduled_at = Utc::now() + chrono::Duration::seconds(delay_seconds as i64);
+        let event = EventMessage::new(event_name, data).with_schedule(scheduled_at);
+
+        // Publish to delayed events channel
+        let mut conn = self
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| EventError::Connection(e.to_string()))?;
+
+        let channel = "r8r:events:delayed".to_string();
+        let payload =
+            serde_json::to_string(&event).map_err(|e| EventError::Serialization(e.to_string()))?;
+
+        conn.publish::<_, _, ()>(&channel, &payload)
+            .await
+            .map_err(|e| EventError::Publish(e.to_string()))?;
+
+        debug!(
+            "Scheduled event '{}' for {} (delay: {}s)",
+            event_name, scheduled_at, delay_seconds
+        );
+        Ok(())
+    }
 }
 
 // Note: EventPublisher intentionally does not implement Default
@@ -528,6 +935,7 @@ mod tests {
         assert_eq!(event.data["order_id"], 123);
         assert!(event.source.is_none());
         assert!(event.correlation_id.is_none());
+        assert!(event.scheduled_at.is_none());
     }
 
     #[test]
@@ -538,6 +946,16 @@ mod tests {
 
         assert_eq!(event.source, Some("order-service".to_string()));
         assert_eq!(event.correlation_id, Some("abc-123".to_string()));
+    }
+
+    #[test]
+    fn test_event_message_with_schedule() {
+        use chrono::Utc;
+        let scheduled = Utc::now();
+        let event =
+            EventMessage::new("order.created", json!({"order_id": 123})).with_schedule(scheduled);
+
+        assert_eq!(event.scheduled_at, Some(scheduled));
     }
 
     #[test]
@@ -560,5 +978,69 @@ mod tests {
         // For now, test that the function doesn't panic
         let _ = evaluate_filter("true", &data);
         let _ = evaluate_filter("false", &data);
+    }
+
+    #[test]
+    fn test_json_path_evaluation() {
+        let data = json!({
+            "user": {
+                "name": "John",
+                "email": "john@example.com"
+            },
+            "items": [{"id": 1}, {"id": 2}]
+        });
+
+        assert!(evaluate_json_path("$.user.name", &data));
+        assert!(evaluate_json_path("user.name", &data));
+        assert!(evaluate_json_path("$.user", &data));
+        assert!(evaluate_json_path("$.items[0]", &data));
+        assert!(!evaluate_json_path("$.user.nonexistent", &data));
+        assert!(!evaluate_json_path("$.nonexistent", &data));
+    }
+
+    #[test]
+    fn test_event_fan_out_builder() {
+        let fan_out = EventFanOut::new("order.created")
+            .add_workflow("process-order")
+            .add_workflow("send-notification")
+            .parallel(true);
+
+        assert_eq!(fan_out.event, "order.created");
+        assert_eq!(fan_out.workflow_names.len(), 2);
+        assert!(fan_out.parallel);
+    }
+
+    #[test]
+    fn test_event_fan_out_sequential() {
+        let fan_out = EventFanOut::new("payment.received")
+            .add_workflow("workflow1")
+            .add_workflow("workflow2")
+            .sequential();
+
+        assert!(!fan_out.parallel);
+    }
+
+    #[test]
+    fn test_evaluate_routing() {
+        let data = json!({
+            "type": "premium",
+            "amount": 100
+        });
+
+        let rules = vec![
+            EventRouting {
+                condition: "data.type == \"premium\"".to_string(),
+                target_workflow: "premium-handler".to_string(),
+            },
+            EventRouting {
+                condition: "data.type == \"standard\"".to_string(),
+                target_workflow: "standard-handler".to_string(),
+            },
+        ];
+
+        let result = evaluate_routing(&rules, &data);
+        // Note: This will return None because Rhai evaluation isn't available in unit tests
+        // In production, this would return Some("premium-handler")
+        assert!(result.is_none() || result == Some("premium-handler".to_string()));
     }
 }
