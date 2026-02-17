@@ -206,6 +206,8 @@ See [Security Audit](SECURITY_AUDIT_REPORT.md) for details.
 
 ## 🤝 Contributing
 
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and our [CLA](CLA.md) (required for first PR).
+
 ```bash
 cargo test              # Run tests (300+)
 cargo clippy            # Lint
