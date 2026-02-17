@@ -1,10 +1,10 @@
-//! Delayed event processing using Redis sorted sets.
+//! Delayed event processing using SQLite storage.
 //!
 //! This module provides functionality to schedule events for future processing,
 //! with support for delayed triggers and scheduled workflow execution.
+//! Events are stored in SQLite and polled by a background task.
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use redis::{AsyncCommands, Client};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -18,28 +18,14 @@ use crate::api::Monitor;
 use crate::engine::Executor;
 use crate::nodes::NodeRegistry;
 use crate::storage::SqliteStorage;
-use crate::triggers::event::{EventError, EventMessage, EventPublisher};
+use crate::triggers::event::{EventError, EventMessage};
+use crate::triggers::event_backend::EventBackend;
 use crate::workflow::parse_workflow;
-
-/// Default Redis URL if not configured.
-const DEFAULT_REDIS_URL: &str = "redis://127.0.0.1:6379";
-
-/// Redis key for delayed events sorted set.
-const DELAYED_EVENTS_KEY: &str = "r8r:delayed_events";
-
-/// Redis key for event ID → JSON index hash (O(1) cancel lookup).
-const DELAYED_EVENTS_INDEX_KEY: &str = "r8r:delayed_events:index";
-
-/// Redis key for delayed events processing lock.
-const DELAYED_EVENTS_LOCK: &str = "r8r:delayed_events:lock";
 
 /// Poll interval for checking due events (in milliseconds).
 const POLL_INTERVAL_MS: u64 = 1000;
 
-/// Lock timeout to prevent multiple instances processing the same events.
-const LOCK_TIMEOUT_SECONDS: u64 = 30;
-
-/// Delayed event entry stored in Redis.
+/// Delayed event entry stored in SQLite.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DelayedEvent {
     /// Unique identifier for this delayed event
@@ -132,40 +118,37 @@ impl DelayedEvent {
     }
 }
 
-/// Queue for managing delayed events using Redis sorted sets.
-pub struct DelayedEventQueue {
-    client: Client,
+/// Processor for delayed events using SQLite storage and an EventBackend.
+///
+/// Polls SQLite for due events on a timer, processes them (either by
+/// triggering a target workflow directly or re-publishing via the backend),
+/// and handles retries with exponential backoff.
+pub struct DelayedEventProcessor {
     storage: SqliteStorage,
     registry: Arc<NodeRegistry>,
+    backend: Arc<dyn EventBackend>,
     monitor: Option<Arc<Monitor>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     handle: Option<JoinHandle<()>>,
     poll_interval_ms: u64,
 }
 
-impl DelayedEventQueue {
-    /// Create a new delayed event queue.
-    pub fn new(storage: SqliteStorage, registry: Arc<NodeRegistry>) -> Result<Self, EventError> {
-        let redis_url =
-            std::env::var("REDIS_URL").unwrap_or_else(|_| DEFAULT_REDIS_URL.to_string());
-        let client = Client::open(redis_url).map_err(|e| EventError::Connection(e.to_string()))?;
-
-        Ok(Self {
-            client,
+impl DelayedEventProcessor {
+    /// Create a new delayed event processor.
+    pub fn new(
+        storage: SqliteStorage,
+        registry: Arc<NodeRegistry>,
+        backend: Arc<dyn EventBackend>,
+    ) -> Self {
+        Self {
             storage,
             registry,
+            backend,
             monitor: None,
             shutdown_tx: None,
             handle: None,
             poll_interval_ms: POLL_INTERVAL_MS,
-        })
-    }
-
-    /// Create with a custom Redis URL.
-    pub fn with_redis_url(mut self, url: impl Into<String>) -> Result<Self, EventError> {
-        let client = Client::open(url.into()).map_err(|e| EventError::Connection(e.to_string()))?;
-        self.client = client;
-        Ok(self)
+        }
     }
 
     /// Set custom poll interval.
@@ -180,304 +163,14 @@ impl DelayedEventQueue {
         self
     }
 
-    /// Schedule an event for delayed processing.
-    pub async fn schedule_event(
-        &self,
-        event: impl Into<String>,
-        data: Value,
-        delay_seconds: u64,
-    ) -> Result<String, EventError> {
-        let delayed_event = DelayedEvent::new(event, data, delay_seconds);
-        self.schedule_delayed_event(&delayed_event).await
-    }
-
-    /// Schedule a pre-built delayed event.
-    pub async fn schedule_delayed_event(&self, event: &DelayedEvent) -> Result<String, EventError> {
-        let mut conn = self
-            .client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| EventError::Connection(e.to_string()))?;
-
-        // Use scheduled timestamp as score for sorted set
-        let score = event.scheduled_at.timestamp() as f64;
-        let event_json =
-            serde_json::to_string(event).map_err(|e| EventError::Serialization(e.to_string()))?;
-
-        // Add to sorted set
-        let added: i32 = conn
-            .zadd(DELAYED_EVENTS_KEY, &event_json, score)
-            .await
-            .map_err(|e| EventError::Publish(e.to_string()))?;
-
-        // Maintain ID → JSON index for O(1) cancel lookups
-        let _: () = conn
-            .hset(DELAYED_EVENTS_INDEX_KEY, &event.id, &event_json)
-            .await
-            .map_err(|e| EventError::Publish(e.to_string()))?;
-
-        if added > 0 {
-            info!(
-                "Scheduled event '{}' (id: {}) for {} (delay: {}s)",
-                event.event,
-                event.id,
-                event.scheduled_at,
-                event.delay_seconds()
-            );
-        }
-
-        Ok(event.id.clone())
-    }
-
-    /// Cancel a scheduled event by ID.
-    ///
-    /// Uses a secondary hash index for O(1) lookup instead of scanning the sorted set.
-    pub async fn cancel_event(&self, event_id: &str) -> Result<bool, EventError> {
-        let mut conn = self
-            .client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| EventError::Connection(e.to_string()))?;
-
-        // Look up the original JSON from the ID index (O(1))
-        let event_json: Option<String> = conn
-            .hget(DELAYED_EVENTS_INDEX_KEY, event_id)
-            .await
-            .map_err(|e| EventError::Storage(e.to_string()))?;
-
-        let event_json = match event_json {
-            Some(json) => json,
-            None => return Ok(false),
-        };
-
-        // Remove from sorted set using the exact stored JSON
-        let removed: i32 = conn
-            .zrem(DELAYED_EVENTS_KEY, &event_json)
-            .await
-            .map_err(|e| EventError::Storage(e.to_string()))?;
-
-        // Clean up the index entry
-        let _: () = conn
-            .hdel(DELAYED_EVENTS_INDEX_KEY, event_id)
-            .await
-            .map_err(|e| EventError::Storage(e.to_string()))?;
-
-        if removed > 0 {
-            info!("Cancelled delayed event (id: {})", event_id);
-        }
-
-        Ok(removed > 0)
-    }
-
-    /// Get all pending events.
-    pub async fn get_pending_events(&self) -> Result<Vec<DelayedEvent>, EventError> {
-        let mut conn = self
-            .client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| EventError::Connection(e.to_string()))?;
-
-        let events: Vec<String> = conn
-            .zrange(DELAYED_EVENTS_KEY, 0, -1)
-            .await
-            .map_err(|e| EventError::Storage(e.to_string()))?;
-
-        let mut result = Vec::new();
-        for event_json in events {
-            if let Ok(event) = serde_json::from_str::<DelayedEvent>(&event_json) {
-                result.push(event);
-            }
-        }
-
-        Ok(result)
-    }
-
-    /// Get events that are due for processing.
-    pub async fn get_due_events(&self) -> Result<Vec<DelayedEvent>, EventError> {
-        let mut conn = self
-            .client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| EventError::Connection(e.to_string()))?;
-
-        let now = Utc::now().timestamp() as f64;
-
-        // Get events with score <= now (due events)
-        let events: Vec<String> = conn
-            .zrangebyscore(DELAYED_EVENTS_KEY, 0 as f64, now)
-            .await
-            .map_err(|e| EventError::Storage(e.to_string()))?;
-
-        let mut result = Vec::new();
-        for event_json in events {
-            if let Ok(event) = serde_json::from_str::<DelayedEvent>(&event_json) {
-                result.push(event);
-            }
-        }
-
-        Ok(result)
-    }
-
-    /// Process events that are due.
-    ///
-    /// Uses an atomic Lua script to fetch and remove due events in one
-    /// operation, preventing duplicate processing across instances.
-    pub async fn process_due_events(&self) -> Result<usize, EventError> {
-        let mut conn = self
-            .client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| EventError::Connection(e.to_string()))?;
-
-        let now = Utc::now().timestamp() as f64;
-
-        // Atomically pop due events and clean up index
-        let script = redis::Script::new(ATOMIC_POP_DUE_EVENTS_LUA);
-        let event_jsons: Vec<String> = script
-            .key(DELAYED_EVENTS_KEY)
-            .key(DELAYED_EVENTS_INDEX_KEY)
-            .arg(now)
-            .invoke_async(&mut conn)
-            .await
-            .map_err(|e| EventError::Storage(e.to_string()))?;
-
-        if event_jsons.is_empty() {
-            return Ok(0);
-        }
-
-        let mut processed = 0;
-
-        for event_json in event_jsons {
-            let event = match serde_json::from_str::<DelayedEvent>(&event_json) {
-                Ok(e) => e,
-                Err(e) => {
-                    warn!("Failed to parse delayed event: {}", e);
-                    continue;
-                }
-            };
-
-            if let Err(e) = self.process_event(&event).await {
-                error!("Failed to process delayed event '{}': {}", event.id, e);
-
-                // Retry logic
-                if event.retry_count < event.max_retries {
-                    let mut retry_event = event.clone();
-                    retry_event.retry_count += 1;
-                    retry_event.scheduled_at =
-                        Utc::now() + ChronoDuration::seconds(60 * retry_event.retry_count as i64);
-
-                    if let Err(e) = self.schedule_delayed_event(&retry_event).await {
-                        error!("Failed to reschedule event for retry: {}", e);
-                    } else {
-                        info!(
-                            "Scheduled retry {} for event '{}' (id: {})",
-                            retry_event.retry_count, retry_event.event, retry_event.id
-                        );
-                    }
-                }
-            } else {
-                processed += 1;
-            }
-            // No need to remove from queue — Lua script already did it
-        }
-
-        if processed > 0 {
-            info!("Processed {} delayed event(s)", processed);
-        }
-
-        Ok(processed)
-    }
-
-    /// Process a single delayed event.
-    async fn process_event(&self, event: &DelayedEvent) -> Result<(), EventError> {
-        info!(
-            "Processing delayed event '{}' (id: {}, waited {}s)",
-            event.event,
-            event.id,
-            (Utc::now() - event.created_at).num_seconds()
-        );
-
-        if let Some(ref workflow_name) = event.target_workflow {
-            // Direct workflow trigger
-            self.trigger_workflow(workflow_name, event).await
-        } else {
-            // Publish to event bus for normal event handling
-            let publisher = EventPublisher::new()?;
-            let event_msg = event.to_event_message();
-
-            publisher
-                .publish(&event_msg)
-                .await
-                .map_err(|e| EventError::Publish(e.to_string()))?;
-
-            Ok(())
-        }
-    }
-
-    /// Trigger a specific workflow with the delayed event.
-    async fn trigger_workflow(
-        &self,
-        workflow_name: &str,
-        event: &DelayedEvent,
-    ) -> Result<(), EventError> {
-        let stored = self
-            .storage
-            .get_workflow(workflow_name)
-            .await
-            .map_err(|e| EventError::Storage(e.to_string()))?
-            .ok_or_else(|| EventError::WorkflowNotFound(workflow_name.to_string()))?;
-
-        let workflow = parse_workflow(&stored.definition)
-            .map_err(|e| EventError::WorkflowParse(e.to_string()))?;
-
-        let input = serde_json::json!({
-            "event": event.event,
-            "data": event.data,
-            "source": event.source,
-            "correlation_id": event.correlation_id,
-            "delayed": true,
-            "scheduled_at": event.scheduled_at,
-            "created_at": event.created_at,
-        });
-
-        let mut executor = Executor::new((*self.registry).clone(), self.storage.clone());
-        if let Some(ref monitor) = self.monitor {
-            executor = executor.with_monitor(monitor.clone());
-        }
-
-        let trigger_type = format!("delayed_event:{}", event.event);
-
-        match executor
-            .execute(&workflow, &stored.id, &trigger_type, input)
-            .await
-        {
-            Ok(execution) => {
-                info!(
-                    "Delayed event '{}' triggered workflow '{}' (execution: {})",
-                    event.event, workflow_name, execution.id
-                );
-                Ok(())
-            }
-            Err(e) => {
-                error!(
-                    "Failed to execute workflow '{}' for delayed event '{}': {}",
-                    workflow_name, event.event, e
-                );
-                Err(EventError::Execution(e.to_string()))
-            }
-        }
-    }
-
     /// Start the background polling task.
     pub async fn start(&mut self) -> Result<(), EventError> {
-        // Create shutdown channel
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         self.shutdown_tx = Some(shutdown_tx);
 
-        // Clone for the spawned task
-        let client = self.client.clone();
         let storage = self.storage.clone();
         let registry = self.registry.clone();
+        let backend = self.backend.clone();
         let monitor = self.monitor.clone();
         let poll_interval = self.poll_interval_ms;
 
@@ -487,41 +180,17 @@ impl DelayedEventQueue {
             loop {
                 tokio::select! {
                     _ = shutdown_rx.recv() => {
-                        info!("Delayed event queue received shutdown signal");
+                        info!("Delayed event processor received shutdown signal");
                         break;
                     }
                     _ = ticker.tick() => {
-                        // Try to acquire lock for processing
-                        if let Ok(mut conn) = client.get_multiplexed_async_connection().await {
-                            let lock_key = DELAYED_EVENTS_LOCK;
-                            let lock_value = uuid::Uuid::new_v4().to_string();
-                            let lock_acquired: bool = redis::cmd("SET")
-                                .arg(lock_key)
-                                .arg(&lock_value)
-                                .arg("NX")
-                                .arg("EX")
-                                .arg(LOCK_TIMEOUT_SECONDS)
-                                .query_async(&mut conn)
-                                .await
-                                .unwrap_or(false);
-
-                            if lock_acquired {
-                                // Process due events
-                                if let Err(e) = process_due_events_internal(
-                                    &client,
-                                    &storage,
-                                    &registry,
-                                    monitor.clone(),
-                                ).await {
-                                    error!("Error processing delayed events: {}", e);
-                                }
-
-                                // Release lock
-                                let _: Result<(), _> = redis::cmd("DEL")
-                                    .arg(lock_key)
-                                    .query_async(&mut conn)
-                                    .await;
-                            }
+                        if let Err(e) = process_due_events(
+                            &storage,
+                            &registry,
+                            &backend,
+                            monitor.clone(),
+                        ).await {
+                            error!("Error processing delayed events: {}", e);
                         }
                     }
                 }
@@ -530,7 +199,7 @@ impl DelayedEventQueue {
 
         self.handle = Some(handle);
         info!(
-            "Delayed event queue started with {}ms poll interval",
+            "Delayed event processor started with {}ms poll interval",
             self.poll_interval_ms
         );
         Ok(())
@@ -548,105 +217,82 @@ impl DelayedEventQueue {
                 .map_err(|e| EventError::Internal(e.to_string()))?;
         }
 
-        info!("Delayed event queue stopped");
+        info!("Delayed event processor stopped");
         Ok(())
     }
 
-    /// Check if the queue is running.
+    /// Check if the processor is running.
     pub fn is_running(&self) -> bool {
         self.handle.is_some()
     }
 }
 
-/// Lua script that atomically fetches and removes due events from a sorted set,
-/// and cleans up the ID → JSON index hash. Prevents duplicate processing.
-/// KEYS[1] = sorted set key, KEYS[2] = index hash key, ARGV[1] = max score.
-const ATOMIC_POP_DUE_EVENTS_LUA: &str = r#"
-local key = KEYS[1]
-local index_key = KEYS[2]
-local max_score = ARGV[1]
-local events = redis.call('ZRANGEBYSCORE', key, 0, max_score)
-if #events > 0 then
-    for _, ev in ipairs(events) do
-        redis.call('ZREM', key, ev)
-        -- Extract event ID from JSON to clean up index
-        local id = cjson.decode(ev)["id"]
-        if id then
-            redis.call('HDEL', index_key, id)
-        end
-    end
-end
-return events
-"#;
-
-/// Internal function to process due events (used by background task).
-async fn process_due_events_internal(
-    client: &Client,
+/// Process all due delayed events from SQLite.
+async fn process_due_events(
     storage: &SqliteStorage,
     registry: &Arc<NodeRegistry>,
+    backend: &Arc<dyn EventBackend>,
     monitor: Option<Arc<Monitor>>,
 ) -> Result<usize, EventError> {
-    let mut conn = client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|e| EventError::Connection(e.to_string()))?;
-
-    let now = Utc::now().timestamp() as f64;
-
-    // Atomically fetch and remove due events (and clean up index) using Lua.
-    // This prevents duplicate processing when the lock expires and
-    // another instance picks up the same events.
-    let script = redis::Script::new(ATOMIC_POP_DUE_EVENTS_LUA);
-    let events: Vec<String> = script
-        .key(DELAYED_EVENTS_KEY)
-        .key(DELAYED_EVENTS_INDEX_KEY)
-        .arg(now)
-        .invoke_async(&mut conn)
+    let due_events = storage
+        .get_due_delayed_events()
         .await
         .map_err(|e| EventError::Storage(e.to_string()))?;
 
-    if events.is_empty() {
+    if due_events.is_empty() {
         return Ok(0);
     }
 
     let mut processed = 0;
 
-    for event_json in events {
-        // Parse and process
-        match serde_json::from_str::<DelayedEvent>(&event_json) {
-            Ok(event) => {
-                if let Err(e) =
-                    process_single_event(&event, storage, registry, monitor.clone()).await
-                {
-                    error!("Failed to process delayed event '{}': {}", event.id, e);
+    for (event_id, _event_name, event_json) in due_events {
+        // Parse the delayed event from stored JSON
+        let event = match serde_json::from_str::<DelayedEvent>(&event_json) {
+            Ok(e) => e,
+            Err(e) => {
+                warn!("Failed to parse delayed event '{}': {}", event_id, e);
+                // Delete malformed event to prevent infinite retry
+                let _ = storage.delete_delayed_event(&event_id).await;
+                continue;
+            }
+        };
 
-                    // Schedule retry if applicable
-                    if event.retry_count < event.max_retries {
-                        let mut retry_event = event.clone();
-                        retry_event.retry_count += 1;
-                        retry_event.scheduled_at = Utc::now()
-                            + ChronoDuration::seconds(60 * retry_event.retry_count as i64);
+        // Delete from queue first (prevents re-processing on crash/restart)
+        let _ = storage.delete_delayed_event(&event_id).await;
 
-                        let retry_json = serde_json::to_string(&retry_event)
-                            .map_err(|e| EventError::Serialization(e.to_string()))?;
-                        let score = retry_event.scheduled_at.timestamp() as f64;
+        match process_single_event(&event, storage, registry, backend, monitor.clone()).await {
+            Ok(()) => {
+                processed += 1;
+            }
+            Err(e) => {
+                error!("Failed to process delayed event '{}': {}", event.id, e);
 
-                        let _: i32 = conn
-                            .zadd(DELAYED_EVENTS_KEY, retry_json, score)
-                            .await
-                            .map_err(|e| EventError::Storage(e.to_string()))?;
+                // Retry logic with exponential backoff
+                if event.retry_count < event.max_retries {
+                    let mut retry_event = event.clone();
+                    retry_event.retry_count += 1;
+                    retry_event.scheduled_at =
+                        Utc::now() + ChronoDuration::seconds(60 * retry_event.retry_count as i64);
 
+                    let retry_json = serde_json::to_string(&retry_event)
+                        .map_err(|e| EventError::Serialization(e.to_string()))?;
+
+                    if let Err(store_err) = storage
+                        .store_delayed_event(
+                            &retry_event.event,
+                            &retry_json,
+                            retry_event.scheduled_at,
+                        )
+                        .await
+                    {
+                        error!("Failed to reschedule event for retry: {}", store_err);
+                    } else {
                         info!(
                             "Scheduled retry {} for event '{}' (id: {})",
                             retry_event.retry_count, retry_event.event, retry_event.id
                         );
                     }
-                } else {
-                    processed += 1;
                 }
-            }
-            Err(e) => {
-                warn!("Failed to parse delayed event: {}", e);
             }
         }
     }
@@ -663,6 +309,7 @@ async fn process_single_event(
     event: &DelayedEvent,
     storage: &SqliteStorage,
     registry: &Arc<NodeRegistry>,
+    backend: &Arc<dyn EventBackend>,
     monitor: Option<Arc<Monitor>>,
 ) -> Result<(), EventError> {
     info!(
@@ -721,19 +368,11 @@ async fn process_single_event(
         }
     } else {
         // Publish to event bus for normal event handling
-        let publisher = EventPublisher::new()?;
         let event_msg = event.to_event_message();
-
-        publisher
-            .publish(&event_msg)
-            .await
-            .map_err(|e| EventError::Publish(e.to_string()))?;
-
-        Ok(())
+        backend.publish(event_msg).await
     }
 }
 
-/// Errors specific to delayed event processing.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -746,7 +385,7 @@ mod tests {
 
         assert_eq!(event.event, "order.created");
         assert_eq!(event.data, data);
-        assert!(event.delay_seconds() <= 3600); // May be slightly less due to processing time
+        assert!(event.delay_seconds() <= 3600);
         assert!(!event.is_due());
     }
 

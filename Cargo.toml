@@ -11,6 +11,10 @@ keywords = ["workflow", "automation", "mcp", "agent", "orchestration"]
 categories = ["asynchronous", "development-tools", "web-programming"]
 readme = "README.md"
 
+[features]
+default = []
+redis = ["dep:redis"]
+
 [[bin]]
 name = "r8r"
 path = "src/main.rs"
@@ -81,8 +85,8 @@ ratatui = "0.29"
 crossterm = "0.28"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 
-# Redis pub/sub
-redis = { version = "0.27", features = ["tokio-comp", "aio"] }
+# Redis pub/sub (optional, enable with --features redis)
+redis = { version = "0.27", features = ["tokio-comp", "aio"], optional = true }
 
 # Utilities
 uuid = { version = "1", features = ["v4"] }
