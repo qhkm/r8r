@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">r8r</h1>
   <p align="center">
-    <em>Pronounced "rater" • The workflow engine that AI agents actually want to use</em>
+    <em>Pronounced "rater" • The agent-native workflow automation engine</em>
   </p>
 </p>
 
@@ -15,13 +15,15 @@
 
 ---
 
-**r8r** (r-eight-r → rater) is an agent-first workflow automation engine written in Rust.
+**r8r** (r-eight-r → rater) is an agent-native workflow automation engine written in Rust.
 
-While tools like n8n and Zapier were built for humans clicking through visual editors, r8r was built for the AI age—where agents need to create, execute, and orchestrate workflows programmatically.
+While tools like n8n and Zapier were built for humans clicking through visual editors, r8r was built for the AI age — where agents need to create, execute, and orchestrate workflows programmatically.
+
+**Why not just let AI do everything?** Tools that route every step through an LLM burn tokens on tasks that don't need intelligence — HTTP calls, JSON parsing, conditional routing. r8r uses deterministic nodes for deterministic work and only calls the LLM when you actually need reasoning. The result: same automation, a fraction of the token cost.
 
 ```
-Human clicks "Add Node" → n8n
-Agent writes YAML → r8r
+Fully agentic:  LLM token on every step  →  $$$
+r8r:            LLM only where needed    →  $
 ```
 
 ## ✨ What Makes r8r Different
@@ -32,7 +34,7 @@ Agent writes YAML → r8r
 | 🐘 Heavy (500MB+ RAM) | 🦀 Lightweight (~15MB RAM) |
 | 🐌 Slow startup | ⚡ ~50ms cold start |
 | 🔒 Locked in database | 📂 Git-friendly files |
-| 🧑 Built for humans | 🤖 Built for agents |
+| 🧑 Built for humans | 🤖 Agent-native |
 
 ## 🚀 Quick Start
 
@@ -58,7 +60,7 @@ curl -X POST localhost:3000/api/workflows/hello-world/execute \
   -d '{"input": {"name": "Agent"}}'
 ```
 
-## 🤖 Built for AI Agents
+## 🤖 Agent-Native
 
 ### Agent as a Node Type
 
