@@ -31,9 +31,9 @@ use crate::engine::{Executor, PauseRegistry};
 use crate::error::Error;
 use crate::nodes::NodeRegistry;
 use crate::shutdown::ShutdownCoordinator;
-use crate::storage::{ExecutionStatus, SqliteStorage};
-use crate::triggers::EventBackend;
-use crate::workflow::parse_workflow;
+use crate::storage::{ExecutionStatus, SqliteStorage, StoredWorkflow};
+use crate::triggers::{EventBackend, EventMessage};
+use crate::workflow::{parse_workflow, validate_workflow};
 
 /// Create a sanitized error response for external consumers.
 ///
@@ -173,9 +173,10 @@ pub fn create_api_routes() -> Router<AppState> {
         .route("/api/health", get(health_check))
         .route("/api/metrics", get(prometheus_metrics))
         .route("/api/openapi.json", get(openapi_spec))
-        .route("/api/workflows", get(list_workflows))
+        .route("/api/workflows", get(list_workflows).post(create_workflow))
         .route("/api/workflows/{name}", get(get_workflow))
         .route("/api/workflows/{name}/execute", post(execute_workflow))
+        .route("/api/events/publish", post(publish_event))
         .route("/api/executions", get(list_executions))
         .route("/api/executions/{id}", get(get_execution))
         .route("/api/executions/{id}/trace", get(get_execution_trace))
@@ -349,13 +350,17 @@ async fn get_workflow(
 // Execution Endpoints
 // ============================================================================
 
+fn default_wait_true() -> bool {
+    true
+}
+
 #[derive(Deserialize)]
 struct ExecuteRequest {
     #[serde(default)]
     input: Value,
-    /// If true, wait for execution to complete before returning (future use).
-    #[serde(default)]
-    #[allow(dead_code)]
+    /// If true (default), wait for execution to complete before returning.
+    /// If false, start execution asynchronously and return 202 with execution_id.
+    #[serde(default = "default_wait_true")]
     wait: bool,
 }
 
@@ -440,7 +445,7 @@ async fn execute_workflow(
     request_id: Option<axum::Extension<RequestId>>,
     Json(request): Json<ExecuteRequest>,
 ) -> impl IntoResponse {
-    let _wait_requested = request.wait;
+    let wait_requested = request.wait;
     let correlation_id = request_id.map(|r| r.0 .0.clone());
 
     // Check if shutdown is requested
@@ -482,34 +487,65 @@ async fn execute_workflow(
         }
     };
 
-    // Create executor
-    let executor = state.create_executor();
-
-    // Execute
+    // Prepare input
     let input = if request.input.is_null() {
         json!({})
     } else {
         request.input
     };
 
-    let result = executor.execute(&workflow, &stored.id, "api", input).await;
+    if wait_requested {
+        // Synchronous execution: wait for completion
+        let executor = state.create_executor();
+        let result = executor.execute(&workflow, &stored.id, "api", input).await;
 
-    match result {
-        Ok(execution) => {
-            let duration_ms = execution
-                .finished_at
-                .map(|f| (f - execution.started_at).num_milliseconds());
+        match result {
+            Ok(execution) => {
+                let duration_ms = execution
+                    .finished_at
+                    .map(|f| (f - execution.started_at).num_milliseconds());
 
-            Json(ExecuteResponse {
-                execution_id: execution.id,
-                status: execution.status.to_string(),
-                output: execution.output,
-                error: execution.error,
-                duration_ms,
-            })
-            .into_response()
+                Json(ExecuteResponse {
+                    execution_id: execution.id,
+                    status: execution.status.to_string(),
+                    output: execution.output,
+                    error: execution.error,
+                    duration_ms,
+                })
+                .into_response()
+            }
+            Err(e) => external_error_response(e).into_response(),
         }
-        Err(e) => external_error_response(e).into_response(),
+    } else {
+        // Async execution: spawn and return 202 immediately
+        let execution_id = uuid::Uuid::new_v4().to_string();
+        let execution_id_for_response = execution_id.clone();
+        let workflow_id = stored.id.clone();
+
+        tokio::spawn(async move {
+            let executor = state.create_executor();
+            if let Err(e) = executor
+                .execute_with_id(&workflow, &workflow_id, "api", input, execution_id.clone())
+                .await
+            {
+                error!(
+                    execution_id = %execution_id,
+                    "Async workflow execution failed: {:?}", e
+                );
+            }
+        });
+
+        (
+            StatusCode::ACCEPTED,
+            Json(ExecuteResponse {
+                execution_id: execution_id_for_response,
+                status: "running".to_string(),
+                output: None,
+                error: None,
+                duration_ms: None,
+            }),
+        )
+            .into_response()
     }
 }
 
@@ -724,6 +760,133 @@ async fn resume_execution_handler(
         }
         Err(Error::Execution(msg)) if msg.contains("status is") => {
             (StatusCode::CONFLICT, Json(json!({"error": msg}))).into_response()
+        }
+        Err(e) => external_error_response(e).into_response(),
+    }
+}
+
+// ============================================================================
+// Event Publish Endpoint
+// ============================================================================
+
+#[derive(Deserialize)]
+struct PublishEventRequest {
+    event: String,
+    #[serde(default)]
+    data: Value,
+    #[serde(default)]
+    source: Option<String>,
+}
+
+async fn publish_event(
+    State(state): State<AppState>,
+    Json(request): Json<PublishEventRequest>,
+) -> impl IntoResponse {
+    let backend = match &state.event_backend {
+        Some(b) => b,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": "Event backend is not configured"})),
+            )
+                .into_response()
+        }
+    };
+
+    // Validate event name
+    if request.event.is_empty() || request.event.len() > 128 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Event name must be 1-128 characters"})),
+        )
+            .into_response();
+    }
+
+    let mut msg = EventMessage::new(&request.event, request.data);
+    if let Some(source) = request.source {
+        msg = msg.with_source(source);
+    }
+
+    match backend.publish(msg).await {
+        Ok(()) => Json(json!({"status": "published", "event": request.event})).into_response(),
+        Err(e) => {
+            error!("Failed to publish event: {:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Failed to publish event"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ============================================================================
+// Workflow Creation Endpoint
+// ============================================================================
+
+#[derive(Deserialize)]
+struct CreateWorkflowRequest {
+    name: String,
+    definition: String,
+    #[serde(default = "default_enabled_true")]
+    enabled: bool,
+}
+
+fn default_enabled_true() -> bool {
+    true
+}
+
+async fn create_workflow(
+    State(state): State<AppState>,
+    Json(request): Json<CreateWorkflowRequest>,
+) -> impl IntoResponse {
+    // Parse the workflow definition
+    let workflow = match parse_workflow(&request.definition) {
+        Ok(w) => w,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": format!("Invalid workflow definition: {}", e)})),
+            )
+                .into_response()
+        }
+    };
+
+    // Validate the workflow
+    if let Err(e) = validate_workflow(&workflow) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("Workflow validation failed: {}", e)})),
+        )
+            .into_response();
+    }
+
+    let now = chrono::Utc::now();
+    let stored = StoredWorkflow {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: request.name.clone(),
+        definition: request.definition,
+        enabled: request.enabled,
+        created_at: now,
+        updated_at: now,
+    };
+
+    match state.storage.save_workflow(&stored).await {
+        Ok(()) => {
+            let node_count = workflow.nodes.len();
+            let trigger_count = workflow.triggers.len();
+
+            (
+                StatusCode::CREATED,
+                Json(json!({
+                    "id": stored.id,
+                    "name": stored.name,
+                    "enabled": stored.enabled,
+                    "node_count": node_count,
+                    "trigger_count": trigger_count,
+                })),
+            )
+                .into_response()
         }
         Err(e) => external_error_response(e).into_response(),
     }
