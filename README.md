@@ -62,7 +62,7 @@ curl -X POST localhost:3000/api/workflows/hello-world/execute \
 
 ### Agent as a Node Type
 
-The `agent` node lets you drop AI reasoning into any workflow — alongside deterministic steps like HTTP calls and data transforms. Use AI where you need it, skip it where you don't.
+The `agent` node lets you drop AI reasoning into any workflow — call OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint directly. Use AI where you need it, skip it where you don't.
 
 ```yaml
 name: order-processor
@@ -74,10 +74,18 @@ nodes:
       url: "https://api.store.com/orders/{{ input.order_id }}"
 
   - id: check-fraud
-    type: agent                           # AI reasoning
+    type: agent
     config:
+      provider: openai                     # or anthropic, ollama, custom
+      model: gpt-4o
       prompt: "Is this order fraudulent? {{ nodes.fetch-order.output }}"
       response_format: json
+      json_schema:                         # validate AI output structure
+        type: object
+        required: [verdict, confidence]
+        properties:
+          verdict: { type: string, enum: [fraud, legit] }
+          confidence: { type: number }
     depends_on: [fetch-order]
     retry:
       max_attempts: 3
@@ -94,6 +102,15 @@ nodes:
 ```
 
 The agent node gets the same durability as every other node — retries, checkpoints, fallback values. If the AI call fails at 3am, r8r retries with backoff, not the entire pipeline.
+
+**Supported providers:**
+
+| Provider | Config | Credential |
+|----------|--------|------------|
+| OpenAI | `provider: openai` | `credential: openai` |
+| Anthropic | `provider: anthropic` | `credential: anthropic` |
+| Ollama | `provider: ollama` | None (local) |
+| Custom | `provider: custom` + `endpoint: ...` | `credential: ...` |
 
 ### MCP Server
 
@@ -121,7 +138,7 @@ Your AI agent can now:
 | **Startup** | ~50ms | Seconds |
 | **Storage** | SQLite (embedded) | PostgreSQL/MySQL |
 | **Workflows** | YAML files (git-friendly) | Database blobs |
-| **AI Agent Nodes** | ✅ Built-in node type | ❌ None |
+| **AI Agent Nodes** | ✅ Multi-provider (OpenAI, Anthropic, Ollama) | ❌ None |
 | **MCP Support** | ✅ Built-in | ❌ None |
 | **Durable Execution** | Checkpoint, resume, replay | Basic retry |
 | **Circuit Breakers** | ✅ Built-in | ❌ None |
@@ -177,7 +194,7 @@ nodes:
 |------|---------|
 | `http` | REST API calls |
 | `transform` | Data transformation (Rhai expressions) |
-| **`agent`** | **AI reasoning — call any LLM/agent for classification, generation, decisions** |
+| **`agent`** | **AI reasoning — call OpenAI, Anthropic, Ollama, or any LLM with structured output validation** |
 | `subworkflow` | Nested workflow execution |
 | `email` | Send emails (SMTP, SendGrid, Resend, Mailgun) |
 | `slack` | Slack messaging |
@@ -259,7 +276,7 @@ See [Security Audit](SECURITY_AUDIT_REPORT.md) for details.
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and our [CLA](CLA.md) (required for first PR).
 
 ```bash
-cargo test              # Run tests (300+)
+cargo test              # Run tests (400+)
 cargo clippy            # Lint
 cargo fmt               # Format
 ```

@@ -480,36 +480,87 @@ nodes:
 
 ### Agent
 
-Call an AI agent (ZeptoClaw) for intelligent processing.
+AI agent node — call OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint for classification, generation, and reasoning. Supports structured output validation via JSON Schema.
 
 **Type**: `agent`
+
+**Providers**: `zeptoclaw` (default), `openai`, `anthropic`, `ollama`, `custom`
 
 **Configuration**:
 
 ```yaml
+# OpenAI with structured output
 nodes:
   - id: classify-ticket
     type: agent
     config:
-      endpoint: "http://localhost:3000/api/chat"
+      provider: openai
+      model: gpt-4o
+      credential: openai
       prompt: |
         Classify this support ticket:
         Subject: {{ input.subject }}
         Body: {{ input.body }}
-        
-        Respond with JSON: {"priority": "low|medium|high"}
       response_format: json
-      model: "claude-sonnet-4"
-      credential: ai_api_key
+      json_schema:
+        type: object
+        required: [priority, reason]
+        properties:
+          priority: { type: string, enum: [low, medium, high] }
+          reason: { type: string }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `endpoint` | string | Yes | AI service endpoint |
-| `prompt` | string | Yes | Prompt template |
-| `response_format` | string | No | Expected response format (json) |
-| `model` | string | No | Model to use |
-| `credential` | string | No | API key credential name |
+```yaml
+# Anthropic
+  - id: summarize
+    type: agent
+    config:
+      provider: anthropic
+      model: claude-sonnet-4-5-20250929
+      system: "You write concise technical summaries."
+      prompt: "Summarize: {{ input.document }}"
+      max_tokens: 1024
+```
+
+```yaml
+# Ollama (local, no credentials needed)
+  - id: local-classify
+    type: agent
+    config:
+      provider: ollama
+      model: llama3
+      prompt: "Classify: {{ input }}"
+      response_format: json
+```
+
+```yaml
+# Custom OpenAI-compatible endpoint
+  - id: custom
+    type: agent
+    config:
+      provider: custom
+      endpoint: https://my-vllm.internal/v1/chat/completions
+      credential: vllm_key
+      model: my-model
+      prompt: "Process: {{ input }}"
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `prompt` | string | Yes | - | Prompt template (supports `{{ input }}`, `{{ nodes.* }}`) |
+| `provider` | string | No | `zeptoclaw` | LLM provider: `zeptoclaw`, `openai`, `anthropic`, `ollama`, `custom` |
+| `model` | string | No | Provider default | Model name (e.g. `gpt-4o`, `claude-sonnet-4-5-20250929`, `llama3`) |
+| `credential` | string | No | Auto-detect | Credential name for API key |
+| `endpoint` | string | No | Provider default | API endpoint URL |
+| `system` | string | No | - | System prompt |
+| `response_format` | string | No | `text` | Expected format: `text` or `json` |
+| `json_schema` | object | No | - | JSON Schema to validate response (when `response_format: json`) |
+| `temperature` | number | No | - | Generation temperature (0.0–1.0) |
+| `max_tokens` | integer | No | Provider default | Maximum response tokens |
+| `timeout_seconds` | integer | No | `30` | Request timeout |
+| `agent` | string | No | - | ZeptoClaw agent template name |
+
+**Credential resolution**: Explicit `credential` field > provider-specific default (`openai`, `anthropic`) > `llm` fallback. ZeptoClaw and Ollama don't require credentials.
 
 ---
 
