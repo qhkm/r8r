@@ -144,7 +144,7 @@ Your AI agent can now:
 | **MCP Support** | ✅ Built-in | ❌ None |
 | **Durable Execution** | Checkpoint, resume, replay | Basic retry |
 | **Circuit Breakers** | ✅ Built-in | ❌ None |
-| **Price** | Free forever | Free (limited) |
+| **Price** | Open source | Free (limited) |
 
 ### Use r8r when:
 - 🤖 AI agents trigger your workflows
