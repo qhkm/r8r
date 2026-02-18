@@ -1,0 +1,106 @@
+# Multi-Provider Agent - Demonstrates all agent provider modes
+#
+# This workflow shows how the agent node can call different LLM providers.
+# Each node demonstrates a different provider configuration.
+#
+# Prerequisites:
+#   r8r credentials set openai <your-openai-key>
+#   r8r credentials set anthropic <your-anthropic-key>
+#   # Ollama: ollama serve && ollama pull llama3
+
+name: multi-provider-agent
+description: Demonstrate agent node with multiple LLM providers
+version: 1
+
+triggers:
+  - type: manual
+
+inputs:
+  text:
+    type: string
+    description: Text to process
+    required: true
+
+nodes:
+  # --- Backward compatible (ZeptoClaw, no provider field) ---
+  - id: zeptoclaw-default
+    type: agent
+    config:
+      prompt: "Classify this text: {{ input.text }}"
+      response_format: json
+
+  # --- ZeptoClaw with named agent template ---
+  - id: zeptoclaw-agent
+    type: agent
+    config:
+      prompt: "Review this: {{ input.text }}"
+      agent: code-reviewer
+
+  # --- OpenAI direct ---
+  - id: openai-classify
+    type: agent
+    config:
+      provider: openai
+      credential: openai
+      model: gpt-4o
+      prompt: "Classify the severity: {{ input.text }}"
+      response_format: json
+      json_schema:
+        type: object
+        required:
+          - severity
+          - reason
+        properties:
+          severity:
+            type: string
+            enum:
+              - low
+              - medium
+              - high
+          reason:
+            type: string
+
+  # --- Anthropic direct ---
+  - id: anthropic-summarize
+    type: agent
+    config:
+      provider: anthropic
+      credential: anthropic
+      model: claude-sonnet-4-5-20250929
+      system: "You write concise technical summaries."
+      prompt: "Summarize: {{ input.text }}"
+      max_tokens: 1024
+
+  # --- Ollama local ---
+  - id: ollama-local
+    type: agent
+    config:
+      provider: ollama
+      model: llama3
+      prompt: "Classify this text into a category: {{ input.text }}"
+      response_format: json
+
+  # --- Custom OpenAI-compatible endpoint ---
+  - id: custom-endpoint
+    type: agent
+    config:
+      provider: custom
+      endpoint: https://my-vllm.internal/v1/chat/completions
+      credential: vllm_key
+      model: my-model
+      prompt: "Process: {{ input.text }}"
+
+  # --- Combine results ---
+  - id: combine
+    type: transform
+    config:
+      expression: |
+        ({
+          "zeptoclaw": nodes["zeptoclaw-default"].output,
+          "openai": nodes["openai-classify"].output,
+          "anthropic": nodes["anthropic-summarize"].output
+        })
+    depends_on:
+      - zeptoclaw-default
+      - openai-classify
+      - anthropic-summarize

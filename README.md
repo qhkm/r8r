@@ -60,6 +60,60 @@ curl -X POST localhost:3000/api/workflows/hello-world/execute \
 
 ## 🤖 Built for AI Agents
 
+### Agent as a Node Type
+
+The `agent` node lets you drop AI reasoning into any workflow — call OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint directly. Use AI where you need it, skip it where you don't.
+
+```yaml
+name: order-processor
+
+nodes:
+  - id: fetch-order
+    type: http
+    config:
+      url: "https://api.store.com/orders/{{ input.order_id }}"
+
+  - id: check-fraud
+    type: agent
+    config:
+      provider: openai                     # or anthropic, ollama, custom
+      model: gpt-4o
+      prompt: "Is this order fraudulent? {{ nodes.fetch-order.output }}"
+      response_format: json
+      json_schema:                         # validate AI output structure
+        type: object
+        required: [verdict, confidence]
+        properties:
+          verdict: { type: string, enum: [fraud, legit] }
+          confidence: { type: number }
+    depends_on: [fetch-order]
+    retry:
+      max_attempts: 3
+      backoff: exponential
+
+  - id: route
+    type: switch
+    depends_on: [check-fraud]
+    config:
+      expression: "nodes.check_fraud.output.verdict"
+      cases:
+        fraud: [flag-order]
+        legit: [process-order]
+```
+
+The agent node gets the same durability as every other node — retries, checkpoints, fallback values. If the AI call fails at 3am, r8r retries with backoff, not the entire pipeline.
+
+**Supported providers:**
+
+| Provider | Config | Credential |
+|----------|--------|------------|
+| OpenAI | `provider: openai` | `credential: openai` |
+| Anthropic | `provider: anthropic` | `credential: anthropic` |
+| Ollama | `provider: ollama` | None (local) |
+| Custom | `provider: custom` + `endpoint: ...` | `credential: ...` |
+
+### MCP Server
+
 r8r includes an **MCP server** (Model Context Protocol) so AI agents can directly invoke workflows:
 
 ```bash
@@ -84,7 +138,10 @@ Your AI agent can now:
 | **Startup** | ~50ms | Seconds |
 | **Storage** | SQLite (embedded) | PostgreSQL/MySQL |
 | **Workflows** | YAML files (git-friendly) | Database blobs |
+| **AI Agent Nodes** | ✅ Multi-provider (OpenAI, Anthropic, Ollama) | ❌ None |
 | **MCP Support** | ✅ Built-in | ❌ None |
+| **Durable Execution** | Checkpoint, resume, replay | Basic retry |
+| **Circuit Breakers** | ✅ Built-in | ❌ None |
 | **Price** | Free forever | Free (limited) |
 
 ### Use r8r when:
@@ -137,15 +194,25 @@ nodes:
 |------|---------|
 | `http` | REST API calls |
 | `transform` | Data transformation (Rhai expressions) |
-| `agent` | LLM/AI agent invocation |
+| **`agent`** | **AI reasoning — call OpenAI, Anthropic, Ollama, or any LLM with structured output validation** |
 | `subworkflow` | Nested workflow execution |
 | `email` | Send emails (SMTP, SendGrid, Resend, Mailgun) |
 | `slack` | Slack messaging |
 | `database` | SQL query execution (SQLite, PostgreSQL, MySQL) |
 | `s3` | S3 object storage operations |
-| `switch` | Multi-branch routing |
-| `wait` | Delay/sleep node |
+| `switch` | Multi-branch conditional routing |
+| `if` | Binary conditional |
+| `filter` | Filter data by conditions |
+| `sort` | Sort data by fields |
+| `split` | Split data into chunks |
+| `aggregate` | Aggregate/reduce data |
+| `merge` | Merge multiple inputs |
+| `dedupe` | Remove duplicates |
+| `set` | Set values |
 | `variables` | Workflow state management |
+| `crypto` | Hash, encrypt, sign |
+| `datetime` | Date/time operations |
+| `wait` | Delay/sleep node |
 | `circuit_breaker` | Fault tolerance |
 | `debug` | Development logging |
 
@@ -209,7 +276,7 @@ See [Security Audit](SECURITY_AUDIT_REPORT.md) for details.
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and our [CLA](CLA.md) (required for first PR).
 
 ```bash
-cargo test              # Run tests (300+)
+cargo test              # Run tests (400+)
 cargo clippy            # Lint
 cargo fmt               # Format
 ```

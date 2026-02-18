@@ -173,7 +173,7 @@ impl Executor {
         trigger_type: &str,
         input: Value,
     ) -> Result<Execution> {
-        self.execute_with_correlation(workflow, workflow_id, trigger_type, input, None)
+        self.execute_inner(workflow, workflow_id, trigger_type, input, None, None)
             .await
     }
 
@@ -196,6 +196,61 @@ impl Executor {
         trigger_type: &str,
         input: Value,
         correlation_id: Option<String>,
+    ) -> Result<Execution> {
+        self.execute_inner(
+            workflow,
+            workflow_id,
+            trigger_type,
+            input,
+            correlation_id,
+            None,
+        )
+        .await
+    }
+
+    /// Execute a workflow with a pre-generated execution ID.
+    ///
+    /// Used for async execution where the execution ID must be known
+    /// before the executor runs (e.g., for returning 202 Accepted immediately).
+    pub async fn execute_with_id(
+        &self,
+        workflow: &Workflow,
+        workflow_id: &str,
+        trigger_type: &str,
+        input: Value,
+        execution_id: String,
+    ) -> Result<Execution> {
+        self.execute_inner(
+            workflow,
+            workflow_id,
+            trigger_type,
+            input,
+            None,
+            Some(execution_id),
+        )
+        .await
+    }
+
+    /// Internal execution method that all public methods delegate to.
+    #[instrument(
+        name = "workflow.execute",
+        skip(self, workflow, input, correlation_id, preset_execution_id),
+        fields(
+            workflow_id = %workflow_id,
+            workflow_name = %workflow.name,
+            trigger_type = %trigger_type,
+            execution_id = tracing::field::Empty,
+            correlation_id = tracing::field::Empty,
+        )
+    )]
+    async fn execute_inner(
+        &self,
+        workflow: &Workflow,
+        workflow_id: &str,
+        trigger_type: &str,
+        input: Value,
+        correlation_id: Option<String>,
+        preset_execution_id: Option<String>,
     ) -> Result<Execution> {
         // Determine checkpointing for this execution (per-workflow setting overrides global default)
         let checkpoints_enabled =
@@ -227,7 +282,7 @@ impl Executor {
             .storage
             .get_latest_workflow_version_number(workflow_id)
             .await?;
-        let execution_id = uuid::Uuid::new_v4().to_string();
+        let execution_id = preset_execution_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let correlation_id = correlation_id.unwrap_or_else(|| execution_id.clone());
         let started_at = Utc::now();
         let timeout_seconds = self
