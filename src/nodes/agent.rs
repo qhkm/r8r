@@ -276,10 +276,7 @@ fn build_openai_request(
             .map_err(|_| Error::Node("Invalid content type".to_string()))?,
     );
 
-    let model = config
-        .model
-        .clone()
-        .unwrap_or_else(|| "gpt-4o".to_string());
+    let model = config.model.clone().unwrap_or_else(|| "gpt-4o".to_string());
 
     let mut messages = Vec::new();
     if let Some(system) = &config.system {
@@ -371,10 +368,7 @@ fn build_anthropic_request(
 
 fn build_ollama_request(config: &AgentConfig, prompt: &str) -> Result<(String, Value)> {
     let url = resolve_endpoint(config);
-    let model = config
-        .model
-        .clone()
-        .unwrap_or_else(|| "llama3".to_string());
+    let model = config.model.clone().unwrap_or_else(|| "llama3".to_string());
 
     let mut messages = Vec::new();
     if let Some(system) = &config.system {
@@ -418,7 +412,9 @@ fn extract_content(
 
             let usage = if response.get("usage").is_some() {
                 Some(AgentUsageInfo {
-                    prompt_tokens: response["usage"]["prompt_tokens"].as_u64().map(|v| v as u32),
+                    prompt_tokens: response["usage"]["prompt_tokens"]
+                        .as_u64()
+                        .map(|v| v as u32),
                     completion_tokens: response["usage"]["completion_tokens"]
                         .as_u64()
                         .map(|v| v as u32),
@@ -682,16 +678,14 @@ impl Node for AgentNode {
                 Err(e) => {
                     warn!("Failed to parse agent response as JSON: {}", e);
                     // Try to extract JSON from the response (LLMs sometimes add extra text)
-                    let extracted = extract_json(&content)
-                        .unwrap_or_else(|| Value::String(content.clone()));
+                    let extracted =
+                        extract_json(&content).unwrap_or_else(|| Value::String(content.clone()));
 
                     // Validate extracted JSON if schema is provided
                     if let Some(schema_value) = &config.json_schema {
                         if !extracted.is_string() {
-                            let validator =
-                                SchemaValidator::new(schema_value.clone()).map_err(|e| {
-                                    Error::Node(format!("Invalid json_schema: {}", e))
-                                })?;
+                            let validator = SchemaValidator::new(schema_value.clone())
+                                .map_err(|e| Error::Node(format!("Invalid json_schema: {}", e)))?;
                             validator.validate(&extracted).map_err(|e| {
                                 Error::Node(format!(
                                     "Agent response failed schema validation: {}",
@@ -1016,11 +1010,18 @@ mod tests {
             agent: None,
         };
 
-        let (url, headers, body) = build_anthropic_request(&config, "Hello", "sk-ant-test").unwrap();
+        let (url, headers, body) =
+            build_anthropic_request(&config, "Hello", "sk-ant-test").unwrap();
 
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
-        assert_eq!(headers.get("x-api-key").unwrap().to_str().unwrap(), "sk-ant-test");
-        assert_eq!(headers.get("anthropic-version").unwrap().to_str().unwrap(), "2023-06-01");
+        assert_eq!(
+            headers.get("x-api-key").unwrap().to_str().unwrap(),
+            "sk-ant-test"
+        );
+        assert_eq!(
+            headers.get("anthropic-version").unwrap().to_str().unwrap(),
+            "2023-06-01"
+        );
         assert_eq!(body["model"], "claude-sonnet-4-5-20250929");
         assert_eq!(body["max_tokens"], 2048);
         assert_eq!(body["system"], "Be concise.");
@@ -1376,12 +1377,11 @@ mod tests {
             agent: None,
         };
 
-        assert!(resolve_endpoint(&make_config(AgentProvider::Openai))
-            .contains("api.openai.com"));
-        assert!(resolve_endpoint(&make_config(AgentProvider::Anthropic))
-            .contains("api.anthropic.com"));
-        assert!(resolve_endpoint(&make_config(AgentProvider::Ollama))
-            .contains("localhost:11434"));
+        assert!(resolve_endpoint(&make_config(AgentProvider::Openai)).contains("api.openai.com"));
+        assert!(
+            resolve_endpoint(&make_config(AgentProvider::Anthropic)).contains("api.anthropic.com")
+        );
+        assert!(resolve_endpoint(&make_config(AgentProvider::Ollama)).contains("localhost:11434"));
     }
 
     // -----------------------------------------------------------------------
