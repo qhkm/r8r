@@ -16,6 +16,57 @@ The WebSocket monitoring endpoint (`/api/monitor`) requires a token unless expli
 
 ---
 
+## API Version
+
+This document describes the **v1** API contract for r8r. All endpoints follow the v1 schema with standardized error envelopes and trace fields.
+
+---
+
+## Standard Error Response
+
+All errors return a standardized error envelope with machine-parseable codes:
+
+```json
+{
+  "error": {
+    "code": "WORKFLOW_NOT_FOUND",
+    "message": "Workflow 'order-processing' not found",
+    "category": "client_error",
+    "correlation_id": "550e8400-e29b-41d4-a716-446655440000",
+    "execution_id": null,
+    "request_id": "req-abc123",
+    "retry_after_ms": null,
+    "details": null
+  }
+}
+```
+
+### Error Categories
+
+| Category | Description | Retry Strategy |
+|----------|-------------|----------------|
+| `client_error` | Invalid request, missing fields, not found | Don't retry without fixing request |
+| `transient` | Temporary server error | Retry with exponential backoff |
+| `permanent` | Permanent server error | Fail, don't retry |
+| `rate_limit` | Rate limit exceeded | Retry after `retry_after_ms` |
+| `conflict` | Idempotency key reuse | Return cached result |
+
+### Error Codes
+
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `INVALID_REQUEST` | 400 | Malformed request |
+| `MISSING_FIELD` | 400 | Required field missing |
+| `WORKFLOW_NOT_FOUND` | 404 | Workflow doesn't exist |
+| `EXECUTION_NOT_FOUND` | 404 | Execution doesn't exist |
+| `INVALID_WORKFLOW_DEFINITION` | 422 | Workflow YAML invalid |
+| `IDEMPOTENCY_KEY_REUSE` | 409 | Duplicate idempotency key |
+| `RATE_LIMITED` | 429 | Too many requests |
+| `INTERNAL_ERROR` | 500 | Server error |
+| `SERVICE_UNAVAILABLE` | 503 | Server shutting down |
+
+---
+
 ## Endpoints
 
 ### Health Check
@@ -117,7 +168,9 @@ Execute a workflow.
     "order_id": "ORD-12345",
     "customer_email": "customer@example.com"
   },
-  "wait": true
+  "wait": true,
+  "correlation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "idempotency_key": "order-12345-process"
 }
 ```
 
@@ -125,6 +178,8 @@ Execute a workflow.
 |-------|------|----------|-------------|
 | `input` | object | No | Input data for the workflow |
 | `wait` | boolean | No | Whether to wait for completion (default: true) |
+| `correlation_id` | string (UUID) | No | End-to-end trace identifier (auto-generated if not provided) |
+| `idempotency_key` | string | No | Unique key to prevent duplicate executions |
 
 **Response**:
 
@@ -140,12 +195,19 @@ Execute a workflow.
 }
 ```
 
+**Idempotency Behavior**:
+- If `idempotency_key` is provided and matches a previous execution, returns `409 Conflict` with the existing execution ID
+- Idempotency keys should be unique per logical operation (e.g., order ID)
+- Keys are scoped globally across all workflows
+
 **Status Codes**:
 - `200 OK` - Execution completed
 - `202 Accepted` - Execution started (if wait=false)
 - `404 Not Found` - Workflow not found
-- `400 Bad Request` - Invalid workflow definition
+- `409 Conflict` - Idempotency key already used (see response for existing execution ID)
+- `422 Unprocessable Entity` - Invalid workflow definition
 - `500 Internal Server Error` - Execution failed
+- `503 Service Unavailable` - Server is shutting down
 
 ---
 
@@ -176,9 +238,17 @@ Get details of a specific execution.
   "error": null,
   "started_at": "2024-01-20T14:30:00Z",
   "finished_at": "2024-01-20T14:30:01Z",
-  "duration_ms": 1250
+  "duration_ms": 1250,
+  "correlation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "idempotency_key": "order-12345-process",
+  "origin": "api"
 }
 ```
+
+**Trace Fields**:
+- `correlation_id` - End-to-end trace ID for cross-system debugging
+- `idempotency_key` - Key used to prevent duplicate execution (if provided)
+- `origin` - Source of execution ("api", "webhook", "cron", "mcp", "engine")
 
 **Status Codes**:
 - `200 OK` - Success
@@ -348,7 +418,16 @@ All errors follow a consistent format:
 
 ```json
 {
-  "error": "Human-readable error message"
+  "error": {
+    "code": "WORKFLOW_NOT_FOUND",
+    "message": "Workflow 'order-processing' not found",
+    "category": "client_error",
+    "correlation_id": "550e8400-e29b-41d4-a716-446655440000",
+    "execution_id": null,
+    "request_id": null,
+    "retry_after_ms": null,
+    "details": null
+  }
 }
 ```
 
@@ -356,11 +435,14 @@ All errors follow a consistent format:
 
 | Status | Meaning |
 |--------|---------|
-| `400` | Bad Request - Invalid input or workflow definition |
+| `400` | Bad Request - Invalid request payload or field values |
 | `404` | Not Found - Resource doesn't exist |
+| `409` | Conflict - Idempotency key was already used |
+| `422` | Unprocessable Entity - Invalid workflow definition |
 | `413` | Payload Too Large - Request body exceeds limit |
 | `429` | Too Many Requests - Concurrency limit reached |
 | `500` | Internal Server Error - Unexpected server error |
+| `503` | Service Unavailable - Server is shutting down or backend unavailable |
 
 ---
 

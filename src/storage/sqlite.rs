@@ -119,8 +119,13 @@ impl SqliteStorage {
                 started_at TEXT NOT NULL,
                 finished_at TEXT,
                 error TEXT,
+                correlation_id TEXT,
+                idempotency_key TEXT,
+                origin TEXT,
                 FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
             );
+            CREATE INDEX IF NOT EXISTS idx_executions_correlation ON executions(correlation_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_executions_idempotency_unique ON executions(idempotency_key);
 
             CREATE TABLE IF NOT EXISTS node_executions (
                 id TEXT PRIMARY KEY,
@@ -168,7 +173,32 @@ impl SqliteStorage {
 
         Self::migrate_foreign_keys_to_cascade(conn)?;
         Self::ensure_execution_workflow_version_column(conn)?;
+        Self::ensure_execution_trace_columns(conn)?;
         Self::repair_orphans(conn)?;
+        Ok(())
+    }
+
+    fn ensure_execution_trace_columns(conn: &Connection) -> Result<()> {
+        // Add correlation_id column if not exists
+        if !Self::has_column(conn, "executions", "correlation_id")? {
+            conn.execute("ALTER TABLE executions ADD COLUMN correlation_id TEXT", [])?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_executions_correlation ON executions(correlation_id)",
+                [],
+            )?;
+        }
+        // Add idempotency_key column if not exists
+        if !Self::has_column(conn, "executions", "idempotency_key")? {
+            conn.execute("ALTER TABLE executions ADD COLUMN idempotency_key TEXT", [])?;
+        }
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_executions_idempotency_unique ON executions(idempotency_key)",
+            [],
+        )?;
+        // Add origin column if not exists
+        if !Self::has_column(conn, "executions", "origin")? {
+            conn.execute("ALTER TABLE executions ADD COLUMN origin TEXT", [])?;
+        }
         Ok(())
     }
 
@@ -723,8 +753,8 @@ impl SqliteStorage {
         let conn = self.conn.lock().await;
         conn.execute(
             "INSERT INTO executions
-             (id, workflow_id, workflow_name, workflow_version, status, trigger_type, input, output, started_at, finished_at, error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             (id, workflow_id, workflow_name, workflow_version, status, trigger_type, input, output, started_at, finished_at, error, correlation_id, idempotency_key, origin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(id) DO UPDATE SET
                 workflow_id = excluded.workflow_id,
                 workflow_name = excluded.workflow_name,
@@ -735,7 +765,10 @@ impl SqliteStorage {
                 output = excluded.output,
                 started_at = excluded.started_at,
                 finished_at = excluded.finished_at,
-                error = excluded.error",
+                error = excluded.error,
+                correlation_id = excluded.correlation_id,
+                idempotency_key = excluded.idempotency_key,
+                origin = excluded.origin",
             params![
                 execution.id,
                 execution.workflow_id,
@@ -751,6 +784,9 @@ impl SqliteStorage {
                 execution.started_at.to_rfc3339(),
                 execution.finished_at.map(|t| t.to_rfc3339()),
                 execution.error,
+                execution.correlation_id,
+                execution.idempotency_key,
+                execution.origin,
             ],
         )?;
         Ok(())
@@ -759,7 +795,7 @@ impl SqliteStorage {
     pub async fn get_execution(&self, id: &str) -> Result<Option<Execution>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "SELECT id, workflow_id, workflow_name, workflow_version, status, trigger_type, input, output, started_at, finished_at, error
+            "SELECT id, workflow_id, workflow_name, workflow_version, status, trigger_type, input, output, started_at, finished_at, error, correlation_id, idempotency_key, origin
              FROM executions WHERE id = ?1",
         )?;
 
@@ -785,6 +821,49 @@ impl SqliteStorage {
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                         .map(|t| t.with_timezone(&Utc)),
                     error: row.get(10)?,
+                    correlation_id: row.get(11)?,
+                    idempotency_key: row.get(12)?,
+                    origin: row.get(13)?,
+                })
+            })
+            .optional()?;
+
+        Ok(execution)
+    }
+
+    /// Check if an idempotency key already exists.
+    pub async fn check_idempotency_key(&self, key: &str) -> Result<Option<Execution>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, workflow_id, workflow_name, workflow_version, status, trigger_type, input, output, started_at, finished_at, error, correlation_id, idempotency_key, origin
+             FROM executions WHERE idempotency_key = ?1",
+        )?;
+
+        let execution = stmt
+            .query_row([key], |row| {
+                let status_str: String = row.get(4)?;
+                let status = status_str.parse().unwrap_or(ExecutionStatus::Failed);
+                let input_str: String = row.get(6)?;
+                let output_str: Option<String> = row.get(7)?;
+
+                Ok(Execution {
+                    id: row.get(0)?,
+                    workflow_id: row.get(1)?,
+                    workflow_name: row.get(2)?,
+                    workflow_version: row.get(3)?,
+                    status,
+                    trigger_type: row.get(5)?,
+                    input: serde_json::from_str(&input_str).unwrap_or(serde_json::Value::Null),
+                    output: output_str.and_then(|s| serde_json::from_str(&s).ok()),
+                    started_at: parse_datetime_utc(&row.get::<_, String>(8)?)?,
+                    finished_at: row
+                        .get::<_, Option<String>>(9)?
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                        .map(|t| t.with_timezone(&Utc)),
+                    error: row.get(10)?,
+                    correlation_id: row.get(11)?,
+                    idempotency_key: row.get(12)?,
+                    origin: row.get(13)?,
                 })
             })
             .optional()?;
@@ -809,7 +888,7 @@ impl SqliteStorage {
         let conn = self.conn.lock().await;
 
         let mut sql = String::from(
-            "SELECT id, workflow_id, workflow_name, workflow_version, status, trigger_type, input, output, started_at, finished_at, error
+            "SELECT id, workflow_id, workflow_name, workflow_version, status, trigger_type, input, output, started_at, finished_at, error, correlation_id, idempotency_key, origin
              FROM executions WHERE 1=1",
         );
         let mut bind: Vec<SqlValue> = Vec::new();
@@ -1063,6 +1142,9 @@ impl SqliteStorage {
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                 .map(|t| t.with_timezone(&Utc)),
             error: row.get(10)?,
+            correlation_id: row.get(11)?,
+            idempotency_key: row.get(12)?,
+            origin: row.get(13)?,
         })
     }
 
@@ -1307,6 +1389,9 @@ mod tests {
             started_at: Utc::now(),
             finished_at: Some(Utc::now()),
             error: None,
+            correlation_id: None,
+            idempotency_key: None,
+            origin: None,
         };
 
         storage.save_execution(&execution).await.unwrap();
@@ -1318,6 +1403,50 @@ mod tests {
         let trace = storage.get_execution_trace("exec-123").await.unwrap();
         assert!(trace.is_some());
         assert_eq!(trace.unwrap().execution.id, "exec-123");
+    }
+
+    #[tokio::test]
+    async fn test_idempotency_key_lookup() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let now = Utc::now();
+
+        let workflow = StoredWorkflow {
+            id: "wf-idem".to_string(),
+            name: "idem-workflow".to_string(),
+            definition:
+                "name: idem-workflow\nnodes:\n  - id: n1\n    type: transform\n    config:\n      expression: '1'"
+                    .to_string(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+        storage.save_workflow(&workflow).await.unwrap();
+
+        let execution = Execution {
+            id: "exec-idem".to_string(),
+            workflow_id: "wf-idem".to_string(),
+            workflow_name: "idem-workflow".to_string(),
+            workflow_version: None,
+            status: ExecutionStatus::Completed,
+            trigger_type: "api".to_string(),
+            input: serde_json::json!({"key": "value"}),
+            output: Some(serde_json::json!({"ok": true})),
+            started_at: Utc::now(),
+            finished_at: Some(Utc::now()),
+            error: None,
+            correlation_id: Some("corr-1".to_string()),
+            idempotency_key: Some("order-1".to_string()),
+            origin: Some("api".to_string()),
+        };
+        storage.save_execution(&execution).await.unwrap();
+
+        let found = storage.check_idempotency_key("order-1").await.unwrap();
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert_eq!(found.id, "exec-idem");
+        assert_eq!(found.correlation_id.as_deref(), Some("corr-1"));
+        assert_eq!(found.idempotency_key.as_deref(), Some("order-1"));
+        assert_eq!(found.origin.as_deref(), Some("api"));
     }
 
     #[tokio::test]
@@ -1349,6 +1478,9 @@ mod tests {
             started_at: Utc::now(),
             finished_at: Some(Utc::now()),
             error: None,
+            correlation_id: None,
+            idempotency_key: None,
+            origin: None,
         };
         storage.save_execution(&exec1).await.unwrap();
 
@@ -1364,6 +1496,9 @@ mod tests {
             started_at: Utc::now(),
             finished_at: Some(Utc::now()),
             error: Some("boom".to_string()),
+            correlation_id: None,
+            idempotency_key: None,
+            origin: None,
         };
         storage.save_execution(&exec2).await.unwrap();
 
@@ -1433,6 +1568,9 @@ mod tests {
             started_at: Utc::now(),
             finished_at: None,
             error: None,
+            correlation_id: None,
+            idempotency_key: None,
+            origin: None,
         };
         storage.save_execution(&execution).await.unwrap();
 
@@ -1514,6 +1652,9 @@ mod tests {
             started_at: Utc::now(),
             finished_at: None,
             error: None,
+            correlation_id: None,
+            idempotency_key: None,
+            origin: None,
         };
         storage.save_execution(&execution).await.unwrap();
 
@@ -1547,6 +1688,48 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn test_trace_column_migration_legacy_schema() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE executions (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                workflow_name TEXT NOT NULL,
+                workflow_version INTEGER,
+                status TEXT NOT NULL,
+                trigger_type TEXT NOT NULL,
+                input TEXT NOT NULL,
+                output TEXT,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                error TEXT
+            );
+            "#,
+        )
+        .unwrap();
+
+        SqliteStorage::ensure_execution_trace_columns(&conn).unwrap();
+
+        assert!(SqliteStorage::has_column(&conn, "executions", "correlation_id").unwrap());
+        assert!(SqliteStorage::has_column(&conn, "executions", "idempotency_key").unwrap());
+        assert!(SqliteStorage::has_column(&conn, "executions", "origin").unwrap());
+
+        let mut stmt = conn.prepare("PRAGMA index_list(executions)").unwrap();
+        let indexes: Vec<(String, i64)> = stmt
+            .query_map([], |row| Ok((row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        let unique = indexes
+            .iter()
+            .find(|(name, _)| name == "idx_executions_idempotency_unique")
+            .map(|(_, unique)| *unique)
+            .unwrap_or_default();
+        assert_eq!(unique, 1);
     }
 
     #[test]

@@ -203,8 +203,38 @@ pub fn generate_openapi_spec() -> Value {
                                 }
                             }
                         },
+                        "409": {
+                            "description": "Idempotency key already used",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "$ref": "#/components/schemas/ErrorResponse"
+                                    }
+                                }
+                            }
+                        },
+                        "422": {
+                            "description": "Invalid workflow definition",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "$ref": "#/components/schemas/ErrorResponse"
+                                    }
+                                }
+                            }
+                        },
                         "429": {
                             "description": "Rate limit exceeded",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "$ref": "#/components/schemas/ErrorResponse"
+                                    }
+                                }
+                            }
+                        },
+                        "503": {
+                            "description": "Service unavailable",
                             "content": {
                                 "application/json": {
                                     "schema": {
@@ -326,11 +356,27 @@ pub fn generate_openapi_spec() -> Value {
                     "type": "object",
                     "properties": {
                         "error": {
-                            "type": "string",
-                            "description": "Error message"
+                            "$ref": "#/components/schemas/ApiError"
                         }
                     },
                     "required": ["error"]
+                },
+                "ApiError": {
+                    "type": "object",
+                    "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "category": {
+                            "type": "string",
+                            "enum": ["client_error", "transient", "permanent", "rate_limit", "conflict"]
+                        },
+                        "correlation_id": { "type": "string", "nullable": true },
+                        "execution_id": { "type": "string", "nullable": true },
+                        "request_id": { "type": "string", "nullable": true },
+                        "retry_after_ms": { "type": "integer", "nullable": true },
+                        "details": { "type": "object", "nullable": true, "additionalProperties": true }
+                    },
+                    "required": ["code", "message", "category"]
                 },
                 "WorkflowSummary": {
                     "type": "object",
@@ -393,8 +439,16 @@ pub fn generate_openapi_spec() -> Value {
                         },
                         "wait": {
                             "type": "boolean",
-                            "default": false,
+                            "default": true,
                             "description": "Wait for execution to complete"
+                        },
+                        "correlation_id": {
+                            "type": "string",
+                            "description": "End-to-end trace identifier"
+                        },
+                        "idempotency_key": {
+                            "type": "string",
+                            "description": "Key used to deduplicate repeated execution requests"
                         }
                     }
                 },
@@ -438,7 +492,10 @@ pub fn generate_openapi_spec() -> Value {
                         "error": { "type": "string", "nullable": true },
                         "started_at": { "type": "string", "format": "date-time" },
                         "finished_at": { "type": "string", "format": "date-time", "nullable": true },
-                        "duration_ms": { "type": "integer", "nullable": true }
+                        "duration_ms": { "type": "integer", "nullable": true },
+                        "correlation_id": { "type": "string", "nullable": true },
+                        "idempotency_key": { "type": "string", "nullable": true },
+                        "origin": { "type": "string", "nullable": true }
                     },
                     "required": ["id", "workflow_id", "workflow_name", "status", "trigger_type", "started_at"]
                 },

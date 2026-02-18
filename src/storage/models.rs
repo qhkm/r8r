@@ -83,6 +83,12 @@ pub struct Execution {
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
     pub error: Option<String>,
+    /// Correlation ID for end-to-end tracing across systems.
+    pub correlation_id: Option<String>,
+    /// Idempotency key to prevent duplicate executions.
+    pub idempotency_key: Option<String>,
+    /// Origin identifier (e.g., "api", "webhook", "cron", "mcp").
+    pub origin: Option<String>,
 }
 
 /// Node execution record (for detailed traces).
