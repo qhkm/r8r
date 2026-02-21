@@ -172,3 +172,217 @@ impl ErrorResponse {
         self
     }
 }
+
+/// Standardized API error categories for cross-repo integration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCategory {
+    /// Client error - invalid request, missing fields, etc.
+    /// Do not retry without fixing the request.
+    ClientError,
+    /// Transient server error - may succeed on retry.
+    Transient,
+    /// Permanent server error - unlikely to succeed on retry.
+    Permanent,
+    /// Rate limiting - retry after the specified duration.
+    RateLimit,
+    /// Idempotency conflict - request already processed.
+    Conflict,
+}
+
+impl std::fmt::Display for ErrorCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ErrorCategory::ClientError => write!(f, "client_error"),
+            ErrorCategory::Transient => write!(f, "transient"),
+            ErrorCategory::Permanent => write!(f, "permanent"),
+            ErrorCategory::RateLimit => write!(f, "rate_limit"),
+            ErrorCategory::Conflict => write!(f, "conflict"),
+        }
+    }
+}
+
+/// Machine-parseable error codes for API contract stability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ApiErrorCode {
+    // Client errors (4xx equivalents)
+    InvalidRequest,
+    MissingField,
+    InvalidField,
+    WorkflowNotFound,
+    ExecutionNotFound,
+    InvalidWorkflowDefinition,
+    IdempotencyKeyReuse,
+    InvalidIdempotencyKey,
+
+    // Server errors (5xx equivalents)
+    InternalError,
+    StorageError,
+    ExecutionFailed,
+    NodeExecutionFailed,
+
+    // Transient errors
+    Timeout,
+    RateLimited,
+    ServiceUnavailable,
+    QueueFull,
+}
+
+impl ApiErrorCode {
+    /// Get the error category for retry logic.
+    pub fn category(&self) -> ErrorCategory {
+        match self {
+            // Client errors - don't retry
+            ApiErrorCode::InvalidRequest
+            | ApiErrorCode::MissingField
+            | ApiErrorCode::InvalidField
+            | ApiErrorCode::WorkflowNotFound
+            | ApiErrorCode::ExecutionNotFound
+            | ApiErrorCode::InvalidWorkflowDefinition
+            | ApiErrorCode::InvalidIdempotencyKey => ErrorCategory::ClientError,
+
+            // Idempotency conflicts - return cached result
+            ApiErrorCode::IdempotencyKeyReuse => ErrorCategory::Conflict,
+
+            // Rate limiting - retry after delay
+            ApiErrorCode::RateLimited => ErrorCategory::RateLimit,
+
+            // Transient errors - retry with backoff
+            ApiErrorCode::Timeout | ApiErrorCode::ServiceUnavailable | ApiErrorCode::QueueFull => {
+                ErrorCategory::Transient
+            }
+
+            // Permanent errors - fail fast
+            ApiErrorCode::InternalError
+            | ApiErrorCode::StorageError
+            | ApiErrorCode::ExecutionFailed
+            | ApiErrorCode::NodeExecutionFailed => ErrorCategory::Permanent,
+        }
+    }
+
+    /// Get HTTP status code mapping.
+    pub fn http_status(&self) -> u16 {
+        match self {
+            ApiErrorCode::InvalidRequest => 400,
+            ApiErrorCode::MissingField => 400,
+            ApiErrorCode::InvalidField => 400,
+            ApiErrorCode::WorkflowNotFound => 404,
+            ApiErrorCode::ExecutionNotFound => 404,
+            ApiErrorCode::InvalidWorkflowDefinition => 422,
+            ApiErrorCode::IdempotencyKeyReuse => 409,
+            ApiErrorCode::InvalidIdempotencyKey => 400,
+            ApiErrorCode::InternalError => 500,
+            ApiErrorCode::StorageError => 500,
+            ApiErrorCode::ExecutionFailed => 500,
+            ApiErrorCode::NodeExecutionFailed => 500,
+            ApiErrorCode::Timeout => 504,
+            ApiErrorCode::RateLimited => 429,
+            ApiErrorCode::ServiceUnavailable => 503,
+            ApiErrorCode::QueueFull => 503,
+        }
+    }
+}
+
+/// Structured API error envelope for v1 contract.
+///
+/// This is the standard error response format for all API endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiErrorEnvelope {
+    /// Machine-parseable error code.
+    pub code: ApiErrorCode,
+    /// Human-readable error message.
+    pub message: String,
+    /// Error category for retry logic.
+    pub category: ErrorCategory,
+    /// Correlation ID for tracing (from request or generated).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+    /// ID of the execution if one was created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_id: Option<String>,
+    /// Request ID for log correlation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    /// Retry guidance for transient errors.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
+    /// Additional context for debugging.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+}
+
+impl ApiErrorEnvelope {
+    /// Create a new error envelope.
+    pub fn new(code: ApiErrorCode, message: impl Into<String>) -> Self {
+        let message = message.into();
+        let category = code.category();
+        Self {
+            code,
+            message,
+            category,
+            correlation_id: None,
+            execution_id: None,
+            request_id: None,
+            retry_after_ms: None,
+            details: None,
+        }
+    }
+
+    /// Create an idempotency conflict error.
+    pub fn idempotency_conflict(execution_id: impl Into<String>) -> Self {
+        Self {
+            code: ApiErrorCode::IdempotencyKeyReuse,
+            message: "Request with this idempotency key already processed".to_string(),
+            category: ErrorCategory::Conflict,
+            correlation_id: None,
+            execution_id: Some(execution_id.into()),
+            request_id: None,
+            retry_after_ms: None,
+            details: None,
+        }
+    }
+
+    /// Add correlation ID.
+    pub fn with_correlation(mut self, id: impl Into<String>) -> Self {
+        self.correlation_id = Some(id.into());
+        self
+    }
+
+    /// Add execution ID.
+    pub fn with_execution(mut self, id: impl Into<String>) -> Self {
+        self.execution_id = Some(id.into());
+        self
+    }
+
+    /// Add request ID.
+    pub fn with_request(mut self, id: impl Into<String>) -> Self {
+        self.request_id = Some(id.into());
+        self
+    }
+
+    /// Add retry guidance.
+    pub fn with_retry_after(mut self, ms: u64) -> Self {
+        self.retry_after_ms = Some(ms);
+        self
+    }
+
+    /// Add error details.
+    pub fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.details = Some(details);
+        self
+    }
+
+    /// Convert to JSON response.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "error": self
+        })
+    }
+}
+
+impl From<ApiErrorEnvelope> for serde_json::Value {
+    fn from(envelope: ApiErrorEnvelope) -> Self {
+        envelope.to_json()
+    }
+}

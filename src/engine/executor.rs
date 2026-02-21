@@ -79,6 +79,19 @@ pub struct Executor {
     pause_registry: Option<PauseRegistry>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ExecutionMetadata {
+    pub correlation_id: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub origin: Option<String>,
+}
+
+#[derive(Default)]
+struct ExecutionOptions {
+    preset_execution_id: Option<String>,
+    metadata: ExecutionMetadata,
+}
+
 impl Executor {
     /// Create a new executor.
     pub fn new(registry: NodeRegistry, storage: SqliteStorage) -> Self {
@@ -173,8 +186,14 @@ impl Executor {
         trigger_type: &str,
         input: Value,
     ) -> Result<Execution> {
-        self.execute_inner(workflow, workflow_id, trigger_type, input, None, None)
-            .await
+        self.execute_inner(
+            workflow,
+            workflow_id,
+            trigger_type,
+            input,
+            ExecutionOptions::default(),
+        )
+        .await
     }
 
     /// Execute a workflow with an explicit correlation ID.
@@ -202,8 +221,35 @@ impl Executor {
             workflow_id,
             trigger_type,
             input,
-            correlation_id,
-            None,
+            ExecutionOptions {
+                metadata: ExecutionMetadata {
+                    correlation_id,
+                    ..ExecutionMetadata::default()
+                },
+                ..ExecutionOptions::default()
+            },
+        )
+        .await
+    }
+
+    /// Execute a workflow with metadata for tracing and idempotency.
+    pub async fn execute_with_metadata(
+        &self,
+        workflow: &Workflow,
+        workflow_id: &str,
+        trigger_type: &str,
+        input: Value,
+        metadata: ExecutionMetadata,
+    ) -> Result<Execution> {
+        self.execute_inner(
+            workflow,
+            workflow_id,
+            trigger_type,
+            input,
+            ExecutionOptions {
+                metadata,
+                ..ExecutionOptions::default()
+            },
         )
         .await
     }
@@ -225,8 +271,33 @@ impl Executor {
             workflow_id,
             trigger_type,
             input,
-            None,
-            Some(execution_id),
+            ExecutionOptions {
+                preset_execution_id: Some(execution_id),
+                ..ExecutionOptions::default()
+            },
+        )
+        .await
+    }
+
+    /// Execute a workflow with a pre-generated execution ID and metadata.
+    pub async fn execute_with_id_and_metadata(
+        &self,
+        workflow: &Workflow,
+        workflow_id: &str,
+        trigger_type: &str,
+        input: Value,
+        execution_id: String,
+        metadata: ExecutionMetadata,
+    ) -> Result<Execution> {
+        self.execute_inner(
+            workflow,
+            workflow_id,
+            trigger_type,
+            input,
+            ExecutionOptions {
+                preset_execution_id: Some(execution_id),
+                metadata,
+            },
         )
         .await
     }
@@ -234,7 +305,7 @@ impl Executor {
     /// Internal execution method that all public methods delegate to.
     #[instrument(
         name = "workflow.execute",
-        skip(self, workflow, input, correlation_id, preset_execution_id),
+        skip(self, workflow, input, options),
         fields(
             workflow_id = %workflow_id,
             workflow_name = %workflow.name,
@@ -249,8 +320,7 @@ impl Executor {
         workflow_id: &str,
         trigger_type: &str,
         input: Value,
-        correlation_id: Option<String>,
-        preset_execution_id: Option<String>,
+        options: ExecutionOptions,
     ) -> Result<Execution> {
         // Determine checkpointing for this execution (per-workflow setting overrides global default)
         let checkpoints_enabled =
@@ -282,8 +352,18 @@ impl Executor {
             .storage
             .get_latest_workflow_version_number(workflow_id)
             .await?;
-        let execution_id = preset_execution_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let correlation_id = correlation_id.unwrap_or_else(|| execution_id.clone());
+        let execution_id = options
+            .preset_execution_id
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let correlation_id = options
+            .metadata
+            .correlation_id
+            .unwrap_or_else(|| execution_id.clone());
+        let idempotency_key = options.metadata.idempotency_key;
+        let origin = options
+            .metadata
+            .origin
+            .unwrap_or_else(|| trigger_type.to_string());
         let started_at = Utc::now();
         let timeout_seconds = self
             .timeout_override_seconds
@@ -317,6 +397,9 @@ impl Executor {
             started_at,
             finished_at: None,
             error: None,
+            correlation_id: Some(correlation_id.clone()),
+            idempotency_key,
+            origin: Some(origin),
         };
 
         self.storage.save_execution(&execution).await?;
@@ -909,11 +992,14 @@ impl Executor {
             .max(1);
         let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
 
+        let correlation_id = uuid::Uuid::new_v4().to_string();
+
         info!(
-            "Starting resumed execution {} of workflow '{}' (skipping {} completed nodes)",
+            "Starting resumed execution {} of workflow '{}' (skipping {} completed nodes, correlation: {})",
             execution_id,
             workflow.name,
-            checkpoint.len()
+            checkpoint.len(),
+            correlation_id
         );
 
         // Create execution record
@@ -929,6 +1015,9 @@ impl Executor {
             started_at,
             finished_at: None,
             error: None,
+            correlation_id: Some(correlation_id),
+            idempotency_key: None,
+            origin: Some("engine".to_string()),
         };
 
         self.storage.save_execution(&execution).await?;

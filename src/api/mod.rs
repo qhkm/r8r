@@ -27,8 +27,8 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{error, warn};
 
-use crate::engine::{Executor, PauseRegistry};
-use crate::error::Error;
+use crate::engine::{ExecutionMetadata, Executor, PauseRegistry};
+use crate::error::{ApiErrorCode, ApiErrorEnvelope, Error};
 use crate::nodes::NodeRegistry;
 use crate::shutdown::ShutdownCoordinator;
 use crate::storage::{ExecutionStatus, SqliteStorage, StoredWorkflow};
@@ -40,14 +40,49 @@ use crate::workflow::{parse_workflow, validate_workflow};
 /// This logs the full error internally but returns only safe information
 /// to external clients to prevent information leakage.
 fn external_error_response(e: Error) -> (StatusCode, Json<Value>) {
+    external_error_response_with_correlation(e, None)
+}
+
+fn external_error_response_with_correlation(
+    e: Error,
+    correlation_id: Option<String>,
+) -> (StatusCode, Json<Value>) {
     // Log full error for debugging
     error!("API error: {:?}", e);
 
-    // Return sanitized message to client
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({"error": e.external_message()})),
-    )
+    let code = match &e {
+        Error::Storage(_) | Error::Database(_) => ApiErrorCode::StorageError,
+        Error::Execution(_) => ApiErrorCode::ExecutionFailed,
+        Error::Node(_) => ApiErrorCode::NodeExecutionFailed,
+        _ => ApiErrorCode::InternalError,
+    };
+    api_error_response(code, e.external_message(), correlation_id)
+}
+
+fn api_error_response(
+    code: ApiErrorCode,
+    message: impl Into<String>,
+    correlation_id: Option<String>,
+) -> (StatusCode, Json<Value>) {
+    let mut envelope = ApiErrorEnvelope::new(code, message);
+    if let Some(correlation_id) = correlation_id.filter(|v| !v.is_empty()) {
+        envelope = envelope.with_correlation(correlation_id);
+    }
+    let status =
+        StatusCode::from_u16(code.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (status, Json(envelope.to_json()))
+}
+
+fn api_error_envelope_response(
+    mut envelope: ApiErrorEnvelope,
+    correlation_id: Option<String>,
+) -> (StatusCode, Json<Value>) {
+    if let Some(correlation_id) = correlation_id.filter(|v| !v.is_empty()) {
+        envelope = envelope.with_correlation(correlation_id);
+    }
+    let status = StatusCode::from_u16(envelope.code.http_status())
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (status, Json(envelope.to_json()))
 }
 
 pub use websocket::{Monitor, MonitorEvent, MonitoredAppState};
@@ -337,11 +372,12 @@ async fn get_workflow(
             }))
             .into_response()
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": format!("Workflow '{}' not found", name)})),
+        Ok(None) => api_error_response(
+            ApiErrorCode::WorkflowNotFound,
+            format!("Workflow '{}' not found", name),
+            None,
         )
-            .into_response(),
+        .into_response(),
         Err(e) => external_error_response(e).into_response(),
     }
 }
@@ -362,6 +398,14 @@ struct ExecuteRequest {
     /// If false, start execution asynchronously and return 202 with execution_id.
     #[serde(default = "default_wait_true")]
     wait: bool,
+    /// Correlation ID for end-to-end tracing across systems.
+    /// If not provided, one will be generated.
+    #[serde(default)]
+    correlation_id: Option<String>,
+    /// Idempotency key to prevent duplicate executions.
+    /// Requests with the same key will return the cached result.
+    #[serde(default)]
+    idempotency_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -446,44 +490,76 @@ async fn execute_workflow(
     Json(request): Json<ExecuteRequest>,
 ) -> impl IntoResponse {
     let wait_requested = request.wait;
-    let correlation_id = request_id.map(|r| r.0 .0.clone());
+    let correlation_id = request
+        .correlation_id
+        .clone()
+        .or_else(|| request_id.as_ref().map(|r| r.0 .0.clone()));
 
     // Check if shutdown is requested
     if state.shutdown.is_shutdown_requested() {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({"error": "Server is shutting down, cannot start new executions"})),
+        return api_error_response(
+            ApiErrorCode::ServiceUnavailable,
+            "Server is shutting down, cannot start new executions",
+            correlation_id,
         )
-            .into_response();
+        .into_response();
+    }
+
+    // Check idempotency key if provided
+    if let Some(ref key) = request.idempotency_key {
+        match state.storage.check_idempotency_key(key).await {
+            Ok(Some(existing)) => {
+                tracing::info!(
+                    idempotency_key = %key,
+                    execution_id = %existing.id,
+                    "Returning cached result for idempotent request"
+                );
+                return api_error_envelope_response(
+                    ApiErrorEnvelope::idempotency_conflict(&existing.id),
+                    correlation_id.clone(),
+                )
+                .into_response();
+            }
+            Ok(None) => {}
+            Err(e) => {
+                return external_error_response_with_correlation(e, correlation_id.clone())
+                    .into_response();
+            }
+        }
     }
 
     // Log execution start with correlation
     if let Some(ref id) = correlation_id {
-        tracing::info!(request_id = %id, workflow = %name, "Starting workflow execution");
+        tracing::info!(correlation_id = %id, workflow = %name, "Starting workflow execution");
     }
 
     // Get workflow
     let stored = match state.storage.get_workflow(&name).await {
         Ok(Some(w)) => w,
         Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": format!("Workflow '{}' not found", name)})),
+            return api_error_response(
+                ApiErrorCode::WorkflowNotFound,
+                format!("Workflow '{}' not found", name),
+                correlation_id.clone(),
             )
+            .into_response();
+        }
+        Err(e) => {
+            return external_error_response_with_correlation(e, correlation_id.clone())
                 .into_response()
         }
-        Err(e) => return external_error_response(e).into_response(),
     };
 
     // Parse workflow
     let workflow = match parse_workflow(&stored.definition) {
         Ok(w) => w,
         Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("Invalid workflow definition: {}", e)})),
+            return api_error_response(
+                ApiErrorCode::InvalidWorkflowDefinition,
+                format!("Invalid workflow definition: {}", e),
+                correlation_id.clone(),
             )
-                .into_response()
+            .into_response();
         }
     };
 
@@ -497,7 +573,19 @@ async fn execute_workflow(
     if wait_requested {
         // Synchronous execution: wait for completion
         let executor = state.create_executor();
-        let result = executor.execute(&workflow, &stored.id, "api", input).await;
+        let result = executor
+            .execute_with_metadata(
+                &workflow,
+                &stored.id,
+                "api",
+                input,
+                ExecutionMetadata {
+                    correlation_id: correlation_id.clone(),
+                    idempotency_key: request.idempotency_key.clone(),
+                    origin: Some("api".to_string()),
+                },
+            )
+            .await;
 
         match result {
             Ok(execution) => {
@@ -514,18 +602,33 @@ async fn execute_workflow(
                 })
                 .into_response()
             }
-            Err(e) => external_error_response(e).into_response(),
+            Err(e) => {
+                external_error_response_with_correlation(e, correlation_id.clone()).into_response()
+            }
         }
     } else {
         // Async execution: spawn and return 202 immediately
         let execution_id = uuid::Uuid::new_v4().to_string();
         let execution_id_for_response = execution_id.clone();
         let workflow_id = stored.id.clone();
+        let correlation_id_for_task = correlation_id.clone();
+        let idempotency_key_for_task = request.idempotency_key.clone();
 
         tokio::spawn(async move {
             let executor = state.create_executor();
             if let Err(e) = executor
-                .execute_with_id(&workflow, &workflow_id, "api", input, execution_id.clone())
+                .execute_with_id_and_metadata(
+                    &workflow,
+                    &workflow_id,
+                    "api",
+                    input,
+                    execution_id.clone(),
+                    ExecutionMetadata {
+                        correlation_id: correlation_id_for_task,
+                        idempotency_key: idempotency_key_for_task,
+                        origin: Some("api".to_string()),
+                    },
+                )
                 .await
             {
                 error!(
@@ -566,14 +669,18 @@ async fn get_execution(State(state): State<AppState>, Path(id): Path<String>) ->
                 "started_at": e.started_at.to_rfc3339(),
                 "finished_at": e.finished_at.map(|f| f.to_rfc3339()),
                 "duration_ms": duration_ms,
+                "correlation_id": e.correlation_id,
+                "idempotency_key": e.idempotency_key,
+                "origin": e.origin,
             }))
             .into_response()
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": format!("Execution '{}' not found", id)})),
+        Ok(None) => api_error_response(
+            ApiErrorCode::ExecutionNotFound,
+            format!("Execution '{}' not found", id),
+            None,
         )
-            .into_response(),
+        .into_response(),
         Err(e) => external_error_response(e).into_response(),
     }
 }
@@ -608,11 +715,12 @@ async fn get_execution_trace(
             }))
             .into_response()
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": format!("Execution '{}' not found", id)})),
+        Ok(None) => api_error_response(
+            ApiErrorCode::ExecutionNotFound,
+            format!("Execution '{}' not found", id),
+            None,
         )
-            .into_response(),
+        .into_response(),
         Err(e) => external_error_response(e).into_response(),
     }
 }
@@ -634,27 +742,27 @@ async fn pause_execution_handler(
     let execution = match state.storage.get_execution(&id).await {
         Ok(Some(e)) => e,
         Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": format!("Execution '{}' not found", id)})),
+            return api_error_response(
+                ApiErrorCode::ExecutionNotFound,
+                format!("Execution '{}' not found", id),
+                None,
             )
-                .into_response();
+            .into_response();
         }
         Err(e) => return external_error_response(e).into_response(),
     };
 
     // Check if execution is in a pausable state (running)
     if execution.status != ExecutionStatus::Running {
-        return (
-            StatusCode::CONFLICT,
-            Json(json!({
-                "error": format!(
-                    "Cannot pause execution '{}': status is '{}', expected 'running'",
-                    id, execution.status
-                )
-            })),
+        return api_error_response(
+            ApiErrorCode::InvalidRequest,
+            format!(
+                "Cannot pause execution '{}': status is '{}', expected 'running'",
+                id, execution.status
+            ),
+            None,
         )
-            .into_response();
+        .into_response();
     }
 
     // Create executor and pause the execution
@@ -678,10 +786,10 @@ async fn pause_execution_handler(
             .into_response()
         }
         Err(Error::Execution(msg)) if msg.contains("not found") => {
-            (StatusCode::NOT_FOUND, Json(json!({"error": msg}))).into_response()
+            api_error_response(ApiErrorCode::ExecutionNotFound, msg, None).into_response()
         }
         Err(Error::Execution(msg)) if msg.contains("status is") => {
-            (StatusCode::CONFLICT, Json(json!({"error": msg}))).into_response()
+            api_error_response(ApiErrorCode::InvalidRequest, msg, None).into_response()
         }
         Err(e) => external_error_response(e).into_response(),
     }
@@ -698,38 +806,39 @@ async fn resume_execution_handler(
 ) -> impl IntoResponse {
     // Check if shutdown is requested
     if state.shutdown.is_shutdown_requested() {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({"error": "Server is shutting down, cannot resume executions"})),
+        return api_error_response(
+            ApiErrorCode::ServiceUnavailable,
+            "Server is shutting down, cannot resume executions",
+            None,
         )
-            .into_response();
+        .into_response();
     }
 
     // First check if execution exists
     let execution = match state.storage.get_execution(&id).await {
         Ok(Some(e)) => e,
         Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": format!("Execution '{}' not found", id)})),
+            return api_error_response(
+                ApiErrorCode::ExecutionNotFound,
+                format!("Execution '{}' not found", id),
+                None,
             )
-                .into_response();
+            .into_response();
         }
         Err(e) => return external_error_response(e).into_response(),
     };
 
     // Check if execution is in a resumable state (paused)
     if execution.status != ExecutionStatus::Paused {
-        return (
-            StatusCode::CONFLICT,
-            Json(json!({
-                "error": format!(
-                    "Cannot resume execution '{}': status is '{}', expected 'paused'",
-                    id, execution.status
-                )
-            })),
+        return api_error_response(
+            ApiErrorCode::InvalidRequest,
+            format!(
+                "Cannot resume execution '{}': status is '{}', expected 'paused'",
+                id, execution.status
+            ),
+            None,
         )
-            .into_response();
+        .into_response();
     }
 
     // Create executor and resume the execution
@@ -753,13 +862,13 @@ async fn resume_execution_handler(
             .into_response()
         }
         Err(Error::Execution(msg)) if msg.contains("not found") => {
-            (StatusCode::NOT_FOUND, Json(json!({"error": msg}))).into_response()
+            api_error_response(ApiErrorCode::ExecutionNotFound, msg, None).into_response()
         }
         Err(Error::Execution(msg)) if msg.contains("No checkpoint found") => {
-            (StatusCode::NOT_FOUND, Json(json!({"error": msg}))).into_response()
+            api_error_response(ApiErrorCode::ExecutionNotFound, msg, None).into_response()
         }
         Err(Error::Execution(msg)) if msg.contains("status is") => {
-            (StatusCode::CONFLICT, Json(json!({"error": msg}))).into_response()
+            api_error_response(ApiErrorCode::InvalidRequest, msg, None).into_response()
         }
         Err(e) => external_error_response(e).into_response(),
     }
@@ -785,21 +894,23 @@ async fn publish_event(
     let backend = match &state.event_backend {
         Some(b) => b,
         None => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"error": "Event backend is not configured"})),
+            return api_error_response(
+                ApiErrorCode::ServiceUnavailable,
+                "Event backend is not configured",
+                None,
             )
-                .into_response()
+            .into_response()
         }
     };
 
     // Validate event name
     if request.event.is_empty() || request.event.len() > 128 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Event name must be 1-128 characters"})),
+        return api_error_response(
+            ApiErrorCode::InvalidField,
+            "Event name must be 1-128 characters",
+            None,
         )
-            .into_response();
+        .into_response();
     }
 
     let mut msg = EventMessage::new(&request.event, request.data);
@@ -811,10 +922,7 @@ async fn publish_event(
         Ok(()) => Json(json!({"status": "published", "event": request.event})).into_response(),
         Err(e) => {
             error!("Failed to publish event: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to publish event"})),
-            )
+            api_error_response(ApiErrorCode::InternalError, "Failed to publish event", None)
                 .into_response()
         }
     }
@@ -844,21 +952,23 @@ async fn create_workflow(
     let workflow = match parse_workflow(&request.definition) {
         Ok(w) => w,
         Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("Invalid workflow definition: {}", e)})),
+            return api_error_response(
+                ApiErrorCode::InvalidWorkflowDefinition,
+                format!("Invalid workflow definition: {}", e),
+                None,
             )
-                .into_response()
+            .into_response()
         }
     };
 
     // Validate the workflow
     if let Err(e) = validate_workflow(&workflow) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": format!("Workflow validation failed: {}", e)})),
+        return api_error_response(
+            ApiErrorCode::InvalidRequest,
+            format!("Workflow validation failed: {}", e),
+            None,
         )
-            .into_response();
+        .into_response();
     }
 
     let now = chrono::Utc::now();
@@ -889,5 +999,231 @@ async fn create_workflow(
                 .into_response()
         }
         Err(e) => external_error_response(e).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::{to_bytes, Body};
+    use axum::http::Request;
+    use serde_json::json;
+    use tower::ServiceExt;
+
+    fn test_app_state() -> AppState {
+        AppState {
+            storage: SqliteStorage::open_in_memory().unwrap(),
+            registry: Arc::new(NodeRegistry::new()),
+            monitor: None,
+            shutdown: Arc::new(ShutdownCoordinator::new()),
+            pause_registry: PauseRegistry::new(),
+            event_backend: None,
+        }
+    }
+
+    fn test_workflow_yaml(name: &str) -> String {
+        format!(
+            r#"
+name: {name}
+nodes:
+  - id: set_result
+    type: set
+    config:
+      fields:
+        ok: true
+"#
+        )
+    }
+
+    async fn save_workflow(state: &AppState, name: &str, definition: &str) {
+        let now = chrono::Utc::now();
+        let workflow = StoredWorkflow {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            definition: definition.to_string(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+        state.storage.save_workflow(&workflow).await.unwrap();
+    }
+
+    async fn parse_json_body(response: axum::response::Response) -> serde_json::Value {
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_execute_workflow_not_found_error_envelope() {
+        let state = test_app_state();
+        let app = create_api_routes().with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/workflows/missing/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"wait":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = parse_json_body(response).await;
+        assert_eq!(body["error"]["code"], "WORKFLOW_NOT_FOUND");
+        assert_eq!(body["error"]["category"], "client_error");
+    }
+
+    #[tokio::test]
+    async fn test_execute_workflow_invalid_definition_returns_422() {
+        let state = test_app_state();
+        save_workflow(&state, "broken-workflow", "name: broken-workflow\nnodes: [").await;
+        let app = create_api_routes().with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/workflows/broken-workflow/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"wait":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = parse_json_body(response).await;
+        assert_eq!(body["error"]["code"], "INVALID_WORKFLOW_DEFINITION");
+        assert_eq!(body["error"]["category"], "client_error");
+    }
+
+    #[tokio::test]
+    async fn test_execute_workflow_idempotency_conflict_returns_409() {
+        let state = test_app_state();
+        save_workflow(
+            &state,
+            "idempotency-workflow",
+            &test_workflow_yaml("idempotency-workflow"),
+        )
+        .await;
+        let app = create_api_routes().with_state(state);
+
+        let payload = json!({
+            "wait": true,
+            "input": {"order_id": "ORD-1"},
+            "correlation_id": "corr-123",
+            "idempotency_key": "order-ORD-1"
+        });
+
+        let first = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/workflows/idempotency-workflow/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let first_body = parse_json_body(first).await;
+        let execution_id = first_body["execution_id"].as_str().unwrap().to_string();
+
+        let second = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/workflows/idempotency-workflow/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::CONFLICT);
+        let second_body = parse_json_body(second).await;
+        assert_eq!(second_body["error"]["code"], "IDEMPOTENCY_KEY_REUSE");
+        assert_eq!(second_body["error"]["execution_id"], execution_id);
+        assert_eq!(second_body["error"]["correlation_id"], "corr-123");
+    }
+
+    #[tokio::test]
+    async fn test_execute_workflow_shutdown_returns_503() {
+        let state = test_app_state();
+        state.shutdown.request_shutdown();
+        let app = create_api_routes().with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/workflows/any/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"wait":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = parse_json_body(response).await;
+        assert_eq!(body["error"]["code"], "SERVICE_UNAVAILABLE");
+        assert_eq!(body["error"]["category"], "transient");
+    }
+
+    #[tokio::test]
+    async fn test_get_execution_includes_trace_metadata() {
+        let state = test_app_state();
+        save_workflow(
+            &state,
+            "trace-workflow",
+            &test_workflow_yaml("trace-workflow"),
+        )
+        .await;
+        let app = create_api_routes().with_state(state.clone());
+
+        let execute_payload = json!({
+            "wait": true,
+            "input": {"task": "sync"},
+            "correlation_id": "corr-trace-1",
+            "idempotency_key": "trace-1"
+        });
+
+        let execute_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/workflows/trace-workflow/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(execute_payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(execute_response.status(), StatusCode::OK);
+        let execute_body = parse_json_body(execute_response).await;
+        let execution_id = execute_body["execution_id"].as_str().unwrap();
+
+        let get_response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/api/executions/{execution_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(get_response.status(), StatusCode::OK);
+        let get_body = parse_json_body(get_response).await;
+        assert_eq!(get_body["correlation_id"], "corr-trace-1");
+        assert_eq!(get_body["idempotency_key"], "trace-1");
+        assert_eq!(get_body["origin"], "api");
     }
 }

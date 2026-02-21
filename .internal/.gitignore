@@ -2,3 +2,4 @@
 # Un-ignore files explicitly only when they should be versioned.
 *
 !.gitignore
+!r8r-zeptoclaw-10-10-roadmap.md

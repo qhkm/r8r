@@ -38,6 +38,7 @@
 
 pub mod api;
 pub mod config;
+pub mod conformance;
 pub mod credentials;
 pub mod dashboard;
 pub mod engine;
