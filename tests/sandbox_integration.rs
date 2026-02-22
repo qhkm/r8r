@@ -5,7 +5,7 @@
 #![cfg(feature = "sandbox")]
 
 use r8r::nodes::{Node, NodeContext, SandboxNode};
-use r8r::sandbox::{SubprocessBackend, SandboxBackend};
+use r8r::sandbox::{SandboxBackend, SubprocessBackend};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -83,8 +83,7 @@ async fn test_sandbox_nonzero_exit() {
 #[tokio::test]
 async fn test_sandbox_template_rendering() {
     let node = make_sandbox_node();
-    let ctx = NodeContext::new("test-exec", "test-wf")
-        .with_input(json!({"value": 100}));
+    let ctx = NodeContext::new("test-exec", "test-wf").with_input(json!({"value": 100}));
 
     let config = json!({
         "runtime": "python3",

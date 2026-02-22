@@ -19,6 +19,8 @@ mod limit;
 mod merge;
 mod registry;
 mod s3;
+#[cfg(feature = "sandbox")]
+mod sandbox;
 mod set;
 mod slack;
 mod sort;
@@ -31,8 +33,6 @@ mod transform;
 mod types;
 mod variables;
 mod wait;
-#[cfg(feature = "sandbox")]
-mod sandbox;
 
 pub use agent::AgentNode;
 pub use aggregate::AggregateNode;
@@ -49,6 +49,8 @@ pub use limit::LimitNode;
 pub use merge::MergeNode;
 pub use registry::NodeRegistry;
 pub use s3::S3Node;
+#[cfg(feature = "sandbox")]
+pub use sandbox::SandboxNode;
 pub use set::SetNode;
 pub use slack::SlackNode;
 pub use sort::SortNode;
@@ -60,5 +62,3 @@ pub use transform::TransformNode;
 pub use types::{Node, NodeContext, NodeResult};
 pub use variables::VariablesNode;
 pub use wait::WaitNode;
-#[cfg(feature = "sandbox")]
-pub use sandbox::SandboxNode;

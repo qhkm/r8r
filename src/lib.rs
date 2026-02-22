@@ -45,6 +45,8 @@ pub mod error;
 pub mod mcp;
 pub mod metrics;
 pub mod nodes;
+#[cfg(feature = "sandbox")]
+pub mod sandbox;
 pub mod shutdown;
 pub mod storage;
 pub mod telemetry;
@@ -53,8 +55,6 @@ pub mod triggers;
 pub mod tui;
 pub mod validation;
 pub mod workflow;
-#[cfg(feature = "sandbox")]
-pub mod sandbox;
 
 pub use error::{Error, Result};
 pub use mcp::R8rMcpServer;

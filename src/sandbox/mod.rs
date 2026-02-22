@@ -12,9 +12,9 @@ use std::time::Duration;
 pub mod docker;
 pub mod subprocess;
 
-pub use subprocess::SubprocessBackend;
 #[cfg(feature = "sandbox-docker")]
 pub use docker::DockerBackend;
+pub use subprocess::SubprocessBackend;
 
 /// Trait for sandbox execution backends.
 ///
@@ -176,7 +176,9 @@ mod tests {
 
     #[test]
     fn test_sandbox_error_display() {
-        let err = SandboxError::Timeout { timeout_seconds: 30 };
+        let err = SandboxError::Timeout {
+            timeout_seconds: 30,
+        };
         assert_eq!(err.to_string(), "Sandbox execution timed out after 30s");
 
         let err = SandboxError::RuntimeNotFound {
@@ -191,10 +193,7 @@ mod tests {
         assert_eq!(backend.name(), "mock");
         assert!(backend.available());
 
-        let result = backend
-            .execute(SandboxRequest::default())
-            .await
-            .unwrap();
+        let result = backend.execute(SandboxRequest::default()).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, r#"{"result": 42}"#);
     }

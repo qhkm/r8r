@@ -1614,29 +1614,33 @@ fn build_registry() -> r8r::nodes::NodeRegistry {
         use std::sync::Arc;
 
         let config = Config::load();
-        let sandbox_backend: Arc<dyn r8r::sandbox::SandboxBackend> = match config.sandbox.backend.as_str() {
-            #[cfg(feature = "sandbox-docker")]
-            "docker" => {
-                use r8r::sandbox::SandboxBackend as _;
-                match r8r::sandbox::DockerBackend::new(&config.sandbox.docker) {
-                    Ok(db) if db.available() => {
-                        tracing::info!("Using Docker sandbox backend");
-                        Arc::new(db)
-                    }
-                    Ok(_) => {
-                        tracing::warn!("Docker unavailable, falling back to subprocess sandbox");
-                        Arc::new(SubprocessBackend::new())
-                    }
-                    Err(e) => {
-                        tracing::warn!("Docker sandbox init failed: {}. Falling back to subprocess.", e);
-                        Arc::new(SubprocessBackend::new())
+        let sandbox_backend: Arc<dyn r8r::sandbox::SandboxBackend> =
+            match config.sandbox.backend.as_str() {
+                #[cfg(feature = "sandbox-docker")]
+                "docker" => {
+                    use r8r::sandbox::SandboxBackend as _;
+                    match r8r::sandbox::DockerBackend::new(&config.sandbox.docker) {
+                        Ok(db) if db.available() => {
+                            tracing::info!("Using Docker sandbox backend");
+                            Arc::new(db)
+                        }
+                        Ok(_) => {
+                            tracing::warn!(
+                                "Docker unavailable, falling back to subprocess sandbox"
+                            );
+                            Arc::new(SubprocessBackend::new())
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Docker sandbox init failed: {}. Falling back to subprocess.",
+                                e
+                            );
+                            Arc::new(SubprocessBackend::new())
+                        }
                     }
                 }
-            }
-            _ => {
-                Arc::new(SubprocessBackend::new())
-            }
-        };
+                _ => Arc::new(SubprocessBackend::new()),
+            };
 
         registry.register(Arc::new(r8r::nodes::SandboxNode::new(sandbox_backend)));
     }

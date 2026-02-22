@@ -227,7 +227,8 @@ mod tests {
     async fn test_subprocess_env_vars() {
         let backend = SubprocessBackend;
         let mut req = make_request("bash", "echo $MY_VAR");
-        req.env.insert("MY_VAR".to_string(), "test_value".to_string());
+        req.env
+            .insert("MY_VAR".to_string(), "test_value".to_string());
 
         let result = backend.execute(req).await.unwrap();
         assert_eq!(result.stdout.trim(), "test_value");

@@ -203,14 +203,24 @@ impl Default for SandboxSecurityConfig {
 }
 
 #[cfg(feature = "sandbox")]
-fn default_max_memory() -> u64 { 512 }
+fn default_max_memory() -> u64 {
+    512
+}
 #[cfg(feature = "sandbox")]
-fn default_max_timeout() -> u64 { 300 }
+fn default_max_timeout() -> u64 {
+    300
+}
 #[cfg(feature = "sandbox")]
-fn default_max_output() -> u64 { 1_048_576 }
+fn default_max_output() -> u64 {
+    1_048_576
+}
 #[cfg(feature = "sandbox")]
 fn default_allowed_runtimes() -> Vec<String> {
-    vec!["python3".to_string(), "node".to_string(), "bash".to_string()]
+    vec![
+        "python3".to_string(),
+        "node".to_string(),
+        "bash".to_string(),
+    ]
 }
 
 impl Config {

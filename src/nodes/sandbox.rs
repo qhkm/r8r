@@ -113,9 +113,10 @@ impl Node for SandboxNode {
             SandboxError::RuntimeNotFound { runtime } => {
                 Error::Node(format!("Runtime '{}' not found", runtime))
             }
-            SandboxError::BackendUnavailable { backend, reason } => {
-                Error::Node(format!("Sandbox backend '{}' unavailable: {}", backend, reason))
-            }
+            SandboxError::BackendUnavailable { backend, reason } => Error::Node(format!(
+                "Sandbox backend '{}' unavailable: {}",
+                backend, reason
+            )),
             SandboxError::ResourceLimit { resource, limit } => {
                 Error::Node(format!("Resource limit exceeded: {} ({})", resource, limit))
             }
@@ -216,8 +217,7 @@ mod tests {
         let backend = Arc::new(MockSandboxBackend::success("ok"));
         let node = SandboxNode::new(backend);
 
-        let ctx = NodeContext::new("exec-1", "test")
-            .with_input(json!({"name": "world"}));
+        let ctx = NodeContext::new("exec-1", "test").with_input(json!({"name": "world"}));
 
         let config = json!({
             "runtime": "python3",

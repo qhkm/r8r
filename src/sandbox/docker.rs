@@ -76,7 +76,11 @@ impl SandboxBackend for DockerBackend {
         let container_name = format!("r8r-sandbox-{}", uuid::Uuid::new_v4());
 
         // Build env vars as Vec<String> "KEY=VALUE"
-        let env_vars: Vec<String> = req.env.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+        let env_vars: Vec<String> = req
+            .env
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect();
 
         // Build host config with resource limits
         let mut host_config = HostConfig::default();
@@ -127,10 +131,10 @@ impl SandboxBackend for DockerBackend {
             .start_container(&container_name, None::<StartContainerOptions<String>>)
             .await
             .map_err(|e| {
-                SandboxError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to start container: {}", e),
-                ))
+                SandboxError::Io(std::io::Error::other(format!(
+                    "Failed to start container: {}",
+                    e
+                )))
             })?;
 
         // Wait for container with timeout; WaitContainerOptions requires a condition field
