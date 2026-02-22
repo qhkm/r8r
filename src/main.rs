@@ -469,7 +469,6 @@ async fn cmd_workflows_run(
     wait: bool,
 ) -> anyhow::Result<()> {
     use r8r::engine::Executor;
-    use r8r::nodes::NodeRegistry;
     use r8r::workflow::{get_parameter_info, merge_params, parse_cli_params, parse_workflow};
 
     let storage = get_storage()?;
@@ -529,7 +528,7 @@ async fn cmd_workflows_run(
     }
 
     // Execute
-    let registry = NodeRegistry::new();
+    let registry = build_registry();
     let executor = Executor::new(registry, storage.clone());
 
     let execution = executor
@@ -667,10 +666,9 @@ async fn cmd_workflows_search(
 
 async fn cmd_workflows_replay(execution_id: &str, input: Option<&str>) -> anyhow::Result<()> {
     use r8r::engine::Executor;
-    use r8r::nodes::NodeRegistry;
 
     let storage = get_storage()?;
-    let registry = NodeRegistry::new();
+    let registry = build_registry();
     let executor = Executor::new(registry, storage.clone());
 
     let input_value = if let Some(raw) = input {
@@ -692,10 +690,9 @@ async fn cmd_workflows_replay(execution_id: &str, input: Option<&str>) -> anyhow
 
 async fn cmd_workflows_resume(execution_id: &str) -> anyhow::Result<()> {
     use r8r::engine::Executor;
-    use r8r::nodes::NodeRegistry;
 
     let storage = get_storage()?;
-    let registry = NodeRegistry::new();
+    let registry = build_registry();
     let executor = Executor::new(registry, storage.clone());
 
     // Get original execution info for display
@@ -1026,7 +1023,6 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         create_monitored_routes, create_request_body_limit, ApiAuthConfig, AppState, Monitor,
         MonitoredAppState,
     };
-    use r8r::nodes::NodeRegistry;
     use r8r::shutdown::ShutdownCoordinator;
     use r8r::triggers::{
         create_webhook_routes, DelayedEventProcessor, EventSubscriber, NativeEventBackend,
@@ -1036,7 +1032,7 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     use tower_http::trace::TraceLayer;
 
     let storage = get_storage()?;
-    let registry = Arc::new(NodeRegistry::default());
+    let registry = Arc::new(build_registry());
 
     // Create shutdown coordinator
     let shutdown = Arc::new(ShutdownCoordinator::new());
@@ -1605,6 +1601,47 @@ async fn cmd_templates_use(
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// Build a NodeRegistry, optionally with sandbox backend if feature is enabled.
+fn build_registry() -> r8r::nodes::NodeRegistry {
+    #[allow(unused_mut)]
+    let mut registry = r8r::nodes::NodeRegistry::new();
+
+    #[cfg(feature = "sandbox")]
+    {
+        use r8r::config::Config;
+        use r8r::sandbox::SubprocessBackend;
+        use std::sync::Arc;
+
+        let config = Config::load();
+        let sandbox_backend: Arc<dyn r8r::sandbox::SandboxBackend> = match config.sandbox.backend.as_str() {
+            #[cfg(feature = "sandbox-docker")]
+            "docker" => {
+                match r8r::sandbox::DockerBackend::new(&config.sandbox.docker) {
+                    Ok(db) if db.available() => {
+                        tracing::info!("Using Docker sandbox backend");
+                        Arc::new(db)
+                    }
+                    Ok(_) => {
+                        tracing::warn!("Docker unavailable, falling back to subprocess sandbox");
+                        Arc::new(SubprocessBackend::new())
+                    }
+                    Err(e) => {
+                        tracing::warn!("Docker sandbox init failed: {}. Falling back to subprocess.", e);
+                        Arc::new(SubprocessBackend::new())
+                    }
+                }
+            }
+            _ => {
+                Arc::new(SubprocessBackend::new())
+            }
+        };
+
+        registry.register(Arc::new(r8r::nodes::SandboxNode::new(sandbox_backend)));
+    }
+
+    registry
+}
 
 fn get_storage() -> anyhow::Result<r8r::storage::SqliteStorage> {
     use r8r::storage::SqliteStorage;
