@@ -1617,6 +1617,7 @@ fn build_registry() -> r8r::nodes::NodeRegistry {
         let sandbox_backend: Arc<dyn r8r::sandbox::SandboxBackend> = match config.sandbox.backend.as_str() {
             #[cfg(feature = "sandbox-docker")]
             "docker" => {
+                use r8r::sandbox::SandboxBackend as _;
                 match r8r::sandbox::DockerBackend::new(&config.sandbox.docker) {
                     Ok(db) if db.available() => {
                         tracing::info!("Using Docker sandbox backend");
