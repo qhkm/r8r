@@ -31,6 +31,8 @@ mod transform;
 mod types;
 mod variables;
 mod wait;
+#[cfg(feature = "sandbox")]
+mod sandbox;
 
 pub use agent::AgentNode;
 pub use aggregate::AggregateNode;
@@ -58,3 +60,5 @@ pub use transform::TransformNode;
 pub use types::{Node, NodeContext, NodeResult};
 pub use variables::VariablesNode;
 pub use wait::WaitNode;
+#[cfg(feature = "sandbox")]
+pub use sandbox::SandboxNode;
