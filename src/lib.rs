@@ -53,6 +53,8 @@ pub mod triggers;
 pub mod tui;
 pub mod validation;
 pub mod workflow;
+#[cfg(feature = "sandbox")]
+pub mod sandbox;
 
 pub use error::{Error, Result};
 pub use mcp::R8rMcpServer;

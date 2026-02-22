@@ -14,6 +14,8 @@ readme = "README.md"
 [features]
 default = []
 redis = ["dep:redis"]
+sandbox = ["dep:tempfile"]
+sandbox-docker = ["sandbox", "dep:bollard"]
 
 [[bin]]
 name = "r8r"
@@ -114,6 +116,10 @@ jsonschema = "0.29"
 
 # Caching
 moka = { version = "0.12", features = ["future"] }
+
+# Sandbox
+bollard = { version = "0.18", optional = true }
+tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
