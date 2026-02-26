@@ -158,6 +158,24 @@ impl SqliteStorage {
             );
             CREATE INDEX IF NOT EXISTS idx_checkpoints_execution ON checkpoints(execution_id, created_at DESC);
 
+            CREATE TABLE IF NOT EXISTS approval_requests (
+                id TEXT PRIMARY KEY,
+                execution_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                workflow_name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                decision_comment TEXT,
+                decided_by TEXT,
+                context_data TEXT,
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                decided_at TEXT,
+                FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
+
             CREATE TABLE IF NOT EXISTS delayed_events (
                 id TEXT PRIMARY KEY,
                 event_name TEXT NOT NULL,
@@ -1107,6 +1125,103 @@ impl SqliteStorage {
         Ok(checkpoints)
     }
 
+    /// Save an approval request.
+    pub async fn save_approval_request(&self, request: &ApprovalRequest) -> Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO approval_requests (id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             ON CONFLICT(id) DO UPDATE SET
+                node_id = excluded.node_id,
+                status = excluded.status,
+                decision_comment = excluded.decision_comment,
+                decided_by = excluded.decided_by,
+                decided_at = excluded.decided_at",
+            params![
+                request.id,
+                request.execution_id,
+                request.node_id,
+                request.workflow_name,
+                request.title,
+                request.description,
+                request.status,
+                request.decision_comment,
+                request.decided_by,
+                request
+                    .context_data
+                    .as_ref()
+                    .map(|v| serde_json::to_string(v).unwrap_or_default()),
+                request.created_at.to_rfc3339(),
+                request.expires_at.map(|t| t.to_rfc3339()),
+                request.decided_at.map(|t| t.to_rfc3339()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get one approval request by ID.
+    pub async fn get_approval_request(&self, id: &str) -> Result<Option<ApprovalRequest>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at
+             FROM approval_requests
+             WHERE id = ?1",
+        )?;
+
+        let approval = stmt
+            .query_row([id], Self::row_to_approval_request)
+            .optional()?;
+
+        Ok(approval)
+    }
+
+    /// List approval requests, optionally filtering by status.
+    pub async fn list_approval_requests(
+        &self,
+        status_filter: Option<&str>,
+    ) -> Result<Vec<ApprovalRequest>> {
+        let conn = self.conn.lock().await;
+
+        let approvals = if let Some(status) = status_filter {
+            let mut stmt = conn.prepare(
+                "SELECT id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at
+                 FROM approval_requests
+                 WHERE status = ?1
+                 ORDER BY created_at DESC",
+            )?;
+            let rows = stmt.query_map([status], Self::row_to_approval_request)?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at
+                 FROM approval_requests
+                 ORDER BY created_at DESC",
+            )?;
+            let rows = stmt.query_map([], Self::row_to_approval_request)?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        Ok(approvals)
+    }
+
+    /// List pending approval requests whose expiration has passed.
+    pub async fn list_expired_approvals(&self) -> Result<Vec<ApprovalRequest>> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+        let mut stmt = conn.prepare(
+            "SELECT id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at
+             FROM approval_requests
+             WHERE status = 'pending' AND expires_at IS NOT NULL AND expires_at < ?1
+             ORDER BY expires_at ASC",
+        )?;
+
+        let approvals = stmt
+            .query_map([now], Self::row_to_approval_request)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(approvals)
+    }
+
     fn row_to_workflow_version(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkflowVersion> {
         Ok(WorkflowVersion {
             id: row.get(0)?,
@@ -1145,6 +1260,32 @@ impl SqliteStorage {
             correlation_id: row.get(11)?,
             idempotency_key: row.get(12)?,
             origin: row.get(13)?,
+        })
+    }
+
+    fn row_to_approval_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApprovalRequest> {
+        Ok(ApprovalRequest {
+            id: row.get(0)?,
+            execution_id: row.get(1)?,
+            node_id: row.get(2)?,
+            workflow_name: row.get(3)?,
+            title: row.get(4)?,
+            description: row.get(5)?,
+            status: row.get(6)?,
+            decision_comment: row.get(7)?,
+            decided_by: row.get(8)?,
+            context_data: row
+                .get::<_, Option<String>>(9)?
+                .and_then(|s| serde_json::from_str(&s).ok()),
+            created_at: parse_datetime_utc(&row.get::<_, String>(10)?)?,
+            expires_at: row
+                .get::<_, Option<String>>(11)?
+                .map(|s| parse_datetime_utc(&s))
+                .transpose()?,
+            decided_at: row
+                .get::<_, Option<String>>(12)?
+                .map(|s| parse_datetime_utc(&s))
+                .transpose()?,
         })
     }
 
@@ -1403,6 +1544,87 @@ mod tests {
         let trace = storage.get_execution_trace("exec-123").await.unwrap();
         assert!(trace.is_some());
         assert_eq!(trace.unwrap().execution.id, "exec-123");
+    }
+
+    #[tokio::test]
+    async fn test_approval_request_crud() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let now = Utc::now();
+
+        let workflow = StoredWorkflow {
+            id: "wf-approval".to_string(),
+            name: "approval-workflow".to_string(),
+            definition:
+                "name: approval-workflow\nnodes:\n  - id: gate\n    type: approval\n    config:\n      title: gate"
+                    .to_string(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+        storage.save_workflow(&workflow).await.unwrap();
+
+        let execution = Execution {
+            id: "exec-approval".to_string(),
+            workflow_id: "wf-approval".to_string(),
+            workflow_name: "approval-workflow".to_string(),
+            workflow_version: None,
+            status: ExecutionStatus::Paused,
+            trigger_type: "manual".to_string(),
+            input: serde_json::json!({"amount": 1200}),
+            output: None,
+            started_at: Utc::now(),
+            finished_at: Some(Utc::now()),
+            error: None,
+            correlation_id: None,
+            idempotency_key: None,
+            origin: None,
+        };
+        storage.save_execution(&execution).await.unwrap();
+
+        let request = ApprovalRequest {
+            id: "apr-1".to_string(),
+            execution_id: execution.id.clone(),
+            node_id: "gate".to_string(),
+            workflow_name: workflow.name.clone(),
+            title: "Approve order".to_string(),
+            description: Some("Large order".to_string()),
+            status: "pending".to_string(),
+            decision_comment: None,
+            decided_by: None,
+            context_data: Some(serde_json::json!({"order_id": "A1"})),
+            created_at: Utc::now(),
+            expires_at: None,
+            decided_at: None,
+        };
+
+        storage.save_approval_request(&request).await.unwrap();
+        let loaded = storage
+            .get_approval_request("apr-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.status, "pending");
+        assert_eq!(loaded.node_id, "gate");
+
+        let pending = storage
+            .list_approval_requests(Some("pending"))
+            .await
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+
+        let mut decided = loaded;
+        decided.status = "approved".to_string();
+        decided.decision_comment = Some("ok".to_string());
+        decided.decided_by = Some("agent".to_string());
+        decided.decided_at = Some(Utc::now());
+        storage.save_approval_request(&decided).await.unwrap();
+
+        let approved = storage
+            .list_approval_requests(Some("approved"))
+            .await
+            .unwrap();
+        assert_eq!(approved.len(), 1);
+        assert_eq!(approved[0].decision_comment.as_deref(), Some("ok"));
     }
 
     #[tokio::test]

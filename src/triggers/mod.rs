@@ -6,7 +6,9 @@
 //! - Webhook: HTTP endpoint with optional debouncing and header filtering
 //! - Event: Pub/sub events with fan-out and routing support (native or Redis)
 //! - Delayed: Events scheduled for future processing via SQLite
+//! - Approval timeout: Background checker for expired approval requests
 
+mod approval_timeout;
 mod delayed;
 mod event;
 mod event_backend;
@@ -15,6 +17,7 @@ mod redis_backend;
 mod scheduler;
 mod webhook;
 
+pub use approval_timeout::ApprovalTimeoutChecker;
 pub use delayed::{DelayedEvent, DelayedEventProcessor};
 pub use event::{EventError, EventFanOut, EventMessage, EventSubscriber};
 pub use event_backend::{EventBackend, EventReceiver, NativeEventBackend};
