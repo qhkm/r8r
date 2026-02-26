@@ -92,9 +92,97 @@ pub struct DiscoverParams {
     pub workflow: String,
 }
 
+/// Parameters for testing a workflow
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TestParams {
+    /// Workflow YAML definition (may include pinned_data on nodes for mocking)
+    pub workflow_yaml: String,
+    /// Test input to pass to the workflow (default: {})
+    #[serde(default)]
+    pub input: Option<Value>,
+    /// Expected output — if set, compare against actual output
+    #[serde(default)]
+    pub expected_output: Option<Value>,
+    /// Comparison mode: "exact" (default) or "contains"
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
 // ============================================================================
 // Tool Implementations
 // ============================================================================
+
+/// Compare two JSON values and return a list of human-readable differences.
+/// `mode` is "exact" (full equality) or "contains" (expected is a subset of actual).
+fn json_diff(actual: &Value, expected: &Value, mode: &str) -> Vec<String> {
+    let mut diffs = Vec::new();
+    json_diff_recursive(actual, expected, mode, "", &mut diffs);
+    diffs
+}
+
+fn json_diff_recursive(
+    actual: &Value,
+    expected: &Value,
+    mode: &str,
+    path: &str,
+    diffs: &mut Vec<String>,
+) {
+    match (actual, expected) {
+        (Value::Object(a_map), Value::Object(e_map)) => {
+            for (key, e_val) in e_map {
+                let child_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{}.{}", path, key)
+                };
+                match a_map.get(key) {
+                    Some(a_val) => {
+                        json_diff_recursive(a_val, e_val, mode, &child_path, diffs);
+                    }
+                    None => {
+                        diffs.push(format!("{}: missing in actual output", child_path));
+                    }
+                }
+            }
+            if mode == "exact" {
+                for key in a_map.keys() {
+                    if !e_map.contains_key(key) {
+                        let child_path = if path.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{}.{}", path, key)
+                        };
+                        diffs.push(format!("{}: unexpected key in actual output", child_path));
+                    }
+                }
+            }
+        }
+        (Value::Array(a_arr), Value::Array(e_arr)) => {
+            if a_arr.len() != e_arr.len() {
+                diffs.push(format!(
+                    "{}: array length mismatch: expected {}, got {}",
+                    if path.is_empty() { "root" } else { path },
+                    e_arr.len(),
+                    a_arr.len()
+                ));
+                return;
+            }
+            for (i, (a_val, e_val)) in a_arr.iter().zip(e_arr.iter()).enumerate() {
+                let child_path = format!("{}[{}]", path, i);
+                json_diff_recursive(a_val, e_val, mode, &child_path, diffs);
+            }
+        }
+        _ => {
+            if actual != expected {
+                let display_path = if path.is_empty() { "root" } else { path };
+                diffs.push(format!(
+                    "{}: expected {}, got {}",
+                    display_path, expected, actual
+                ));
+            }
+        }
+    }
+}
 
 #[tool(tool_box)]
 impl R8rService {
@@ -750,6 +838,138 @@ impl R8rService {
             serde_json::to_string_pretty(&result).unwrap_or_default(),
         )]))
     }
+
+    /// Test a workflow with given input and optionally assert expected output.
+    /// Use pinned_data on nodes to mock external calls (HTTP, agent, etc.).
+    /// Runs in full isolation — no side effects to the real database.
+    #[tool(
+        description = "Test a workflow with input and optional expected output assertion. Use pinned_data on nodes to mock external calls. Fully isolated execution."
+    )]
+    pub async fn r8r_test(
+        &self,
+        #[tool(aggr)] params: TestParams,
+    ) -> Result<CallToolResult, McpError> {
+        // Parse the workflow
+        let workflow = match parse_workflow(&params.workflow_yaml) {
+            Ok(w) => w,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to parse workflow YAML: {}",
+                    e
+                ))]));
+            }
+        };
+
+        // Create isolated test executor
+        let test_storage = match SqliteStorage::open_in_memory() {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to create test storage: {}",
+                    e
+                ))]));
+            }
+        };
+        let test_registry = crate::nodes::NodeRegistry::new();
+        let test_executor = Executor::new(test_registry, test_storage.clone());
+
+        // Save workflow to test storage
+        let workflow_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now();
+        let stored = crate::storage::StoredWorkflow {
+            id: workflow_id.clone(),
+            name: workflow.name.clone(),
+            definition: params.workflow_yaml.clone(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+        if let Err(e) = test_storage.save_workflow(&stored).await {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to save test workflow: {}",
+                e
+            ))]));
+        }
+
+        // Execute
+        let input = params.input.unwrap_or(json!({}));
+        let start = std::time::Instant::now();
+        let execution = match test_executor
+            .execute(&workflow, &workflow_id, "test", input)
+            .await
+        {
+            Ok(exec) => exec,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Workflow execution failed: {}",
+                    e
+                ))]));
+            }
+        };
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        // Gather nodes_executed
+        let node_execs = test_storage
+            .get_node_executions(&execution.id)
+            .await
+            .unwrap_or_default();
+        let nodes_executed: Vec<String> = node_execs.iter().map(|ne| ne.node_id.clone()).collect();
+
+        // Check execution status
+        if execution.status == crate::storage::ExecutionStatus::Failed {
+            let mut node_errors = serde_json::Map::new();
+            for ne in &node_execs {
+                if let Some(ref err) = ne.error {
+                    node_errors.insert(ne.node_id.clone(), json!(err));
+                }
+            }
+            let result = json!({
+                "status": "failed",
+                "error": execution.error,
+                "nodes_executed": nodes_executed,
+                "node_errors": node_errors,
+            });
+            return Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&result).unwrap_or_default(),
+            )]));
+        }
+
+        let actual_output = execution.output.clone().unwrap_or(json!(null));
+
+        // If no expected_output, return dry-run result
+        let Some(expected) = params.expected_output else {
+            let result = json!({
+                "status": "completed",
+                "output": actual_output,
+                "duration_ms": duration_ms,
+                "nodes_executed": nodes_executed,
+            });
+            return Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&result).unwrap_or_default(),
+            )]));
+        };
+
+        // Compare output
+        let mode = params.mode.as_deref().unwrap_or("exact");
+        let diffs = json_diff(&actual_output, &expected, mode);
+        let pass = diffs.is_empty();
+
+        let mut result = json!({
+            "pass": pass,
+            "output": actual_output,
+            "duration_ms": duration_ms,
+            "nodes_executed": nodes_executed,
+        });
+
+        if !pass {
+            result["expected"] = json!(expected);
+            result["diff"] = json!(diffs);
+        }
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result).unwrap_or_default(),
+        )]))
+    }
 }
 
 #[tool(tool_box)]
@@ -980,5 +1200,90 @@ nodes:
             warnings.len(),
             warnings
         );
+    }
+
+    #[test]
+    fn test_json_diff_exact_match() {
+        let actual = json!({"greeting": "Hello Alice!", "source": "webhook"});
+        let expected = json!({"greeting": "Hello Alice!", "source": "webhook"});
+        let diffs = json_diff(&actual, &expected, "exact");
+        assert!(diffs.is_empty(), "Expected no diffs, got: {:?}", diffs);
+    }
+
+    #[test]
+    fn test_json_diff_exact_mismatch() {
+        let actual = json!({"greeting": "Hello Bob!"});
+        let expected = json!({"greeting": "Hello Alice!"});
+        let diffs = json_diff(&actual, &expected, "exact");
+        assert_eq!(diffs.len(), 1);
+        assert!(diffs[0].contains("greeting"));
+        assert!(diffs[0].contains("Hello Alice!"));
+        assert!(diffs[0].contains("Hello Bob!"));
+    }
+
+    #[test]
+    fn test_json_diff_exact_extra_keys() {
+        let actual = json!({"greeting": "Hello", "extra": true});
+        let expected = json!({"greeting": "Hello"});
+        let diffs = json_diff(&actual, &expected, "exact");
+        assert!(!diffs.is_empty(), "Exact mode should flag extra keys");
+    }
+
+    #[test]
+    fn test_json_diff_contains_subset() {
+        let actual = json!({"greeting": "Hello", "source": "webhook", "ts": 123});
+        let expected = json!({"greeting": "Hello"});
+        let diffs = json_diff(&actual, &expected, "contains");
+        assert!(
+            diffs.is_empty(),
+            "Contains mode should allow extra keys, got: {:?}",
+            diffs
+        );
+    }
+
+    #[test]
+    fn test_json_diff_contains_missing_key() {
+        let actual = json!({"greeting": "Hello"});
+        let expected = json!({"greeting": "Hello", "missing": true});
+        let diffs = json_diff(&actual, &expected, "contains");
+        assert_eq!(diffs.len(), 1);
+        assert!(diffs[0].contains("missing"));
+    }
+
+    #[test]
+    fn test_json_diff_nested_objects() {
+        let actual = json!({"data": {"name": "Alice", "age": 30}});
+        let expected = json!({"data": {"name": "Bob", "age": 30}});
+        let diffs = json_diff(&actual, &expected, "exact");
+        assert_eq!(diffs.len(), 1);
+        assert!(diffs[0].contains("data.name"));
+    }
+
+    #[test]
+    fn test_json_diff_array_mismatch() {
+        let actual = json!({"items": [1, 2, 3]});
+        let expected = json!({"items": [1, 2, 4]});
+        let diffs = json_diff(&actual, &expected, "exact");
+        assert_eq!(diffs.len(), 1);
+        assert!(diffs[0].contains("items[2]"));
+    }
+
+    #[tokio::test]
+    async fn test_r8r_test_dry_run() {
+        let service = test_service();
+        let params = TestParams {
+            workflow_yaml: simple_workflow_yaml().to_string(),
+            input: Some(json!({"message": "hello"})),
+            expected_output: None,
+            mode: None,
+        };
+        let result = service.r8r_test(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["status"], "completed");
+        assert!(data["output"].is_object());
+        assert!(data["nodes_executed"].is_array());
+        assert!(data["duration_ms"].is_number());
     }
 }
