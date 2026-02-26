@@ -1161,7 +1161,7 @@ nodes:
         let text = extract_text(&result);
         let data: Value = serde_json::from_str(text).unwrap();
         assert_eq!(data["valid"], false);
-        assert!(data["issues"].as_array().unwrap().len() > 0);
+        assert!(!data["issues"].as_array().unwrap().is_empty());
         assert_eq!(data["issues"][0]["level"], "error");
         assert_eq!(data["issues"][0]["type"], "parse");
     }
@@ -1326,7 +1326,7 @@ nodes:
         let data: Value = serde_json::from_str(text).unwrap();
         assert_eq!(data["pass"], false);
         assert!(data["diff"].is_array());
-        assert!(data["diff"].as_array().unwrap().len() > 0);
+        assert!(!data["diff"].as_array().unwrap().is_empty());
         assert!(data["expected"].is_object());
     }
 
