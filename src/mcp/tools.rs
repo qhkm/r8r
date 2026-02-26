@@ -682,8 +682,7 @@ impl R8rService {
                             json!("Use 'depends_on' (snake_case) for node dependencies");
                     }
                     if error_str.contains("nodeType") {
-                        issue["suggestion"] =
-                            json!("Use 'type' for node type, not 'nodeType'");
+                        issue["suggestion"] = json!("Use 'type' for node type, not 'nodeType'");
                     }
                 }
 
