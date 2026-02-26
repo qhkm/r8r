@@ -856,6 +856,20 @@ The `output` field contains parsed JSON if stdout is valid JSON, otherwise `null
 |---------|-------------|-----------|-----------|
 | Subprocess | `sandbox` | None (process only) | macOS, Linux |
 | Docker | `sandbox-docker` | Container (memory, network, fs) | macOS, Linux |
+| `firecracker` | `sandbox-firecracker` | Hardware-level VM isolation via KVM. Strongest isolation. Linux only. |
+
+### Firecracker Configuration (r8r.toml)
+
+```toml
+[sandbox.firecracker]
+firecracker_bin = "firecracker"       # path to binary
+kernel_path = "/opt/r8r/vmlinux"      # uncompressed kernel
+rootfs_path = "/opt/r8r/rootfs.ext4"  # Alpine rootfs with runtimes
+vcpu_count = 1
+memory_mb = 256
+```
+
+**Requirements:** Linux with KVM (`/dev/kvm`), Firecracker binary, vmlinux kernel, rootfs image with guest agent.
 
 **Security Notes**:
 - Network is disabled by default; set `network: true` explicitly to allow
