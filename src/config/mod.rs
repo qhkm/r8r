@@ -112,6 +112,11 @@ pub struct SandboxConfig {
     /// Security constraints
     #[serde(default)]
     pub security: SandboxSecurityConfig,
+
+    /// Firecracker-specific settings
+    #[cfg(feature = "sandbox-firecracker")]
+    #[serde(default)]
+    pub firecracker: SandboxFirecrackerConfig,
 }
 
 #[cfg(feature = "sandbox")]
@@ -121,6 +126,8 @@ impl Default for SandboxConfig {
             backend: default_sandbox_backend(),
             docker: SandboxDockerConfig::default(),
             security: SandboxSecurityConfig::default(),
+            #[cfg(feature = "sandbox-firecracker")]
+            firecracker: SandboxFirecrackerConfig::default(),
         }
     }
 }
@@ -152,6 +159,63 @@ impl Default for SandboxDockerConfig {
         }
     }
 }
+
+/// Firecracker microVM sandbox configuration.
+#[cfg(feature = "sandbox-firecracker")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxFirecrackerConfig {
+    /// Path to the firecracker binary
+    #[serde(default = "default_firecracker_bin")]
+    pub firecracker_bin: String,
+    /// Path to the vmlinux kernel image
+    #[serde(default = "default_kernel_path")]
+    pub kernel_path: String,
+    /// Path to the rootfs ext4 image (must contain python3/node/bash and guest agent)
+    #[serde(default = "default_rootfs_path")]
+    pub rootfs_path: String,
+    /// Default vCPU count per microVM
+    #[serde(default = "default_vcpu_count")]
+    pub vcpu_count: u32,
+    /// Default memory in MiB per microVM
+    #[serde(default = "default_fc_memory_mb")]
+    pub memory_mb: u64,
+    /// vsock guest CID
+    #[serde(default = "default_vsock_cid")]
+    pub vsock_guest_cid: u32,
+    /// Guest agent port on vsock
+    #[serde(default = "default_agent_port")]
+    pub agent_port: u32,
+}
+
+#[cfg(feature = "sandbox-firecracker")]
+impl Default for SandboxFirecrackerConfig {
+    fn default() -> Self {
+        Self {
+            firecracker_bin: default_firecracker_bin(),
+            kernel_path: default_kernel_path(),
+            rootfs_path: default_rootfs_path(),
+            vcpu_count: default_vcpu_count(),
+            memory_mb: default_fc_memory_mb(),
+            vsock_guest_cid: default_vsock_cid(),
+            agent_port: default_agent_port(),
+        }
+    }
+}
+
+#[cfg(feature = "sandbox-firecracker")]
+fn default_firecracker_bin() -> String { "firecracker".to_string() }
+#[cfg(feature = "sandbox-firecracker")]
+fn default_kernel_path() -> String { "/opt/r8r/vmlinux".to_string() }
+#[cfg(feature = "sandbox-firecracker")]
+fn default_rootfs_path() -> String { "/opt/r8r/rootfs.ext4".to_string() }
+#[cfg(feature = "sandbox-firecracker")]
+fn default_vcpu_count() -> u32 { 1 }
+#[cfg(feature = "sandbox-firecracker")]
+fn default_fc_memory_mb() -> u64 { 256 }
+#[cfg(feature = "sandbox-firecracker")]
+fn default_vsock_cid() -> u32 { 3 }
+#[cfg(feature = "sandbox-firecracker")]
+fn default_agent_port() -> u32 { 52 }
 
 #[cfg(feature = "sandbox")]
 fn default_python_image() -> String {
