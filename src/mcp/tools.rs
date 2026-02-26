@@ -85,6 +85,13 @@ pub struct RunAndWaitParams {
     pub input: Option<Value>,
 }
 
+/// Parameters for discovering workflow details
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DiscoverParams {
+    /// Name of the workflow to discover
+    pub workflow: String,
+}
+
 // ============================================================================
 // Tool Implementations
 // ============================================================================
@@ -562,6 +569,89 @@ impl R8rService {
             ))])),
         }
     }
+
+    /// Discover a workflow's parameters, nodes, and triggers.
+    /// Use this before r8r_run_and_wait to understand what input a workflow expects.
+    #[tool(
+        description = "Discover a workflow's parameters, nodes, and triggers. Returns input schema, parameter definitions, node list, and trigger configuration. Use before r8r_run_and_wait to understand what input a workflow expects."
+    )]
+    pub async fn r8r_discover(
+        &self,
+        #[tool(aggr)] params: DiscoverParams,
+    ) -> Result<CallToolResult, McpError> {
+        let stored = match self.storage.get_workflow(&params.workflow).await {
+            Ok(Some(wf)) => wf,
+            Ok(None) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Workflow not found: {}",
+                    params.workflow
+                ))]));
+            }
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Storage error: {}",
+                    e
+                ))]));
+            }
+        };
+
+        let workflow = match parse_workflow(&stored.definition) {
+            Ok(wf) => wf,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid workflow definition: {}",
+                    e
+                ))]));
+            }
+        };
+
+        // Build parameter info
+        let parameters: Value = workflow
+            .inputs
+            .iter()
+            .map(|(name, def)| {
+                (
+                    name.clone(),
+                    json!({
+                        "type": def.input_type,
+                        "description": def.description,
+                        "required": def.required,
+                        "default": def.default,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<String, Value>>()
+            .into();
+
+        // Build node summary
+        let nodes: Vec<Value> = workflow
+            .nodes
+            .iter()
+            .map(|n| {
+                json!({
+                    "id": n.id,
+                    "type": n.node_type,
+                    "depends_on": n.depends_on,
+                })
+            })
+            .collect();
+
+        let result = json!({
+            "name": workflow.name,
+            "description": workflow.description,
+            "version": workflow.version,
+            "parameters": parameters,
+            "input_schema": workflow.input_schema,
+            "nodes": nodes,
+            "nodes_count": nodes.len(),
+            "triggers": workflow.triggers,
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result).unwrap_or_default(),
+        )]))
+    }
+
 }
 
 #[tool(tool_box)]
