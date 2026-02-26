@@ -769,3 +769,216 @@ impl ServerHandler for R8rService {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::Executor;
+    use crate::nodes::NodeRegistry;
+    use crate::storage::{SqliteStorage, StoredWorkflow};
+    use std::sync::Arc;
+
+    fn test_service() -> R8rService {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Arc::new(Executor::new(registry, storage.clone()));
+        R8rService { storage, executor }
+    }
+
+    async fn save_test_workflow(service: &R8rService, name: &str, yaml: &str) {
+        let now = chrono::Utc::now();
+        let stored = StoredWorkflow {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            definition: yaml.to_string(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+        service.storage.save_workflow(&stored).await.unwrap();
+    }
+
+    fn simple_workflow_yaml() -> &'static str {
+        r#"
+name: test-simple
+description: A simple test workflow
+version: 1
+inputs:
+  message:
+    type: string
+    description: The message to echo
+    required: true
+    default: "hello"
+nodes:
+  - id: echo
+    type: set
+    config:
+      fields:
+        - name: result
+          value: "{{ input.message }}"
+"#
+    }
+
+    /// Helper to extract text from the first content item of a CallToolResult.
+    fn extract_text(result: &CallToolResult) -> &str {
+        match &result.content[0].raw {
+            RawContent::Text(t) => &t.text,
+            _ => panic!("Expected text content"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_r8r_execute_workflow_not_found() {
+        let service = test_service();
+        let params = ExecuteParams {
+            workflow: "nonexistent".to_string(),
+            input: None,
+        };
+        let result = service.r8r_execute(params).await.unwrap();
+        assert!(result.is_error.unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn test_r8r_execute_success() {
+        let service = test_service();
+        save_test_workflow(&service, "test-simple", simple_workflow_yaml()).await;
+        let params = ExecuteParams {
+            workflow: "test-simple".to_string(),
+            input: Some(json!({"message": "world"})),
+        };
+        let result = service.r8r_execute(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert!(data["execution_id"].is_string());
+        assert_eq!(data["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn test_r8r_run_and_wait_returns_only_output() {
+        let service = test_service();
+        save_test_workflow(&service, "test-simple", simple_workflow_yaml()).await;
+        let params = RunAndWaitParams {
+            workflow: "test-simple".to_string(),
+            input: Some(json!({"message": "test"})),
+        };
+        let result = service.r8r_run_and_wait(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        // Should NOT have execution_id, status, duration_ms — only the output
+        assert!(data.get("execution_id").is_none());
+        assert!(data.get("status").is_none());
+        // Should have the actual result
+        assert_eq!(data["result"], "test");
+    }
+
+    #[tokio::test]
+    async fn test_r8r_run_and_wait_not_found() {
+        let service = test_service();
+        let params = RunAndWaitParams {
+            workflow: "missing".to_string(),
+            input: None,
+        };
+        let result = service.r8r_run_and_wait(params).await.unwrap();
+        assert!(result.is_error.unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn test_r8r_discover_returns_parameters() {
+        let service = test_service();
+        save_test_workflow(&service, "test-simple", simple_workflow_yaml()).await;
+        let params = DiscoverParams {
+            workflow: "test-simple".to_string(),
+        };
+        let result = service.r8r_discover(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["name"], "test-simple");
+        assert_eq!(data["description"], "A simple test workflow");
+        assert_eq!(data["version"], 1);
+        assert_eq!(data["nodes_count"], 1);
+        // Check parameters
+        assert!(data["parameters"]["message"].is_object());
+        assert_eq!(data["parameters"]["message"]["type"], "string");
+        assert_eq!(data["parameters"]["message"]["required"], true);
+    }
+
+    #[tokio::test]
+    async fn test_r8r_discover_not_found() {
+        let service = test_service();
+        let params = DiscoverParams {
+            workflow: "nope".to_string(),
+        };
+        let result = service.r8r_discover(params).await.unwrap();
+        assert!(result.is_error.unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn test_r8r_lint_valid_workflow() {
+        let service = test_service();
+        let params = ValidateParams {
+            yaml: simple_workflow_yaml().to_string(),
+        };
+        let result = service.r8r_lint(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["valid"], true);
+        assert_eq!(data["name"], "test-simple");
+    }
+
+    #[tokio::test]
+    async fn test_r8r_lint_invalid_yaml() {
+        let service = test_service();
+        let params = ValidateParams {
+            yaml: "not: valid: yaml: [".to_string(),
+        };
+        let result = service.r8r_lint(params).await.unwrap();
+        // Lint results are NOT tool errors (is_error should be false)
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["valid"], false);
+        assert!(data["issues"].as_array().unwrap().len() > 0);
+        assert_eq!(data["issues"][0]["level"], "error");
+        assert_eq!(data["issues"][0]["type"], "parse");
+    }
+
+    #[tokio::test]
+    async fn test_r8r_lint_warnings_no_description_no_triggers() {
+        let service = test_service();
+        let yaml = r#"
+name: bare-workflow
+nodes:
+  - id: step1
+    type: set
+    config:
+      fields:
+        ok: true
+  - id: step2
+    type: set
+    config:
+      fields:
+        done: true
+"#;
+        let params = ValidateParams {
+            yaml: yaml.to_string(),
+        };
+        let result = service.r8r_lint(params).await.unwrap();
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        // Should be valid (warnings don't make it invalid)
+        assert_eq!(data["valid"], true);
+        let issues = data["issues"].as_array().unwrap();
+        // Should have warnings: no description, no triggers, no depends_on
+        let warnings: Vec<_> = issues.iter().filter(|i| i["level"] == "warning").collect();
+        assert!(
+            warnings.len() >= 2,
+            "Expected at least 2 warnings, got {}: {:?}",
+            warnings.len(),
+            warnings
+        );
+    }
+}
