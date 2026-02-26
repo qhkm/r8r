@@ -796,7 +796,7 @@ Execute code in a sandboxed environment (Python, Node, Bash).
 
 **Type**: `sandbox`
 
-**Requires**: `--features sandbox` (subprocess) or `--features sandbox-docker` (Docker)
+**Requires**: `--features sandbox` (subprocess), `--features sandbox-docker` (Docker), or `--features sandbox-firecracker` (Firecracker microVM)
 
 **Configuration**:
 

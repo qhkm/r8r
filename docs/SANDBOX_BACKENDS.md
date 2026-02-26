@@ -10,6 +10,50 @@ r8r's sandbox module uses a pluggable backend architecture. Operators choose the
 | Docker | `sandbox-docker` | Container-level | macOS, Linux | Stable |
 | Firecracker | `sandbox-firecracker` | Hardware VM (KVM) | Linux only | Stable |
 
+## Example Workflow
+
+The workflow YAML is the same regardless of backend — the backend is an infrastructure choice configured in `r8r.toml` or via `R8R_SANDBOX_BACKEND` env var.
+
+```yaml
+name: sandbox-python-example
+nodes:
+  - id: compute
+    type: sandbox
+    config:
+      runtime: python3
+      timeout_seconds: 10
+      code: |
+        import json
+        numbers = [1, 2, 3, 4, 5]
+        result = {
+            "sum": sum(numbers),
+            "count": len(numbers),
+            "average": sum(numbers) / len(numbers)
+        }
+        print(json.dumps(result))
+
+  - id: show-result
+    type: debug
+    config:
+      message: "Result: {{ nodes.compute.output.output }}"
+    depends_on: [compute]
+```
+
+Output (stdout parsed as JSON automatically):
+
+```json
+{
+  "output": {
+    "sum": 15,
+    "count": 5,
+    "average": 3.0
+  },
+  "exit_code": 0,
+  "stdout": "{\"sum\": 15, \"count\": 5, \"average\": 3.0}\n",
+  "stderr": ""
+}
+```
+
 ## Subprocess
 
 Default backend. Spawns a child process with `kill_on_drop`. No real isolation — the process inherits the host's network, filesystem, and permissions. Use for local development only.
