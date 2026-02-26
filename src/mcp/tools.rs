@@ -652,6 +652,105 @@ impl R8rService {
         )]))
     }
 
+    /// Lint a workflow YAML definition with detailed error messages.
+    /// Returns a list of issues found, or confirms the workflow is valid.
+    /// Use this to check YAML before submitting with r8r_create_workflow.
+    #[tool(
+        description = "Lint a workflow YAML definition. Returns detailed validation errors with suggestions, or confirms the workflow is valid. Use before r8r_create_workflow to catch issues early."
+    )]
+    pub async fn r8r_lint(
+        &self,
+        #[tool(aggr)] params: ValidateParams,
+    ) -> Result<CallToolResult, McpError> {
+        let mut issues: Vec<Value> = Vec::new();
+
+        // Step 1: Parse YAML
+        let workflow = match parse_workflow(&params.yaml) {
+            Ok(wf) => wf,
+            Err(e) => {
+                let error_str = e.to_string();
+                let mut issue = json!({
+                    "level": "error",
+                    "type": "parse",
+                    "message": error_str,
+                });
+
+                // Add suggestions for common mistakes
+                if error_str.contains("unknown field") {
+                    if error_str.contains("dependsOn") {
+                        issue["suggestion"] =
+                            json!("Use 'depends_on' (snake_case) for node dependencies");
+                    }
+                    if error_str.contains("nodeType") {
+                        issue["suggestion"] =
+                            json!("Use 'type' for node type, not 'nodeType'");
+                    }
+                }
+
+                issues.push(issue);
+
+                let result = json!({
+                    "valid": false,
+                    "issues": issues,
+                    "issues_count": issues.len(),
+                });
+
+                return Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).unwrap_or_default(),
+                )]));
+            }
+        };
+
+        // Step 2: Validate structure
+        if let Err(e) = validate_workflow(&workflow) {
+            issues.push(json!({
+                "level": "error",
+                "type": "validation",
+                "message": e.to_string(),
+            }));
+        }
+
+        // Step 3: Lint warnings (non-blocking)
+        if workflow.description.is_empty() {
+            issues.push(json!({
+                "level": "warning",
+                "type": "lint",
+                "message": "Workflow has no description. Add a 'description' field for better discoverability.",
+            }));
+        }
+
+        if workflow.triggers.is_empty() {
+            issues.push(json!({
+                "level": "warning",
+                "type": "lint",
+                "message": "Workflow has no triggers. It can only be executed via API or MCP.",
+            }));
+        }
+
+        // Check for nodes with no depends_on (potential ordering issues)
+        let has_deps = workflow.nodes.iter().any(|n| !n.depends_on.is_empty());
+        if workflow.nodes.len() > 1 && !has_deps {
+            issues.push(json!({
+                "level": "warning",
+                "type": "lint",
+                "message": "Multiple nodes but none have 'depends_on'. Nodes will execute in definition order. Add explicit dependencies for clarity.",
+            }));
+        }
+
+        let has_errors = issues.iter().any(|i| i["level"] == "error");
+
+        let result = json!({
+            "valid": !has_errors,
+            "issues": issues,
+            "issues_count": issues.len(),
+            "name": workflow.name,
+            "nodes_count": workflow.nodes.len(),
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result).unwrap_or_default(),
+        )]))
+    }
 }
 
 #[tool(tool_box)]
