@@ -1,0 +1,76 @@
+# Error Handling - Tests retry, timeout, fallback, and continue-on-error
+name: error-handling
+description: Exercises error recovery patterns
+version: 1
+
+settings:
+  timeout_seconds: 60
+
+triggers:
+  - type: manual
+
+nodes:
+  # Normal start node
+  - id: start
+    type: transform
+    config:
+      expression: '"workflow started"'
+
+  # on_error continue: failing node, workflow proceeds with null
+  - id: fail-continue
+    type: http
+    config:
+      url: https://httpbin.org/status/500
+      method: GET
+      timeout_seconds: 5
+    on_error:
+      continue: true
+    depends_on: [start]
+
+  # on_error fallback: failing node replaced with fallback value
+  - id: fail-fallback
+    type: http
+    config:
+      url: https://httpbin.org/status/503
+      method: GET
+      timeout_seconds: 5
+    on_error:
+      action: fallback
+      fallback_value:
+        status: "fallback"
+        message: "used fallback due to service error"
+    depends_on: [start]
+
+  # Retry with exponential backoff (will fail all 3 attempts on 500)
+  - id: retry-node
+    type: http
+    config:
+      url: https://httpbin.org/status/500
+      method: GET
+      timeout_seconds: 5
+    retry:
+      max_attempts: 3
+      delay_seconds: 1
+      backoff: exponential
+    on_error:
+      action: fallback
+      fallback_value:
+        status: "retries-exhausted"
+    depends_on: [start]
+
+  # Merge results from error-handled branches
+  - id: merge-results
+    type: transform
+    config:
+      expression: |
+        let continued = nodes.get("fail-continue");
+        let fallback = nodes.get("fail-fallback");
+        let retried = nodes.get("retry-node");
+        `continue=${continued}, fallback=${fallback}, retried=${retried}`
+    depends_on: [fail-continue, fail-fallback, retry-node]
+
+  - id: final
+    type: transform
+    config:
+      expression: '"error-handling workflow complete"'
+    depends_on: [merge-results]

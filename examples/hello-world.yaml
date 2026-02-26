@@ -12,17 +12,18 @@ nodes:
     config:
       expression: '"Hello, r8r!"'
 
-  - id: fetch-quote
+  - id: fetch-data
     type: http
     config:
-      url: https://api.quotable.io/random
+      url: https://httpbin.org/get
       method: GET
+      timeout_seconds: 10
     depends_on: [greet]
 
   - id: format-output
     type: transform
     config:
       expression: |
-        let result = `Greeting: ${input}\nQuote fetched successfully`;
+        let result = `Greeting: ${input}\nData fetched successfully`;
         result
-    depends_on: [fetch-quote]
+    depends_on: [fetch-data]
