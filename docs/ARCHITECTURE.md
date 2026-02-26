@@ -231,6 +231,7 @@ CREATE TABLE node_executions (
 | `wait` | Delay execution |
 | `set` | Set variables |
 | **`agent`** | **Call ZeptoClaw for AI-powered decisions** |
+| **`sandbox`** | **Execute Python/Node/Bash code in isolated environments** |
 
 ### Agent Node (ZeptoClaw Integration)
 
@@ -653,8 +654,13 @@ r8r/
 │   │   ├── registry.rs
 │   │   ├── http.rs
 │   │   ├── transform.rs
+│   │   ├── sandbox.rs       # Sandbox node (feature: sandbox)
 │   │   ├── whatsapp.rs
 │   │   └── gsheets.rs
+│   ├── sandbox/             # Code execution sandbox
+│   │   ├── mod.rs           # SandboxBackend trait, types, errors
+│   │   ├── subprocess.rs    # SubprocessBackend (feature: sandbox)
+│   │   └── docker.rs        # DockerBackend (feature: sandbox-docker)
 │   ├── triggers/            # Trigger implementations
 │   │   ├── mod.rs
 │   │   ├── cron.rs
