@@ -143,10 +143,10 @@ impl R8rService {
                     serde_json::to_string_pretty(&result).unwrap_or_default(),
                 )]))
             }
-            Err(e) => Err(McpError::internal_error(
-                "execution_error",
-                Some(json!({"error": e.to_string()})),
-            )),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Workflow execution failed: {}",
+                e
+            ))])),
         }
     }
 
