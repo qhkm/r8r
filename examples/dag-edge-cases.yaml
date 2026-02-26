@@ -1,0 +1,91 @@
+# DAG Edge Cases - Tests complex dependency patterns
+name: dag-edge-cases
+description: Exercises diamond, fan-out/fan-in, conditional skip, and disconnected nodes
+version: 1
+
+triggers:
+  - type: manual
+
+nodes:
+  # === Diamond Dependency: A -> B, A -> C, B+C -> D ===
+  - id: diamond-root
+    type: transform
+    config:
+      expression: '"diamond-start"'
+
+  - id: diamond-left
+    type: transform
+    config:
+      expression: '`left: ${input}`'
+    depends_on: [diamond-root]
+
+  - id: diamond-right
+    type: transform
+    config:
+      expression: '`right: ${input}`'
+    depends_on: [diamond-root]
+
+  - id: diamond-join
+    type: transform
+    config:
+      expression: |
+        let left = nodes.get("diamond-left");
+        let right = nodes.get("diamond-right");
+        `joined: ${left} + ${right}`
+    depends_on: [diamond-left, diamond-right]
+
+  # === Fan-out: one node feeds 3 parallel branches ===
+  - id: fan-source
+    type: transform
+    config:
+      expression: '"fan-data"'
+    depends_on: [diamond-join]
+
+  - id: fan-branch-1
+    type: transform
+    config:
+      expression: '`branch1: ${input}`'
+    depends_on: [fan-source]
+
+  - id: fan-branch-2
+    type: transform
+    config:
+      expression: '`branch2: ${input}`'
+    depends_on: [fan-source]
+
+  - id: fan-branch-3
+    type: transform
+    config:
+      expression: '`branch3: ${input}`'
+    depends_on: [fan-source]
+
+  # === Fan-in: all branches merge ===
+  - id: fan-merge
+    type: transform
+    config:
+      expression: |
+        let b1 = nodes.get("fan-branch-1");
+        let b2 = nodes.get("fan-branch-2");
+        let b3 = nodes.get("fan-branch-3");
+        `merged: ${b1} | ${b2} | ${b3}`
+    depends_on: [fan-branch-1, fan-branch-2, fan-branch-3]
+
+  # === Conditional skip: node skipped when condition is false ===
+  - id: always-runs
+    type: transform
+    config:
+      expression: '"always"'
+    depends_on: [fan-merge]
+
+  - id: skipped-node
+    type: transform
+    condition: "false"
+    config:
+      expression: '"this should be skipped"'
+    depends_on: [always-runs]
+
+  - id: final-output
+    type: transform
+    config:
+      expression: '"dag-edge-cases complete"'
+    depends_on: [always-runs]
