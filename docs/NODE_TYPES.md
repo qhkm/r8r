@@ -33,6 +33,8 @@ This document describes all built-in node types available in r8r.
   - [Debug](#debug)
   - [DateTime](#datetime)
   - [Crypto](#crypto)
+- [Triggers](#triggers)
+  - [Webhook](#webhook)
 
 ---
 
@@ -970,6 +972,61 @@ nodes:
 **Algorithms**:
 - Hash: `md5`, `sha256`, `sha512`, `blake3`
 - HMAC: `hmac-sha256`
+
+---
+
+## Triggers
+
+### Webhook
+
+Receive HTTP requests to trigger workflow execution.
+
+**Type**: `webhook`
+
+**Configuration**:
+
+```yaml
+triggers:
+  - type: webhook
+    config:
+      path: /api/incoming
+      method: POST
+      debounce:
+        key: "{{ body.user_id }}"
+        wait_seconds: 5
+      header_filter:
+        - header: X-Event-Type
+          value: "order.created"
+      response_mode: full  # or "output"
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `path` | string | No | Workflow name | URL path for the webhook endpoint |
+| `method` | string | No | POST | HTTP method to accept |
+| `debounce` | object | No | - | Debounce configuration (coalesce rapid calls) |
+| `header_filter` | array | No | - | Filter requests by header values |
+| `response_mode` | string | No | full | Response format: `full` or `output` |
+
+#### Response Mode
+
+Control what the webhook HTTP response contains:
+
+```yaml
+triggers:
+  - type: webhook
+    config:
+      path: /api/summarize
+      method: POST
+      response_mode: output  # return workflow output as response body
+```
+
+| Mode | Status Code | Response Body |
+|------|-------------|---------------|
+| `full` (default) | 200 | `{"execution_id": "...", "status": "...", "output": {...}, "duration_ms": ...}` |
+| `output` | 200 | Raw workflow output (last node's output) |
+
+**Note:** `response_mode: output` is incompatible with `debounce`. If both are set, `response_mode` falls back to `full` with a warning.
 
 ---
 
