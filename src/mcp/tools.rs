@@ -75,6 +75,16 @@ pub struct CreateWorkflowParams {
     pub yaml: String,
 }
 
+/// Parameters for running a workflow and waiting for the result
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RunAndWaitParams {
+    /// Name of the workflow to execute
+    pub workflow: String,
+    /// Input data for the workflow (JSON object)
+    #[serde(default)]
+    pub input: Option<Value>,
+}
+
 // ============================================================================
 // Tool Implementations
 // ============================================================================
@@ -101,10 +111,10 @@ impl R8rService {
                 ))]));
             }
             Err(e) => {
-                return Err(McpError::internal_error(
-                    "storage_error",
-                    Some(json!({"error": e.to_string()})),
-                ));
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Storage error: {}",
+                    e
+                ))]));
             }
         };
 
@@ -112,10 +122,10 @@ impl R8rService {
         let workflow = match parse_workflow(&stored.definition) {
             Ok(wf) => wf,
             Err(e) => {
-                return Err(McpError::internal_error(
-                    "parse_error",
-                    Some(json!({"error": e.to_string()})),
-                ));
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid workflow definition: {}",
+                    e
+                ))]));
             }
         };
 
@@ -491,6 +501,65 @@ impl R8rService {
                 "storage_error",
                 Some(json!({"error": e.to_string()})),
             )),
+        }
+    }
+
+    /// Execute a workflow and return just the output. Blocks until completion.
+    /// Unlike r8r_execute, this returns only the workflow output (not execution metadata).
+    /// Use this when you need the result of a workflow directly.
+    #[tool(
+        description = "Execute a workflow synchronously and return the output. Returns just the workflow result, not execution metadata. Use r8r_execute if you need execution_id and status."
+    )]
+    pub async fn r8r_run_and_wait(
+        &self,
+        #[tool(aggr)] params: RunAndWaitParams,
+    ) -> Result<CallToolResult, McpError> {
+        let input = params.input.unwrap_or(Value::Null);
+
+        // Get workflow from storage
+        let stored = match self.storage.get_workflow(&params.workflow).await {
+            Ok(Some(wf)) => wf,
+            Ok(None) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Workflow not found: {}",
+                    params.workflow
+                ))]));
+            }
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Storage error: {}",
+                    e
+                ))]));
+            }
+        };
+
+        // Parse workflow
+        let workflow = match parse_workflow(&stored.definition) {
+            Ok(wf) => wf,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid workflow definition: {}",
+                    e
+                ))]));
+            }
+        };
+
+        // Execute and return just the output
+        match self
+            .executor
+            .execute(&workflow, &stored.id, "mcp", input)
+            .await
+        {
+            Ok(execution) => match execution.output {
+                Some(output) => Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&output).unwrap_or_default(),
+                )])),
+                None => Ok(CallToolResult::success(vec![Content::text("null")])),
+            },
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Workflow execution failed: {}",
+                e
+            ))])),
         }
     }
 }
