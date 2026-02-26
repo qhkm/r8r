@@ -10,10 +10,14 @@ use std::time::Duration;
 
 #[cfg(feature = "sandbox-docker")]
 pub mod docker;
+#[cfg(feature = "sandbox-firecracker")]
+pub mod firecracker;
 pub mod subprocess;
 
 #[cfg(feature = "sandbox-docker")]
 pub use docker::DockerBackend;
+#[cfg(feature = "sandbox-firecracker")]
+pub use firecracker::FirecrackerBackend;
 pub use subprocess::SubprocessBackend;
 
 /// Trait for sandbox execution backends.
