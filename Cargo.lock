@@ -1225,20 +1225,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyper-client-sockets"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdef228771e5fc12fbc652474d9dd2e1329ae990eed719e53defbdd8de1892b1"
-dependencies = [
- "hex",
- "hyper",
- "hyper-util",
- "pin-project-lite",
- "tokio",
- "tower-service",
-]
-
-[[package]]
 name = "hyper-named-pipe"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2368,9 +2354,6 @@ dependencies = [
  "dirs",
  "futures-util",
  "hex",
- "http-body-util",
- "hyper",
- "hyper-client-sockets",
  "jsonschema",
  "md5",
  "metrics",

@@ -203,19 +203,33 @@ impl Default for SandboxFirecrackerConfig {
 }
 
 #[cfg(feature = "sandbox-firecracker")]
-fn default_firecracker_bin() -> String { "firecracker".to_string() }
+fn default_firecracker_bin() -> String {
+    "firecracker".to_string()
+}
 #[cfg(feature = "sandbox-firecracker")]
-fn default_kernel_path() -> String { "/opt/r8r/vmlinux".to_string() }
+fn default_kernel_path() -> String {
+    "/opt/r8r/vmlinux".to_string()
+}
 #[cfg(feature = "sandbox-firecracker")]
-fn default_rootfs_path() -> String { "/opt/r8r/rootfs.ext4".to_string() }
+fn default_rootfs_path() -> String {
+    "/opt/r8r/rootfs.ext4".to_string()
+}
 #[cfg(feature = "sandbox-firecracker")]
-fn default_vcpu_count() -> u32 { 1 }
+fn default_vcpu_count() -> u32 {
+    1
+}
 #[cfg(feature = "sandbox-firecracker")]
-fn default_fc_memory_mb() -> u64 { 256 }
+fn default_fc_memory_mb() -> u64 {
+    256
+}
 #[cfg(feature = "sandbox-firecracker")]
-fn default_vsock_cid() -> u32 { 3 }
+fn default_vsock_cid() -> u32 {
+    3
+}
 #[cfg(feature = "sandbox-firecracker")]
-fn default_agent_port() -> u32 { 52 }
+fn default_agent_port() -> u32 {
+    52
+}
 
 #[cfg(feature = "sandbox")]
 fn default_python_image() -> String {

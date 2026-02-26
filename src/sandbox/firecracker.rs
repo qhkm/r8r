@@ -46,7 +46,11 @@ impl FirecrackerBackend {
 
 /// Send a PUT request to the Firecracker management API using raw HTTP/1.1
 /// over a Unix socket. Returns an error if the response is not 2xx.
-async fn api_put(socket_path: &Path, path: &str, body: &serde_json::Value) -> Result<(), SandboxError> {
+async fn api_put(
+    socket_path: &Path,
+    path: &str,
+    body: &serde_json::Value,
+) -> Result<(), SandboxError> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let mut stream = UnixStream::connect(socket_path).await.map_err(|e| {
@@ -145,7 +149,10 @@ struct AgentResponse {
 /// Send a length-prefixed JSON request to the guest agent and receive the response.
 ///
 /// Protocol: `[4-byte big-endian length][JSON payload]` in both directions.
-async fn call_guest_agent(vsock_path: &Path, req: &AgentRequest) -> Result<AgentResponse, SandboxError> {
+async fn call_guest_agent(
+    vsock_path: &Path,
+    req: &AgentRequest,
+) -> Result<AgentResponse, SandboxError> {
     let mut stream = UnixStream::connect(vsock_path).await.map_err(|e| {
         SandboxError::Io(std::io::Error::other(format!(
             "Connect to vsock agent {}: {}",
@@ -156,11 +163,17 @@ async fn call_guest_agent(vsock_path: &Path, req: &AgentRequest) -> Result<Agent
 
     // Encode request as length-prefixed JSON
     let payload = serde_json::to_vec(req).map_err(|e| {
-        SandboxError::Io(std::io::Error::other(format!("Serialize agent request: {}", e)))
+        SandboxError::Io(std::io::Error::other(format!(
+            "Serialize agent request: {}",
+            e
+        )))
     })?;
     let len = payload.len() as u32;
     stream.write_all(&len.to_be_bytes()).await.map_err(|e| {
-        SandboxError::Io(std::io::Error::other(format!("Write agent request length: {}", e)))
+        SandboxError::Io(std::io::Error::other(format!(
+            "Write agent request length: {}",
+            e
+        )))
     })?;
     stream.write_all(&payload).await.map_err(|e| {
         SandboxError::Io(std::io::Error::other(format!("Write agent request: {}", e)))
@@ -169,7 +182,10 @@ async fn call_guest_agent(vsock_path: &Path, req: &AgentRequest) -> Result<Agent
     // Read response: 4-byte length then payload
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf).await.map_err(|e| {
-        SandboxError::Io(std::io::Error::other(format!("Read agent response length: {}", e)))
+        SandboxError::Io(std::io::Error::other(format!(
+            "Read agent response length: {}",
+            e
+        )))
     })?;
     let resp_len = u32::from_be_bytes(len_buf) as usize;
 
@@ -184,11 +200,17 @@ async fn call_guest_agent(vsock_path: &Path, req: &AgentRequest) -> Result<Agent
 
     let mut resp_buf = vec![0u8; resp_len];
     stream.read_exact(&mut resp_buf).await.map_err(|e| {
-        SandboxError::Io(std::io::Error::other(format!("Read agent response payload: {}", e)))
+        SandboxError::Io(std::io::Error::other(format!(
+            "Read agent response payload: {}",
+            e
+        )))
     })?;
 
     serde_json::from_slice(&resp_buf).map_err(|e| {
-        SandboxError::Io(std::io::Error::other(format!("Deserialize agent response: {}", e)))
+        SandboxError::Io(std::io::Error::other(format!(
+            "Deserialize agent response: {}",
+            e
+        )))
     })
 }
 
@@ -326,11 +348,8 @@ impl SandboxBackend for FirecrackerBackend {
         };
 
         // Connect to agent via vsock with per-request timeout
-        let agent_result = tokio::time::timeout(
-            req.timeout,
-            call_guest_agent(&vsock_uds, &agent_req),
-        )
-        .await;
+        let agent_result =
+            tokio::time::timeout(req.timeout, call_guest_agent(&vsock_uds, &agent_req)).await;
 
         // ----------------------------------------------------------------
         // 5. Kill VM and clean up sockets regardless of outcome
@@ -433,7 +452,10 @@ mod tests {
 
         // On macOS, /dev/kvm never exists, so we must be false.
         #[cfg(target_os = "macos")]
-        assert!(!result, "available() should be false on macOS (no /dev/kvm)");
+        assert!(
+            !result,
+            "available() should be false on macOS (no /dev/kvm)"
+        );
 
         // On Linux without firecracker or KVM, also false; with both, true — just verify it's bool.
         #[cfg(target_os = "linux")]
