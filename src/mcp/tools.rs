@@ -1286,4 +1286,48 @@ nodes:
         assert!(data["nodes_executed"].is_array());
         assert!(data["duration_ms"].is_number());
     }
+
+    // =========================================================================
+    // Task 4: Exact match tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_r8r_test_exact_match_pass() {
+        let service = test_service();
+        // The `set` node copies all input fields into the output map and then
+        // adds the new `result` field, so the full output is
+        // {"message": "hello", "result": "hello"}.
+        let params = TestParams {
+            workflow_yaml: simple_workflow_yaml().to_string(),
+            input: Some(json!({"message": "hello"})),
+            expected_output: Some(json!({"message": "hello", "result": "hello"})),
+            mode: None, // default = "exact"
+        };
+        let result = service.r8r_test(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["pass"], true);
+        assert!(data.get("diff").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_r8r_test_exact_match_fail() {
+        let service = test_service();
+        let params = TestParams {
+            workflow_yaml: simple_workflow_yaml().to_string(),
+            input: Some(json!({"message": "hello"})),
+            expected_output: Some(json!({"result": "wrong"})),
+            mode: None,
+        };
+        let result = service.r8r_test(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["pass"], false);
+        assert!(data["diff"].is_array());
+        assert!(data["diff"].as_array().unwrap().len() > 0);
+        assert!(data["expected"].is_object());
+    }
+
 }
