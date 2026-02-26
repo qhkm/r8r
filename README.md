@@ -138,6 +138,7 @@ r8r-mcp
 | `r8r_list_executions` | List recent executions |
 | `r8r_validate` | Validate workflow YAML |
 | `r8r_create_workflow` | Create or update a workflow |
+| `r8r_test` | Test a workflow with input and assert expected output. Mocks via `pinned_data`. Fully isolated. |
 
 ## 📊 r8r vs n8n
 

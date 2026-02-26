@@ -1091,4 +1091,57 @@ nodes:
 
 ---
 
+## Testing with `pinned_data`
+
+Any node can include a `pinned_data` field. When set, the executor **skips the node's actual execution** and uses the pinned value as the node's output. Downstream nodes receive the pinned data normally.
+
+This is the primary mocking mechanism for workflow testing — mock HTTP calls, agent responses, or any external service without making real requests.
+
+### Example: Mocking an HTTP Node
+
+```yaml
+nodes:
+  - id: fetch-users
+    type: http
+    config:
+      url: https://api.example.com/users
+      method: GET
+    pinned_data:
+      status: 200
+      body:
+        - name: Alice
+        - name: Bob
+
+  - id: count
+    type: set
+    config:
+      fields:
+        - name: user_count
+          value: "{{ nodes.fetch-users.output.body | length }}"
+    depends_on: [fetch-users]
+```
+
+The `fetch-users` node never makes a real HTTP call — it outputs the pinned data directly. The `count` node receives it as input and processes it normally.
+
+### Using `r8r_test` MCP Tool
+
+Agents can test workflows using the `r8r_test` MCP tool:
+
+```json
+{
+  "workflow_yaml": "<yaml with pinned_data>",
+  "input": {"name": "Alice"},
+  "expected_output": {"greeting": "Hello Alice!"},
+  "mode": "exact"
+}
+```
+
+- **`mode: "exact"`** (default) — actual output must exactly equal expected output
+- **`mode: "contains"`** — expected output must be a subset of actual output (extra keys allowed)
+- Omit `expected_output` for a dry-run that returns the actual output
+
+Each test run uses isolated in-memory storage — no side effects to the real database.
+
+---
+
 *For more examples, see the [examples/](../examples/) directory.*
