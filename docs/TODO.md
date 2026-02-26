@@ -53,6 +53,16 @@
 - [x] Parameterized workflows (with type validation & defaults)
 - [x] Workflow dependencies (DAG of workflows with cycle detection)
 
+### Sandbox (Code Execution)
+- [x] Pluggable `SandboxBackend` trait with feature-flagged backends
+- [x] Subprocess backend (`--features sandbox`) — zero deps, works everywhere
+- [x] Docker backend (`--features sandbox-docker`) — container isolation via bollard SDK
+- [x] Firecracker backend (`--features sandbox-firecracker`) — hardware VM isolation via KVM
+- [x] SandboxNode workflow node (`type: sandbox`) with Python, Node, Bash support
+- [x] JSON output parsing (stdout → structured data)
+- [x] Global security overrides (network kill switch, memory/timeout caps, runtime whitelist)
+- [x] Sandbox backends reference doc with future roadmap (WASM, Hyperlight, libkrun, Landlock)
+
 ### UI & Developer Experience
 - [x] Web dashboard for monitoring
 - [x] Visual workflow editor
@@ -82,6 +92,14 @@
 - [ ] `discord` - Discord messaging
 - [ ] `google-sheets` - Google Sheets integration
 - [ ] `telegram` - Telegram Bot API
+
+### Sandbox v2
+- [ ] File artifacts — output directory collection from sandbox executions
+- [ ] Warm pools — pre-started containers/VMs for sub-100ms cold starts
+- [ ] Streaming output — WebSocket streaming of stdout during execution
+- [ ] Package caching — pre-installed pip/npm packages in Docker images
+- [ ] Firecracker guest agent reference implementation
+- [ ] WASM backend (`sandbox-wasm`) — for trusted, high-frequency tool execution
 
 ### Scalability
 - [ ] Distributed execution (multiple workers)
