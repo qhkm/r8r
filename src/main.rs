@@ -1639,6 +1639,21 @@ fn build_registry() -> r8r::nodes::NodeRegistry {
                         }
                     }
                 }
+                #[cfg(feature = "sandbox-firecracker")]
+                "firecracker" => {
+                    use r8r::sandbox::FirecrackerBackend;
+                    use r8r::sandbox::SandboxBackend as _;
+                    let fb = FirecrackerBackend::new(&config.sandbox.firecracker);
+                    if fb.available() {
+                        tracing::info!("Using Firecracker sandbox backend");
+                        Arc::new(fb)
+                    } else {
+                        tracing::warn!(
+                            "Firecracker unavailable (no /dev/kvm?), falling back to subprocess sandbox"
+                        );
+                        Arc::new(SubprocessBackend::new())
+                    }
+                }
                 _ => Arc::new(SubprocessBackend::new()),
             };
 
