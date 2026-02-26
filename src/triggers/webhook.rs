@@ -101,6 +101,7 @@ pub async fn create_webhook_routes(
                 method,
                 debounce,
                 header_filter,
+                response_mode: _response_mode,
             } = trigger
             {
                 let route_path = path

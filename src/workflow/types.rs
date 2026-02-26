@@ -129,6 +129,9 @@ pub enum Trigger {
         /// Header-based filter conditions
         #[serde(default)]
         header_filter: Option<Vec<HeaderFilter>>,
+        /// Response mode: "full" (default) returns execution metadata, "output" returns raw workflow output
+        #[serde(default)]
+        response_mode: Option<String>,
     },
     /// Event-based trigger (from another workflow or external system)
     Event {
@@ -462,5 +465,43 @@ impl Workflow {
         types.sort();
         types.dedup();
         types
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_webhook_trigger_with_response_mode() {
+        let yaml = r#"
+type: webhook
+path: /api/summarize
+method: POST
+response_mode: output
+"#;
+        let trigger: Trigger = serde_yaml::from_str(yaml).unwrap();
+        match trigger {
+            Trigger::Webhook { response_mode, .. } => {
+                assert_eq!(response_mode.as_deref(), Some("output"));
+            }
+            _ => panic!("Expected Webhook trigger"),
+        }
+    }
+
+    #[test]
+    fn test_webhook_trigger_default_response_mode() {
+        let yaml = r#"
+type: webhook
+path: /api/test
+method: POST
+"#;
+        let trigger: Trigger = serde_yaml::from_str(yaml).unwrap();
+        match trigger {
+            Trigger::Webhook { response_mode, .. } => {
+                assert!(response_mode.is_none());
+            }
+            _ => panic!("Expected Webhook trigger"),
+        }
     }
 }
