@@ -25,5 +25,8 @@ landing/docs/.astro/
 landing/docs/dist/
 landing/docs/node_modules/
 
+# Worktrees
+.worktrees/
+
 # Business strategy (confidential)
 BUSINESS_STRATEGY.md
