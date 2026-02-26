@@ -251,7 +251,7 @@ fn default_max_attempts() -> u32 {
 }
 
 fn default_delay_seconds() -> u64 {
-    60
+    1
 }
 
 /// Backoff strategy for retries.
