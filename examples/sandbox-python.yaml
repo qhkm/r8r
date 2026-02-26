@@ -1,0 +1,28 @@
+name: sandbox-python-example
+description: Execute Python code in a sandboxed environment
+version: 1
+
+triggers:
+  - type: manual
+
+nodes:
+  - id: compute
+    type: sandbox
+    config:
+      runtime: python3
+      timeout_seconds: 10
+      code: |
+        import json
+        numbers = [1, 2, 3, 4, 5]
+        result = {
+            "sum": sum(numbers),
+            "count": len(numbers),
+            "average": sum(numbers) / len(numbers)
+        }
+        print(json.dumps(result))
+
+  - id: show-result
+    type: debug
+    config:
+      message: "Computation result: {{ nodes.compute.output.output }}"
+    depends_on: [compute]

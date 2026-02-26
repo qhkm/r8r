@@ -46,6 +46,8 @@ pub mod error;
 pub mod mcp;
 pub mod metrics;
 pub mod nodes;
+#[cfg(feature = "sandbox")]
+pub mod sandbox;
 pub mod shutdown;
 pub mod storage;
 pub mod telemetry;

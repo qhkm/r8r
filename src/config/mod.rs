@@ -22,6 +22,11 @@ pub struct Config {
     /// ZeptoClaw integration
     #[serde(default)]
     pub agent: AgentConfig,
+
+    /// Sandbox execution configuration
+    #[cfg(feature = "sandbox")]
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
 }
 
 /// Server configuration.
@@ -92,6 +97,132 @@ fn default_agent_timeout() -> u64 {
     30
 }
 
+/// Sandbox execution configuration.
+#[cfg(feature = "sandbox")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxConfig {
+    /// Backend to use: "subprocess" or "docker"
+    #[serde(default = "default_sandbox_backend")]
+    pub backend: String,
+
+    /// Docker-specific settings
+    #[serde(default)]
+    pub docker: SandboxDockerConfig,
+
+    /// Security constraints
+    #[serde(default)]
+    pub security: SandboxSecurityConfig,
+}
+
+#[cfg(feature = "sandbox")]
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            backend: default_sandbox_backend(),
+            docker: SandboxDockerConfig::default(),
+            security: SandboxSecurityConfig::default(),
+        }
+    }
+}
+
+#[cfg(feature = "sandbox")]
+fn default_sandbox_backend() -> String {
+    std::env::var("R8R_SANDBOX_BACKEND").unwrap_or_else(|_| "subprocess".to_string())
+}
+
+/// Docker sandbox configuration.
+#[cfg(feature = "sandbox")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxDockerConfig {
+    #[serde(default = "default_python_image")]
+    pub python_image: String,
+    #[serde(default = "default_node_image")]
+    pub node_image: String,
+    #[serde(default = "default_bash_image")]
+    pub bash_image: String,
+}
+
+#[cfg(feature = "sandbox")]
+impl Default for SandboxDockerConfig {
+    fn default() -> Self {
+        Self {
+            python_image: default_python_image(),
+            node_image: default_node_image(),
+            bash_image: default_bash_image(),
+        }
+    }
+}
+
+#[cfg(feature = "sandbox")]
+fn default_python_image() -> String {
+    "python:3.12-slim".to_string()
+}
+
+#[cfg(feature = "sandbox")]
+fn default_node_image() -> String {
+    "node:22-slim".to_string()
+}
+
+#[cfg(feature = "sandbox")]
+fn default_bash_image() -> String {
+    "alpine:3.19".to_string()
+}
+
+/// Sandbox security constraints.
+#[cfg(feature = "sandbox")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxSecurityConfig {
+    /// Global kill switch for network access
+    #[serde(default)]
+    pub allow_network: bool,
+    /// Maximum memory in MB any sandbox can use
+    #[serde(default = "default_max_memory")]
+    pub max_memory_mb: u64,
+    /// Maximum execution time in seconds
+    #[serde(default = "default_max_timeout")]
+    pub max_timeout_seconds: u64,
+    /// Maximum output bytes (stdout + stderr)
+    #[serde(default = "default_max_output")]
+    pub max_output_bytes: u64,
+    /// Allowed runtimes
+    #[serde(default = "default_allowed_runtimes")]
+    pub allowed_runtimes: Vec<String>,
+}
+
+#[cfg(feature = "sandbox")]
+impl Default for SandboxSecurityConfig {
+    fn default() -> Self {
+        Self {
+            allow_network: false,
+            max_memory_mb: default_max_memory(),
+            max_timeout_seconds: default_max_timeout(),
+            max_output_bytes: default_max_output(),
+            allowed_runtimes: default_allowed_runtimes(),
+        }
+    }
+}
+
+#[cfg(feature = "sandbox")]
+fn default_max_memory() -> u64 {
+    512
+}
+#[cfg(feature = "sandbox")]
+fn default_max_timeout() -> u64 {
+    300
+}
+#[cfg(feature = "sandbox")]
+fn default_max_output() -> u64 {
+    1_048_576
+}
+#[cfg(feature = "sandbox")]
+fn default_allowed_runtimes() -> Vec<String> {
+    vec![
+        "python3".to_string(),
+        "node".to_string(),
+        "bash".to_string(),
+    ]
+}
+
 impl Config {
     /// Load configuration from default locations.
     pub fn load() -> Self {
@@ -149,6 +280,17 @@ impl Config {
         if let Ok(path) = std::env::var("R8R_DATABASE_PATH") {
             self.storage.database_path = Some(PathBuf::from(path));
         }
+        #[cfg(feature = "sandbox")]
+        {
+            if let Ok(backend) = std::env::var("R8R_SANDBOX_BACKEND") {
+                self.sandbox.backend = backend;
+            }
+            if let Ok(timeout) = std::env::var("R8R_SANDBOX_MAX_TIMEOUT_SECONDS") {
+                if let Ok(parsed) = timeout.parse::<u64>() {
+                    self.sandbox.security.max_timeout_seconds = parsed;
+                }
+            }
+        }
     }
 
     fn load_partial_from_path(path: &Path) -> std::result::Result<PartialConfig, ()> {
@@ -176,6 +318,10 @@ impl Config {
         if let Some(agent) = partial.agent {
             self.agent = agent;
         }
+        #[cfg(feature = "sandbox")]
+        if let Some(sandbox) = partial.sandbox {
+            self.sandbox = sandbox;
+        }
     }
 }
 
@@ -184,4 +330,6 @@ struct PartialConfig {
     server: Option<ServerConfig>,
     storage: Option<StorageConfig>,
     agent: Option<AgentConfig>,
+    #[cfg(feature = "sandbox")]
+    sandbox: Option<SandboxConfig>,
 }

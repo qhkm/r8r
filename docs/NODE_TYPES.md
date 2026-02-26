@@ -28,6 +28,7 @@ This document describes all built-in node types available in r8r.
   - [Slack](#slack)
   - [Database](#database)
   - [S3](#s3)
+  - [Sandbox](#sandbox)
 - [Utility Nodes](#utility-nodes)
   - [Debug](#debug)
   - [DateTime](#datetime)
@@ -786,6 +787,81 @@ nodes:
   "is_base64": false
 }
 ```
+
+---
+
+### Sandbox
+
+Execute code in a sandboxed environment (Python, Node, Bash).
+
+**Type**: `sandbox`
+
+**Requires**: `--features sandbox` (subprocess) or `--features sandbox-docker` (Docker)
+
+**Configuration**:
+
+```yaml
+nodes:
+  - id: compute
+    type: sandbox
+    config:
+      runtime: python3        # python3, node, bash
+      timeout_seconds: 30     # default: 30
+      memory_mb: 256           # optional, enforced by Docker backend
+      network: false           # default: false (no network access)
+      env:
+        API_KEY: "{{ credentials.my_api_key }}"
+      code: |
+        import json
+        data = json.loads('{{ input | tojson }}')
+        result = {"total": sum(item["value"] for item in data)}
+        print(json.dumps(result))
+```
+
+**Config Fields**:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `runtime` | string | (required) | Runtime to use: `python3`, `node`, `bash` |
+| `code` | string | (required) | Code to execute (supports `{{ }}` templates) |
+| `timeout_seconds` | integer | `30` | Maximum execution time |
+| `memory_mb` | integer | none | Memory limit (Docker only) |
+| `network` | boolean | `false` | Allow network access |
+| `env` | object | `{}` | Environment variables (values support templates) |
+
+**Output**:
+
+```json
+{
+  "data": {
+    "stdout": "{\"total\": 42}",
+    "stderr": "",
+    "exit_code": 0,
+    "output": {"total": 42}
+  },
+  "metadata": {
+    "backend": "subprocess",
+    "runtime": "python3",
+    "duration_ms": 1234,
+    "network": false
+  }
+}
+```
+
+The `output` field contains parsed JSON if stdout is valid JSON, otherwise `null`.
+
+**Backends**:
+
+| Backend | Feature Flag | Isolation | Platforms |
+|---------|-------------|-----------|-----------|
+| Subprocess | `sandbox` | None (process only) | macOS, Linux |
+| Docker | `sandbox-docker` | Container (memory, network, fs) | macOS, Linux |
+
+**Security Notes**:
+- Network is disabled by default; set `network: true` explicitly to allow
+- Subprocess backend provides NO isolation — use Docker for untrusted code
+- Output is capped at 1MB (stdout + stderr combined)
+- Global security limits in `r8r.toml` override per-node config
 
 ---
 

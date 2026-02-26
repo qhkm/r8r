@@ -19,6 +19,8 @@ mod limit;
 mod merge;
 mod registry;
 mod s3;
+#[cfg(feature = "sandbox")]
+mod sandbox;
 mod set;
 mod slack;
 mod sort;
@@ -47,6 +49,8 @@ pub use limit::LimitNode;
 pub use merge::MergeNode;
 pub use registry::NodeRegistry;
 pub use s3::S3Node;
+#[cfg(feature = "sandbox")]
+pub use sandbox::SandboxNode;
 pub use set::SetNode;
 pub use slack::SlackNode;
 pub use sort::SortNode;
