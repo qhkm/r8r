@@ -123,10 +123,21 @@ r8r includes an **MCP server** (Model Context Protocol) so AI agents can directl
 r8r-mcp
 ```
 
-Your AI agent can now:
-- `list_workflows` - Discover available workflows
-- `execute_workflow` - Run workflows with parameters
-- `get_execution` - Check execution status
+**Available tools (11):**
+
+| Tool | Description |
+|------|-------------|
+| `r8r_execute` | Execute a workflow, returns execution metadata |
+| `r8r_run_and_wait` | Execute a workflow, returns just the output |
+| `r8r_discover` | Discover workflow parameters, nodes, triggers |
+| `r8r_lint` | Lint workflow YAML with detailed error messages |
+| `r8r_list_workflows` | List all available workflows |
+| `r8r_get_workflow` | Get full workflow definition |
+| `r8r_get_execution` | Get execution status and result |
+| `r8r_get_trace` | Get detailed execution trace |
+| `r8r_list_executions` | List recent executions |
+| `r8r_validate` | Validate workflow YAML |
+| `r8r_create_workflow` | Create or update a workflow |
 
 ## 📊 r8r vs n8n
 

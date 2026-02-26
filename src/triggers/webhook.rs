@@ -101,6 +101,7 @@ pub async fn create_webhook_routes(
                 method,
                 debounce,
                 header_filter,
+                response_mode,
             } = trigger
             {
                 let route_path = path
@@ -134,6 +135,21 @@ pub async fn create_webhook_routes(
                 let has_debounce = debounce.is_some();
                 let has_header_filter = compiled_filters.is_some();
 
+                // Validate: debounce + response_mode: output is invalid
+                let effective_response_mode = if has_debounce
+                    && response_mode.as_deref() == Some("output")
+                {
+                    warn!(
+                        "Webhook '{}': response_mode 'output' is incompatible with debounce (fire-and-forget). Falling back to 'full'.",
+                        workflow.name
+                    );
+                    None
+                } else {
+                    response_mode
+                };
+
+                let response_mode_clone = effective_response_mode.clone();
+
                 // Create handler for this webhook
                 let handler = move |State(state): State<AppState>,
                                     method: Method,
@@ -143,6 +159,7 @@ pub async fn create_webhook_routes(
                     let workflow_id = workflow_id.clone();
                     let debounce_config = debounce.clone();
                     let header_filters = compiled_filters.clone();
+                    let resp_mode = response_mode_clone.clone();
                     async move {
                         handle_webhook(
                             state,
@@ -153,6 +170,7 @@ pub async fn create_webhook_routes(
                             body,
                             debounce_config,
                             header_filters,
+                            resp_mode,
                         )
                         .await
                     }
@@ -192,6 +210,7 @@ async fn handle_webhook(
     body: Bytes,
     debounce_config: Option<DebounceConfig>,
     header_filters: Option<Vec<CompiledHeaderFilter>>,
+    response_mode: Option<String>,
 ) -> impl IntoResponse {
     info!("Webhook triggered for workflow '{}'", workflow_name);
 
@@ -244,6 +263,7 @@ async fn handle_webhook(
                 method,
                 headers,
                 body_value,
+                None, // debounce is fire-and-forget, response_mode is irrelevant
             )
             .await;
         });
@@ -266,6 +286,7 @@ async fn handle_webhook(
         method,
         headers,
         body_value,
+        response_mode,
     )
     .await
     .into_response()
@@ -364,6 +385,7 @@ async fn execute_webhook_workflow(
     method: Method,
     headers: HeaderMap,
     body_value: Value,
+    response_mode: Option<String>,
 ) -> impl IntoResponse {
     // Get workflow
     let stored = match state.storage.get_workflow(workflow_name).await {
@@ -425,18 +447,27 @@ async fn execute_webhook_workflow(
         .await
     {
         Ok(execution) => {
-            let duration_ms = execution
-                .finished_at
-                .map(|f| (f - execution.started_at).num_milliseconds());
+            if response_mode.as_deref() == Some("output") {
+                // Return raw output only
+                match execution.output {
+                    Some(output) => Json(output).into_response(),
+                    None => Json(json!(null)).into_response(),
+                }
+            } else {
+                // Default: return full execution metadata
+                let duration_ms = execution
+                    .finished_at
+                    .map(|f| (f - execution.started_at).num_milliseconds());
 
-            Json(json!({
-                "execution_id": execution.id,
-                "status": execution.status.to_string(),
-                "output": execution.output,
-                "error": execution.error,
-                "duration_ms": duration_ms,
-            }))
-            .into_response()
+                Json(json!({
+                    "execution_id": execution.id,
+                    "status": execution.status.to_string(),
+                    "output": execution.output,
+                    "error": execution.error,
+                    "duration_ms": duration_ms,
+                }))
+                .into_response()
+            }
         }
         Err(e) => {
             error!("Webhook execution failed for '{}': {}", workflow_name, e);
@@ -521,6 +552,18 @@ mod tests {
         .unwrap()];
 
         assert!(!check_header_filters(&filters_missing, &headers));
+    }
+
+    #[test]
+    fn test_debounce_with_output_mode_fallback() {
+        let has_debounce = true;
+        let response_mode = Some("output".to_string());
+        let effective_mode = if has_debounce && response_mode.as_deref() == Some("output") {
+            None // fallback to full
+        } else {
+            response_mode
+        };
+        assert!(effective_mode.is_none());
     }
 
     #[test]

@@ -75,6 +75,23 @@ pub struct CreateWorkflowParams {
     pub yaml: String,
 }
 
+/// Parameters for running a workflow and waiting for the result
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RunAndWaitParams {
+    /// Name of the workflow to execute
+    pub workflow: String,
+    /// Input data for the workflow (JSON object)
+    #[serde(default)]
+    pub input: Option<Value>,
+}
+
+/// Parameters for discovering workflow details
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DiscoverParams {
+    /// Name of the workflow to discover
+    pub workflow: String,
+}
+
 // ============================================================================
 // Tool Implementations
 // ============================================================================
@@ -101,10 +118,10 @@ impl R8rService {
                 ))]));
             }
             Err(e) => {
-                return Err(McpError::internal_error(
-                    "storage_error",
-                    Some(json!({"error": e.to_string()})),
-                ));
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Storage error: {}",
+                    e
+                ))]));
             }
         };
 
@@ -112,10 +129,10 @@ impl R8rService {
         let workflow = match parse_workflow(&stored.definition) {
             Ok(wf) => wf,
             Err(e) => {
-                return Err(McpError::internal_error(
-                    "parse_error",
-                    Some(json!({"error": e.to_string()})),
-                ));
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid workflow definition: {}",
+                    e
+                ))]));
             }
         };
 
@@ -143,10 +160,10 @@ impl R8rService {
                     serde_json::to_string_pretty(&result).unwrap_or_default(),
                 )]))
             }
-            Err(e) => Err(McpError::internal_error(
-                "execution_error",
-                Some(json!({"error": e.to_string()})),
-            )),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Workflow execution failed: {}",
+                e
+            ))])),
         }
     }
 
@@ -493,6 +510,246 @@ impl R8rService {
             )),
         }
     }
+
+    /// Execute a workflow and return just the output. Blocks until completion.
+    /// Unlike r8r_execute, this returns only the workflow output (not execution metadata).
+    /// Use this when you need the result of a workflow directly.
+    #[tool(
+        description = "Execute a workflow synchronously and return the output. Returns just the workflow result, not execution metadata. Use r8r_execute if you need execution_id and status."
+    )]
+    pub async fn r8r_run_and_wait(
+        &self,
+        #[tool(aggr)] params: RunAndWaitParams,
+    ) -> Result<CallToolResult, McpError> {
+        let input = params.input.unwrap_or(Value::Null);
+
+        // Get workflow from storage
+        let stored = match self.storage.get_workflow(&params.workflow).await {
+            Ok(Some(wf)) => wf,
+            Ok(None) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Workflow not found: {}",
+                    params.workflow
+                ))]));
+            }
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Storage error: {}",
+                    e
+                ))]));
+            }
+        };
+
+        // Parse workflow
+        let workflow = match parse_workflow(&stored.definition) {
+            Ok(wf) => wf,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid workflow definition: {}",
+                    e
+                ))]));
+            }
+        };
+
+        // Execute and return just the output
+        match self
+            .executor
+            .execute(&workflow, &stored.id, "mcp", input)
+            .await
+        {
+            Ok(execution) => match execution.output {
+                Some(output) => Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&output).unwrap_or_default(),
+                )])),
+                None => Ok(CallToolResult::success(vec![Content::text("null")])),
+            },
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Workflow execution failed: {}",
+                e
+            ))])),
+        }
+    }
+
+    /// Discover a workflow's parameters, nodes, and triggers.
+    /// Use this before r8r_run_and_wait to understand what input a workflow expects.
+    #[tool(
+        description = "Discover a workflow's parameters, nodes, and triggers. Returns input schema, parameter definitions, node list, and trigger configuration. Use before r8r_run_and_wait to understand what input a workflow expects."
+    )]
+    pub async fn r8r_discover(
+        &self,
+        #[tool(aggr)] params: DiscoverParams,
+    ) -> Result<CallToolResult, McpError> {
+        let stored = match self.storage.get_workflow(&params.workflow).await {
+            Ok(Some(wf)) => wf,
+            Ok(None) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Workflow not found: {}",
+                    params.workflow
+                ))]));
+            }
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Storage error: {}",
+                    e
+                ))]));
+            }
+        };
+
+        let workflow = match parse_workflow(&stored.definition) {
+            Ok(wf) => wf,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid workflow definition: {}",
+                    e
+                ))]));
+            }
+        };
+
+        // Build parameter info
+        let parameters: Value = workflow
+            .inputs
+            .iter()
+            .map(|(name, def)| {
+                (
+                    name.clone(),
+                    json!({
+                        "type": def.input_type,
+                        "description": def.description,
+                        "required": def.required,
+                        "default": def.default,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<String, Value>>()
+            .into();
+
+        // Build node summary
+        let nodes: Vec<Value> = workflow
+            .nodes
+            .iter()
+            .map(|n| {
+                json!({
+                    "id": n.id,
+                    "type": n.node_type,
+                    "depends_on": n.depends_on,
+                })
+            })
+            .collect();
+
+        let result = json!({
+            "name": workflow.name,
+            "description": workflow.description,
+            "version": workflow.version,
+            "parameters": parameters,
+            "input_schema": workflow.input_schema,
+            "nodes": nodes,
+            "nodes_count": nodes.len(),
+            "triggers": workflow.triggers,
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result).unwrap_or_default(),
+        )]))
+    }
+
+    /// Lint a workflow YAML definition with detailed error messages.
+    /// Returns a list of issues found, or confirms the workflow is valid.
+    /// Use this to check YAML before submitting with r8r_create_workflow.
+    #[tool(
+        description = "Lint a workflow YAML definition. Returns detailed validation errors with suggestions, or confirms the workflow is valid. Use before r8r_create_workflow to catch issues early."
+    )]
+    pub async fn r8r_lint(
+        &self,
+        #[tool(aggr)] params: ValidateParams,
+    ) -> Result<CallToolResult, McpError> {
+        let mut issues: Vec<Value> = Vec::new();
+
+        // Step 1: Parse YAML
+        let workflow = match parse_workflow(&params.yaml) {
+            Ok(wf) => wf,
+            Err(e) => {
+                let error_str = e.to_string();
+                let mut issue = json!({
+                    "level": "error",
+                    "type": "parse",
+                    "message": error_str,
+                });
+
+                // Add suggestions for common mistakes
+                if error_str.contains("unknown field") {
+                    if error_str.contains("dependsOn") {
+                        issue["suggestion"] =
+                            json!("Use 'depends_on' (snake_case) for node dependencies");
+                    }
+                    if error_str.contains("nodeType") {
+                        issue["suggestion"] = json!("Use 'type' for node type, not 'nodeType'");
+                    }
+                }
+
+                issues.push(issue);
+
+                let result = json!({
+                    "valid": false,
+                    "issues": issues,
+                    "issues_count": issues.len(),
+                });
+
+                return Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).unwrap_or_default(),
+                )]));
+            }
+        };
+
+        // Step 2: Validate structure
+        if let Err(e) = validate_workflow(&workflow) {
+            issues.push(json!({
+                "level": "error",
+                "type": "validation",
+                "message": e.to_string(),
+            }));
+        }
+
+        // Step 3: Lint warnings (non-blocking)
+        if workflow.description.is_empty() {
+            issues.push(json!({
+                "level": "warning",
+                "type": "lint",
+                "message": "Workflow has no description. Add a 'description' field for better discoverability.",
+            }));
+        }
+
+        if workflow.triggers.is_empty() {
+            issues.push(json!({
+                "level": "warning",
+                "type": "lint",
+                "message": "Workflow has no triggers. It can only be executed via API or MCP.",
+            }));
+        }
+
+        // Check for nodes with no depends_on (potential ordering issues)
+        let has_deps = workflow.nodes.iter().any(|n| !n.depends_on.is_empty());
+        if workflow.nodes.len() > 1 && !has_deps {
+            issues.push(json!({
+                "level": "warning",
+                "type": "lint",
+                "message": "Multiple nodes but none have 'depends_on'. Nodes will execute in definition order. Add explicit dependencies for clarity.",
+            }));
+        }
+
+        let has_errors = issues.iter().any(|i| i["level"] == "error");
+
+        let result = json!({
+            "valid": !has_errors,
+            "issues": issues,
+            "issues_count": issues.len(),
+            "name": workflow.name,
+            "nodes_count": workflow.nodes.len(),
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result).unwrap_or_default(),
+        )]))
+    }
 }
 
 #[tool(tool_box)]
@@ -510,5 +767,218 @@ impl ServerHandler for R8rService {
             },
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::Executor;
+    use crate::nodes::NodeRegistry;
+    use crate::storage::{SqliteStorage, StoredWorkflow};
+    use std::sync::Arc;
+
+    fn test_service() -> R8rService {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let registry = NodeRegistry::new();
+        let executor = Arc::new(Executor::new(registry, storage.clone()));
+        R8rService { storage, executor }
+    }
+
+    async fn save_test_workflow(service: &R8rService, name: &str, yaml: &str) {
+        let now = chrono::Utc::now();
+        let stored = StoredWorkflow {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            definition: yaml.to_string(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+        service.storage.save_workflow(&stored).await.unwrap();
+    }
+
+    fn simple_workflow_yaml() -> &'static str {
+        r#"
+name: test-simple
+description: A simple test workflow
+version: 1
+inputs:
+  message:
+    type: string
+    description: The message to echo
+    required: true
+    default: "hello"
+nodes:
+  - id: echo
+    type: set
+    config:
+      fields:
+        - name: result
+          value: "{{ input.message }}"
+"#
+    }
+
+    /// Helper to extract text from the first content item of a CallToolResult.
+    fn extract_text(result: &CallToolResult) -> &str {
+        match &result.content[0].raw {
+            RawContent::Text(t) => &t.text,
+            _ => panic!("Expected text content"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_r8r_execute_workflow_not_found() {
+        let service = test_service();
+        let params = ExecuteParams {
+            workflow: "nonexistent".to_string(),
+            input: None,
+        };
+        let result = service.r8r_execute(params).await.unwrap();
+        assert!(result.is_error.unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn test_r8r_execute_success() {
+        let service = test_service();
+        save_test_workflow(&service, "test-simple", simple_workflow_yaml()).await;
+        let params = ExecuteParams {
+            workflow: "test-simple".to_string(),
+            input: Some(json!({"message": "world"})),
+        };
+        let result = service.r8r_execute(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert!(data["execution_id"].is_string());
+        assert_eq!(data["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn test_r8r_run_and_wait_returns_only_output() {
+        let service = test_service();
+        save_test_workflow(&service, "test-simple", simple_workflow_yaml()).await;
+        let params = RunAndWaitParams {
+            workflow: "test-simple".to_string(),
+            input: Some(json!({"message": "test"})),
+        };
+        let result = service.r8r_run_and_wait(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        // Should NOT have execution_id, status, duration_ms — only the output
+        assert!(data.get("execution_id").is_none());
+        assert!(data.get("status").is_none());
+        // Should have the actual result
+        assert_eq!(data["result"], "test");
+    }
+
+    #[tokio::test]
+    async fn test_r8r_run_and_wait_not_found() {
+        let service = test_service();
+        let params = RunAndWaitParams {
+            workflow: "missing".to_string(),
+            input: None,
+        };
+        let result = service.r8r_run_and_wait(params).await.unwrap();
+        assert!(result.is_error.unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn test_r8r_discover_returns_parameters() {
+        let service = test_service();
+        save_test_workflow(&service, "test-simple", simple_workflow_yaml()).await;
+        let params = DiscoverParams {
+            workflow: "test-simple".to_string(),
+        };
+        let result = service.r8r_discover(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["name"], "test-simple");
+        assert_eq!(data["description"], "A simple test workflow");
+        assert_eq!(data["version"], 1);
+        assert_eq!(data["nodes_count"], 1);
+        // Check parameters
+        assert!(data["parameters"]["message"].is_object());
+        assert_eq!(data["parameters"]["message"]["type"], "string");
+        assert_eq!(data["parameters"]["message"]["required"], true);
+    }
+
+    #[tokio::test]
+    async fn test_r8r_discover_not_found() {
+        let service = test_service();
+        let params = DiscoverParams {
+            workflow: "nope".to_string(),
+        };
+        let result = service.r8r_discover(params).await.unwrap();
+        assert!(result.is_error.unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn test_r8r_lint_valid_workflow() {
+        let service = test_service();
+        let params = ValidateParams {
+            yaml: simple_workflow_yaml().to_string(),
+        };
+        let result = service.r8r_lint(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["valid"], true);
+        assert_eq!(data["name"], "test-simple");
+    }
+
+    #[tokio::test]
+    async fn test_r8r_lint_invalid_yaml() {
+        let service = test_service();
+        let params = ValidateParams {
+            yaml: "not: valid: yaml: [".to_string(),
+        };
+        let result = service.r8r_lint(params).await.unwrap();
+        // Lint results are NOT tool errors (is_error should be false)
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["valid"], false);
+        assert!(data["issues"].as_array().unwrap().len() > 0);
+        assert_eq!(data["issues"][0]["level"], "error");
+        assert_eq!(data["issues"][0]["type"], "parse");
+    }
+
+    #[tokio::test]
+    async fn test_r8r_lint_warnings_no_description_no_triggers() {
+        let service = test_service();
+        let yaml = r#"
+name: bare-workflow
+nodes:
+  - id: step1
+    type: set
+    config:
+      fields:
+        ok: true
+  - id: step2
+    type: set
+    config:
+      fields:
+        done: true
+"#;
+        let params = ValidateParams {
+            yaml: yaml.to_string(),
+        };
+        let result = service.r8r_lint(params).await.unwrap();
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        // Should be valid (warnings don't make it invalid)
+        assert_eq!(data["valid"], true);
+        let issues = data["issues"].as_array().unwrap();
+        // Should have warnings: no description, no triggers, no depends_on
+        let warnings: Vec<_> = issues.iter().filter(|i| i["level"] == "warning").collect();
+        assert!(
+            warnings.len() >= 2,
+            "Expected at least 2 warnings, got {}: {:?}",
+            warnings.len(),
+            warnings
+        );
     }
 }
