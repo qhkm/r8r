@@ -197,7 +197,7 @@ nodes:
 | `http` | REST API calls |
 | `transform` | Data transformation (Rhai expressions) |
 | **`agent`** | **AI reasoning — call OpenAI, Anthropic, Ollama, or any LLM with structured output validation** |
-| **`sandbox`** | **Execute Python, Node, or Bash in isolated environments (subprocess or Docker)** |
+| **`sandbox`** | **Execute Python, Node, or Bash in isolated environments (subprocess, Docker, or Firecracker)** |
 | `subworkflow` | Nested workflow execution |
 | `email` | Send emails (SMTP, SendGrid, Resend, Mailgun) |
 | `slack` | Slack messaging |
@@ -260,7 +260,7 @@ r8r credentials list                  # List (masked)
 - **Webhook Signatures** — GitHub, Stripe, Slack verification
 - **Rate Limiting** — Per-workflow throttling
 - **Schema Validation** — JSON Schema input validation
-- **Sandbox Isolation** — Docker-based code execution with memory, network, and filesystem restrictions
+- **Sandbox Isolation** — Pluggable backends: Docker containers or Firecracker microVMs with memory, network, and filesystem restrictions
 
 See [Security Audit](SECURITY_AUDIT_REPORT.md) for details.
 

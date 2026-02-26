@@ -660,7 +660,8 @@ r8r/
 │   ├── sandbox/             # Code execution sandbox
 │   │   ├── mod.rs           # SandboxBackend trait, types, errors
 │   │   ├── subprocess.rs    # SubprocessBackend (feature: sandbox)
-│   │   └── docker.rs        # DockerBackend (feature: sandbox-docker)
+│   │   ├── docker.rs        # DockerBackend (feature: sandbox-docker)
+│   │   └── firecracker.rs   # FirecrackerBackend (feature: sandbox-firecracker)
 │   ├── triggers/            # Trigger implementations
 │   │   ├── mod.rs
 │   │   ├── cron.rs
