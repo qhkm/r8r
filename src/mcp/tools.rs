@@ -1397,6 +1397,7 @@ nodes:
           value: "{{ nodes.fetch.output.body.message }}"
     depends_on: [fetch]
 "#;
+        // First, dry-run to see what the output actually is
         let params = TestParams {
             workflow_yaml: yaml.to_string(),
             input: None,
@@ -1416,5 +1417,74 @@ nodes:
             .collect();
         assert!(nodes.contains(&"fetch".to_string()));
         assert!(nodes.contains(&"tag".to_string()));
+        // Verify pinned data actually propagated to the downstream node
+        // The tag node should have received the mocked body.message value
+        let output = &data["output"];
+        assert_eq!(
+            output["body"], "mocked",
+            "Downstream node should receive pinned data value. Full output: {}",
+            output
+        );
+    }
+
+    // =========================================================================
+    // Task 6: Error handling and edge case tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_r8r_test_invalid_yaml() {
+        let service = test_service();
+        let params = TestParams {
+            workflow_yaml: "not: valid: yaml: [".to_string(),
+            input: None,
+            expected_output: None,
+            mode: None,
+        };
+        let result = service.r8r_test(params).await.unwrap();
+        assert!(result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        assert!(text.contains("parse") || text.contains("YAML") || text.contains("Invalid"));
+    }
+
+    #[tokio::test]
+    async fn test_r8r_test_empty_input_default() {
+        let service = test_service();
+        let params = TestParams {
+            workflow_yaml: simple_workflow_yaml().to_string(),
+            input: None,
+            expected_output: None,
+            mode: None,
+        };
+        let result = service.r8r_test(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn test_r8r_test_null_output_workflow() {
+        let service = test_service();
+        let yaml = r#"
+name: empty-workflow
+description: Produces no output
+version: 1
+nodes:
+  - id: noop
+    type: debug
+    config:
+      message: "hello"
+"#;
+        let params = TestParams {
+            workflow_yaml: yaml.to_string(),
+            input: None,
+            expected_output: None,
+            mode: None,
+        };
+        let result = service.r8r_test(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["status"], "completed");
     }
 }
