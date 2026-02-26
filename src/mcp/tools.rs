@@ -1330,4 +1330,91 @@ nodes:
         assert!(data["expected"].is_object());
     }
 
+    // =========================================================================
+    // Task 5: Contains mode and pinned_data tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_r8r_test_contains_mode_pass() {
+        let service = test_service();
+        let params = TestParams {
+            workflow_yaml: simple_workflow_yaml().to_string(),
+            input: Some(json!({"message": "hello"})),
+            expected_output: Some(json!({"result": "hello"})),
+            mode: Some("contains".to_string()),
+        };
+        let result = service.r8r_test(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["pass"], true);
+    }
+
+    #[tokio::test]
+    async fn test_r8r_test_contains_mode_fail() {
+        let service = test_service();
+        let params = TestParams {
+            workflow_yaml: simple_workflow_yaml().to_string(),
+            input: Some(json!({"message": "hello"})),
+            expected_output: Some(json!({"result": "wrong_value"})),
+            mode: Some("contains".to_string()),
+        };
+        let result = service.r8r_test(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["pass"], false);
+    }
+
+    #[tokio::test]
+    async fn test_r8r_test_pinned_data_mocking() {
+        let service = test_service();
+        // The `fetch` node has pinned_data so it never makes a real HTTP call.
+        // The `tag` node depends on `fetch` and receives the pinned output as
+        // its input, then sets a field using a template expression that reads
+        // from the upstream node output via `nodes.fetch.output.*`.
+        let yaml = r#"
+name: test-pinned
+description: Tests pinned_data mocking
+version: 1
+nodes:
+  - id: fetch
+    type: http
+    config:
+      url: https://api.example.com/data
+      method: GET
+    pinned_data:
+      status: 200
+      body:
+        message: mocked
+  - id: tag
+    type: set
+    config:
+      fields:
+        - name: source
+          value: pinned
+        - name: body
+          value: "{{ nodes.fetch.output.body.message }}"
+    depends_on: [fetch]
+"#;
+        let params = TestParams {
+            workflow_yaml: yaml.to_string(),
+            input: None,
+            expected_output: None,
+            mode: None,
+        };
+        let result = service.r8r_test(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["status"], "completed");
+        let nodes: Vec<String> = data["nodes_executed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert!(nodes.contains(&"fetch".to_string()));
+        assert!(nodes.contains(&"tag".to_string()));
+    }
 }
