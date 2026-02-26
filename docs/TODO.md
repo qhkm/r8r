@@ -80,13 +80,51 @@
 - [x] Event filtering/routing - JSONPath filtering, header-based routing, conditional routing
 - [x] Delayed event processing - Schedule events for future processing via Redis or SQLite
 
-## In Progress
+## Planned (Priority Order)
+
+### 1. Synchronous Workflow Execution
+Make r8r seamless for AI agents by returning results inline instead of requiring polling.
+- [ ] Webhook response mode — `POST /api/webhooks/:id?wait=true` returns workflow output directly
+- [ ] `run_and_wait` MCP tool — agents call one tool, get structured results back
+- [ ] Configurable timeout with streaming progress updates
+- [ ] Response format options (full trace vs. final output only)
+
+### 2. Workflow Testing & Mocking Framework
+No competitor has this — huge DX win for workflow development.
+- [ ] `r8r test` CLI command — run workflows against mock fixtures
+- [ ] Mock definitions in YAML — stub HTTP responses, agent outputs, external services
+- [ ] Assertion syntax — validate node outputs, execution order, error handling
+- [ ] Snapshot testing — detect unexpected output changes
+- [ ] CI-friendly output (JUnit XML, exit codes)
+
+### 3. Enhanced MCP Tools
+Make r8r the best workflow engine for AI agents to operate.
+- [ ] `r8r_run_and_wait` tool — synchronous execution with structured output
+- [ ] `r8r_discover` tool — parameter discovery, schema introspection
+- [ ] Structured error responses — actionable error messages agents can reason about
+- [ ] `r8r_lint` tool — validate YAML before submission
+- [ ] `r8r_generate` tool — scaffold workflows from natural language descriptions
+
+### 4. Workflow Linting & Generation Helpers
+Make it trivial for LLMs to produce valid workflow YAML.
+- [ ] `r8r lint` CLI command — validate YAML syntax, node references, dependency cycles
+- [ ] JSON Schema for workflow YAML — enables IDE autocomplete
+- [ ] `r8r generate` CLI — scaffold workflow from template + parameters
+- [ ] Common error suggestions — "did you mean `depends_on` instead of `dependsOn`?"
+
+### 5. Human-in-the-Loop Node
+Unlocks enterprise use cases requiring human approval in automated workflows.
+- [ ] `approval` node type — pause execution, wait for human input
+- [ ] Notification channels — webhook callback, email, Slack
+- [ ] Approval UI in dashboard — review pending approvals, approve/reject with comments
+- [ ] Timeout with default action — auto-approve/reject after configurable wait
+- [ ] Delegation — route approvals to specific users/groups
+
+## Backlog
 
 ### Event Triggers
 - [ ] Kafka consumer trigger
 - [ ] SQS/SNS triggers
-
-## Planned
 
 ### Node Types
 - [ ] `discord` - Discord messaging
@@ -131,10 +169,10 @@ The following features are intentionally **not** on the roadmap to maintain r8r'
 
 ## Contributing
 
-We welcome contributions! Pick an item from "Planned" and open an issue to discuss before starting work.
+We welcome contributions! Pick an item from "Planned" or "Backlog" and open an issue to discuss before starting work.
 
 Priority areas:
-1. New node types (especially `discord`, `telegram`)
-2. Event trigger sources
+1. Synchronous execution & MCP tool improvements (items 1 & 3)
+2. Workflow testing framework (item 2)
 3. Documentation improvements
 4. Test coverage
