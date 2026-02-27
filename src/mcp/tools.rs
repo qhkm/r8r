@@ -1234,9 +1234,9 @@ impl R8rService {
 
         let result = if let Some(name) = &params.workflow_name {
             // Refine existing workflow
-            let workflows = self
+            let stored = self
                 .storage
-                .list_workflows()
+                .get_workflow(name)
                 .await
                 .map_err(|e| {
                     McpError::internal_error(
@@ -1245,7 +1245,7 @@ impl R8rService {
                     )
                 })?;
 
-            let stored = match workflows.iter().find(|w| w.name == *name) {
+            let stored = match stored {
                 Some(w) => w,
                 None => {
                     return Ok(CallToolResult::error(vec![Content::text(

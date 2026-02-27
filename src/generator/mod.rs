@@ -99,6 +99,10 @@ pub async fn resolve_llm_config() -> Result<LlmConfig> {
 /// 3. Calls the LLM to produce YAML.
 /// 4. Validates the YAML and, if invalid, attempts one auto-fix pass.
 pub async fn generate(user_prompt: &str) -> Result<GenerateResult> {
+    if user_prompt.trim().is_empty() {
+        return Err(Error::Config("Prompt must not be empty".to_string()));
+    }
+
     let llm_config = resolve_llm_config().await?;
     let ctx = GeneratorContext::build().await;
     let client = llm::create_llm_client();
@@ -119,6 +123,10 @@ pub async fn generate(user_prompt: &str) -> Result<GenerateResult> {
 /// Identical to [`generate`] but uses the refine prompt which includes the
 /// current YAML so the LLM can make targeted edits.
 pub async fn refine(current_yaml: &str, user_prompt: &str) -> Result<GenerateResult> {
+    if user_prompt.trim().is_empty() {
+        return Err(Error::Config("Prompt must not be empty".to_string()));
+    }
+
     let llm_config = resolve_llm_config().await?;
     let ctx = GeneratorContext::build().await;
     let client = llm::create_llm_client();

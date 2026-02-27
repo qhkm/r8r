@@ -1806,10 +1806,9 @@ async fn cmd_refine(name: &str, prompt_parts: &[String]) -> anyhow::Result<()> {
 
     // Load existing workflow
     let storage = get_storage()?;
-    let workflows = storage.list_workflows().await?;
-    let stored = workflows
-        .iter()
-        .find(|w| w.name == name)
+    let stored = storage
+        .get_workflow(name)
+        .await?
         .ok_or_else(|| anyhow::anyhow!("Workflow '{}' not found", name))?;
 
     let current_yaml = stored.definition.clone();
@@ -1854,9 +1853,22 @@ async fn cmd_refine(name: &str, prompt_parts: &[String]) -> anyhow::Result<()> {
                 let workflow = r8r::workflow::parse_workflow(&result.yaml)?;
                 let now = chrono::Utc::now();
 
+                // Prevent LLM from changing the workflow name
+                if workflow.name != name {
+                    println!(
+                        "⚠ LLM changed workflow name from '{}' to '{}'. Forcing original name.",
+                        name, workflow.name
+                    );
+                    result.yaml = result.yaml.replacen(
+                        &format!("name: {}", workflow.name),
+                        &format!("name: {}", name),
+                        1,
+                    );
+                }
+
                 let updated = StoredWorkflow {
                     id: stored_id.clone(),
-                    name: workflow.name.clone(),
+                    name: name.to_string(),
                     definition: result.yaml.clone(),
                     enabled: stored_enabled,
                     created_at: stored_created_at,
@@ -1864,7 +1876,7 @@ async fn cmd_refine(name: &str, prompt_parts: &[String]) -> anyhow::Result<()> {
                 };
 
                 storage.save_workflow(&updated).await?;
-                println!("\n✓ Workflow '{}' updated", workflow.name);
+                println!("\n✓ Workflow '{}' updated", name);
                 return Ok(());
             }
             "no" | "n" => {
