@@ -128,6 +128,16 @@ pub struct ApproveParams {
     pub comment: Option<String>,
 }
 
+/// Parameters for generating or refining a workflow from a natural language prompt.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GenerateParams {
+    /// Natural language description of the workflow to create or change
+    pub prompt: String,
+    /// If provided, loads and refines this existing workflow instead of creating from scratch
+    #[serde(default)]
+    pub workflow_name: Option<String>,
+}
+
 // ============================================================================
 // Tool Implementations
 // ============================================================================
@@ -1210,6 +1220,79 @@ impl R8rService {
                 "Approval recorded but failed to resume execution: {}",
                 e
             ))])),
+        }
+    }
+
+    #[tool(
+        description = "Generate or refine a workflow from a natural language description. Returns the generated YAML and validation status. Use r8r_create_workflow to save it."
+    )]
+    pub async fn r8r_generate(
+        &self,
+        #[tool(aggr)] params: GenerateParams,
+    ) -> Result<CallToolResult, McpError> {
+        use crate::generator;
+
+        let result = if let Some(name) = &params.workflow_name {
+            // Refine existing workflow
+            let workflows = self
+                .storage
+                .list_workflows()
+                .await
+                .map_err(|e| {
+                    McpError::internal_error(
+                        "storage_error",
+                        Some(json!({"error": e.to_string()})),
+                    )
+                })?;
+
+            let stored = match workflows.iter().find(|w| w.name == *name) {
+                Some(w) => w,
+                None => {
+                    return Ok(CallToolResult::error(vec![Content::text(
+                        json!({
+                            "success": false,
+                            "error": {
+                                "code": "WORKFLOW_NOT_FOUND",
+                                "message": format!("Workflow '{}' not found", name)
+                            }
+                        })
+                        .to_string(),
+                    )]));
+                }
+            };
+
+            generator::refine(&stored.definition, &params.prompt).await
+        } else {
+            generator::generate(&params.prompt).await
+        };
+
+        match result {
+            Ok(gen_result) => {
+                let response = json!({
+                    "success": true,
+                    "data": {
+                        "yaml": gen_result.yaml,
+                        "summary": gen_result.summary,
+                        "validation": {
+                            "valid": gen_result.valid,
+                            "errors": gen_result.errors,
+                        }
+                    }
+                });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&response).unwrap_or_default(),
+                )]))
+            }
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(
+                json!({
+                    "success": false,
+                    "error": {
+                        "code": "GENERATION_FAILED",
+                        "message": e.to_string()
+                    }
+                })
+                .to_string(),
+            )])),
         }
     }
 }
