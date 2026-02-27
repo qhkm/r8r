@@ -5,11 +5,12 @@
 //! other internal components that need to call LLMs without duplicating the
 //! per-provider HTTP logic from the agent node.
 
+use reqwest::header::HeaderValue;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Duration;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::error::{Error, Result};
 
@@ -37,7 +38,7 @@ pub enum LlmProvider {
 // ---------------------------------------------------------------------------
 
 /// Configuration for an LLM call.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct LlmConfig {
     /// LLM provider to use. Defaults to OpenAI.
     #[serde(default)]
@@ -50,7 +51,7 @@ pub struct LlmConfig {
 
     /// API key. Required for OpenAI, Anthropic, and Custom providers;
     /// not used for Ollama.
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub api_key: Option<String>,
 
     /// Override the default endpoint URL for the selected provider.
@@ -68,6 +69,20 @@ pub struct LlmConfig {
     /// HTTP timeout in seconds. Defaults to 60.
     #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: u64,
+}
+
+impl std::fmt::Debug for LlmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmConfig")
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("endpoint", &self.endpoint)
+            .field("temperature", &self.temperature)
+            .field("max_tokens", &self.max_tokens)
+            .field("timeout_seconds", &self.timeout_seconds)
+            .finish()
+    }
 }
 
 fn default_timeout_seconds() -> u64 {
@@ -204,6 +219,12 @@ async fn call_openai(
     })?;
 
     let url = resolve_endpoint(config);
+    let model = config
+        .model
+        .clone()
+        .unwrap_or_else(|| "gpt-4o".to_string());
+
+    debug!(provider = "openai", model = %model, url = %url, "Sending LLM request");
 
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
@@ -214,15 +235,8 @@ async fn call_openai(
     );
     headers.insert(
         reqwest::header::CONTENT_TYPE,
-        "application/json"
-            .parse()
-            .map_err(|_| Error::Node("Invalid content-type header value".to_string()))?,
+        HeaderValue::from_static("application/json"),
     );
-
-    let model = config
-        .model
-        .clone()
-        .unwrap_or_else(|| "gpt-4o".to_string());
 
     let mut messages = Vec::new();
     if let Some(sys) = system {
@@ -246,10 +260,12 @@ async fn call_openai(
         .post(&url)
         .headers(headers)
         .json(&body)
+        .timeout(Duration::from_secs(config.timeout_seconds))
         .send()
         .await?;
 
     let status = response.status();
+    debug!(provider = "openai", status = %status, "Received LLM response");
     let json: serde_json::Value = response.json().await?;
 
     if !status.is_success() {
@@ -301,6 +317,12 @@ async fn call_anthropic(
     })?;
 
     let url = resolve_endpoint(config);
+    let model = config
+        .model
+        .clone()
+        .unwrap_or_else(|| "claude-3-haiku-20240307".to_string());
+
+    debug!(provider = "anthropic", model = %model, url = %url, "Sending LLM request");
 
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
@@ -311,21 +333,12 @@ async fn call_anthropic(
     );
     headers.insert(
         "anthropic-version",
-        "2023-06-01"
-            .parse()
-            .map_err(|_| Error::Node("Invalid anthropic-version header value".to_string()))?,
+        HeaderValue::from_static("2023-06-01"),
     );
     headers.insert(
         reqwest::header::CONTENT_TYPE,
-        "application/json"
-            .parse()
-            .map_err(|_| Error::Node("Invalid content-type header value".to_string()))?,
+        HeaderValue::from_static("application/json"),
     );
-
-    let model = config
-        .model
-        .clone()
-        .unwrap_or_else(|| "claude-3-haiku-20240307".to_string());
 
     let max_tokens = config.max_tokens.unwrap_or(4096);
 
@@ -348,10 +361,12 @@ async fn call_anthropic(
         .post(&url)
         .headers(headers)
         .json(&body)
+        .timeout(Duration::from_secs(config.timeout_seconds))
         .send()
         .await?;
 
     let status = response.status();
+    debug!(provider = "anthropic", status = %status, "Received LLM response");
     let json: serde_json::Value = response.json().await?;
 
     if !status.is_success() {
@@ -405,6 +420,8 @@ async fn call_ollama(
         .clone()
         .unwrap_or_else(|| "llama3".to_string());
 
+    debug!(provider = "ollama", model = %model, url = %url, "Sending LLM request");
+
     let mut messages = Vec::new();
     if let Some(sys) = system {
         messages.push(json!({"role": "system", "content": sys}));
@@ -421,9 +438,15 @@ async fn call_ollama(
         body["options"] = json!({"temperature": temp});
     }
 
-    let response = client.post(&url).json(&body).send().await?;
+    let response = client
+        .post(&url)
+        .json(&body)
+        .timeout(Duration::from_secs(config.timeout_seconds))
+        .send()
+        .await?;
 
     let status = response.status();
+    debug!(provider = "ollama", status = %status, "Received LLM response");
     let json: serde_json::Value = response.json().await?;
 
     if !status.is_success() {
