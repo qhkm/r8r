@@ -123,7 +123,7 @@ r8r includes an **MCP server** (Model Context Protocol) so AI agents can directl
 r8r-mcp
 ```
 
-**Available tools (13):**
+**Available tools (15):**
 
 | Tool | Description |
 |------|-------------|
@@ -141,6 +141,7 @@ r8r-mcp
 | `r8r_test` | Test a workflow with input and assert expected output. Mocks via `pinned_data`. Fully isolated. |
 | `r8r_list_approvals` | List pending approval requests that need action |
 | `r8r_approve` | Approve or reject a pending approval, then resume the paused execution |
+| `r8r_generate` | Generate a workflow from a natural language prompt via LLM |
 
 ## 📊 r8r vs n8n
 

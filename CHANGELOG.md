@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Synchronous Execution
+- **`response_mode: wait_for_result`** on webhook triggers — returns workflow output directly in the HTTP response
+- **`r8r_run_and_wait` MCP tool** — executes a workflow and returns just the output (no execution metadata)
+- Sync execution support across CLI, API, and MCP interfaces
+
+#### Workflow Testing & Mocking
+- **`r8r_test` MCP tool** — test workflows with input assertions and `pinned_data` mocking, fully isolated in-memory
+- **`json_diff` engine** — exact match and subset comparison for test assertions with readable diff output
+
+#### Human-in-the-Loop Approval
+- **`approval` node type** — pauses workflow execution until a human or agent approves/rejects
+- **`r8r_list_approvals` MCP tool** — query pending approval requests by status
+- **`r8r_approve` MCP tool** — resolve an approval and resume the paused execution
+- **Background timeout checker** — auto-resolves expired approvals using configured `default_action` (polls every 30s)
+- Full storage layer with `approval_requests` table, indexes, and expiry queries
+
+#### Prompt-to-Workflow Generation
+- **`r8r create <prompt>` CLI command** — generate workflows from natural language descriptions via LLM
+- **`r8r refine <workflow-name> <prompt>` CLI command** — refine existing workflows with natural language feedback
+- **`r8r_generate` MCP tool** — prompt-to-workflow generation for AI agents
+- **Shared LLM client** (`src/llm.rs`) — supports OpenAI, Anthropic, Ollama, and custom endpoints
+- Context-aware prompt assembly with node catalog, credentials, and example workflows
+- Auto-fix retry: validation failures are fed back to LLM for self-correction
+
 #### Reliability & Durability
 - **Checkpoint-based durable execution** - Workflows automatically persist state after each node, enabling recovery from crashes and graceful shutdowns
 - **Workflow pause/resume API** - New endpoints `POST /api/executions/{id}/pause` and `POST /api/executions/{id}/resume` for manual execution control
@@ -34,7 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Landing page license footer updated from MIT to AGPL-3.0
-- Test count increased from 335+ to 370+
+- Default retry delay changed from 60s to 1s for faster iteration
+- Test count increased from 335+ to 483
+- MCP tool count increased from 11 to 15
 
 ## [0.1.0] - 2026-02-13
 
