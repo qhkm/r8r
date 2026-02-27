@@ -43,6 +43,8 @@ pub mod credentials;
 pub mod dashboard;
 pub mod engine;
 pub mod error;
+pub mod generator;
+pub mod llm;
 pub mod mcp;
 pub mod metrics;
 pub mod nodes;
