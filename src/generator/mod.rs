@@ -227,6 +227,9 @@ fn try_validate(yaml: &str) -> std::result::Result<String, Vec<String>> {
     };
 
     // Structurally validate the workflow.
+    // NOTE: validate_workflow is fail-fast — it reports only the first error.
+    // If the auto-fix pass corrects that error but a second one exists, it will
+    // require another fix cycle. This is a known limitation of the validator.
     if let Err(e) = validate_workflow(&workflow) {
         return Err(vec![e.to_string()]);
     }

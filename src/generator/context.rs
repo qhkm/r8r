@@ -47,29 +47,16 @@ impl GeneratorContext {
         }
     }
 
-    /// Load a curated subset of example workflows from the `examples/` directory.
+    /// Load a curated subset of example workflows, embedded at compile time.
     ///
-    /// Files that do not exist on disk are silently skipped.
+    /// Using `include_str!` ensures examples are always available in production
+    /// binaries without requiring the `examples/` directory on disk at runtime.
     pub fn load_examples() -> Vec<String> {
-        let curated = [
-            "hello-world.yaml",
-            "order-notification.yaml",
-            "smart-classifier.yaml",
-        ];
-
-        // Locate the `examples/` directory relative to the crate root (CARGO_MANIFEST_DIR).
-        let examples_dir = std::path::PathBuf::from(
-            std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string()),
-        )
-        .join("examples");
-
-        curated
-            .iter()
-            .filter_map(|filename| {
-                let path = examples_dir.join(filename);
-                std::fs::read_to_string(&path).ok()
-            })
-            .collect()
+        vec![
+            include_str!("../../examples/hello-world.yaml").to_string(),
+            include_str!("../../examples/order-notification.yaml").to_string(),
+            include_str!("../../examples/smart-classifier.yaml").to_string(),
+        ]
     }
 }
 

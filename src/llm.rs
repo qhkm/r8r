@@ -5,6 +5,12 @@
 //! other internal components that need to call LLMs without duplicating the
 //! per-provider HTTP logic from the agent node.
 
+//! NOTE: `src/nodes/agent.rs` contains a separate, private LLM client with
+//! additional features (ZeptoClaw integration, JSON schema validation,
+//! response_format handling). This module is intentionally separate — it
+//! provides a simpler interface for the generator and other internal tools.
+//! If a provider changes its API shape, both modules need updating.
+
 use reqwest::header::HeaderValue;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -160,17 +166,12 @@ fn resolve_endpoint(config: &LlmConfig) -> String {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Create a `reqwest::Client` with sensible timeout defaults for LLM calls.
-///
-/// Use this when you want a pre-built client rather than passing one in.
-/// The connect timeout is fixed at 10 s; the read/write timeout is taken from
-/// `LlmConfig::timeout_seconds` at call time via `call_llm`.
+/// Creates an HTTP client with a 10-second connection timeout. Per-request
+/// timeouts are applied by call_llm using LlmConfig::timeout_seconds.
 pub fn create_llm_client() -> Client {
     const CONNECT_TIMEOUT_SECS: u64 = 10;
-    const DEFAULT_TIMEOUT_SECS: u64 = 60;
 
     Client::builder()
-        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .build()
         .unwrap_or_else(|e| {

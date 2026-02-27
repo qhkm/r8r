@@ -282,7 +282,21 @@ r8r create fetch HN top stories every morning and send digest to Slack
 r8r refine hn-digest add error handling that notifies via email on failure
 ```
 
-The generator uses your configured LLM provider (set `R8R_AGENT_PROVIDER` and `R8R_AGENT_API_KEY`) to produce valid workflow YAML, validates it, and lets you review before saving.
+Configure your LLM provider:
+
+```bash
+# Required
+export R8R_AGENT_PROVIDER=openai    # openai, anthropic, ollama, custom
+export R8R_AGENT_API_KEY=sk-...     # Not needed for ollama
+
+# Optional overrides (use a different model/provider just for generation)
+export R8R_GENERATOR_PROVIDER=anthropic
+export R8R_GENERATOR_MODEL=claude-sonnet-4-20250514
+export R8R_GENERATOR_API_KEY=sk-ant-...
+export R8R_GENERATOR_ENDPOINT=https://custom-endpoint.example.com
+```
+
+The generator produces valid workflow YAML, validates it, and lets you review before saving.
 
 ## 🔒 Security
 
