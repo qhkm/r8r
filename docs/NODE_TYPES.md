@@ -15,6 +15,7 @@ This document describes all built-in node types available in r8r.
   - [Set](#set)
   - [Variables](#variables)
   - [Wait](#wait)
+  - [Approval](#approval)
 - [Data Processing](#data-processing)
   - [Sort](#sort)
   - [Limit](#limit)
@@ -344,6 +345,40 @@ nodes:
 | `until` | string | No | ISO8601 timestamp to wait until |
 
 **Note**: Maximum wait time is 24 hours.
+
+---
+
+### Approval
+
+Pause execution and wait for a human/agent decision through MCP.
+
+**Type**: `approval`
+
+**Configuration**:
+
+```yaml
+nodes:
+  - id: manager-approval
+    type: approval
+    config:
+      title: "Approve high-value order"
+      description: "Order total exceeds policy threshold"
+      timeout_seconds: 3600
+      default_action: reject
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `title` | string | Yes | Short label shown in approval queues |
+| `description` | string | No | Additional reviewer context |
+| `timeout_seconds` | number | No | Auto-decision timeout in seconds |
+| `default_action` | string | No* | Must be `approve` or `reject`; required when `timeout_seconds` is set |
+
+**Behavior**:
+- Node outputs `{ approval_id, status: "pending", ... }`
+- Executor marks the execution as `paused`
+- Use MCP `r8r_list_approvals` to fetch pending requests
+- Use MCP `r8r_approve` to approve/reject and resume execution
 
 ---
 

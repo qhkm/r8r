@@ -194,7 +194,7 @@ CREATE TABLE workflows (
 CREATE TABLE executions (
     id TEXT PRIMARY KEY,
     workflow_id TEXT REFERENCES workflows(id),
-    status TEXT,  -- pending, running, completed, failed
+    status TEXT,  -- pending, running, paused, completed, failed
     trigger_type TEXT,
     started_at DATETIME,
     finished_at DATETIME,
@@ -229,6 +229,7 @@ CREATE TABLE node_executions (
 | `merge` | Merge multiple inputs |
 | `switch` | Conditional branching |
 | `wait` | Delay execution |
+| `approval` | Pause execution until approved/rejected via MCP |
 | `set` | Set variables |
 | **`agent`** | **Call ZeptoClaw for AI-powered decisions** |
 | **`sandbox`** | **Execute Python/Node/Bash code in isolated environments** |

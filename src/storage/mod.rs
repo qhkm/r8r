@@ -7,8 +7,8 @@ mod sqlite;
 
 pub use dlq::{DeadLetterEntry, DlqStats, DlqStatus, NewDlqEntry};
 pub use models::{
-    Checkpoint, DatabaseHealth, Execution, ExecutionQuery, ExecutionStatus, ExecutionSummary,
-    ExecutionTrace, NodeExecution, StoredWorkflow, WorkflowVersion,
+    ApprovalRequest, Checkpoint, DatabaseHealth, Execution, ExecutionQuery, ExecutionStatus,
+    ExecutionSummary, ExecutionTrace, NodeExecution, StoredWorkflow, WorkflowVersion,
 };
 pub use pool::{ConnectionPool, PoolConfig, PoolStats};
 pub use sqlite::SqliteStorage;

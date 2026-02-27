@@ -5,6 +5,7 @@
 
 mod agent;
 mod aggregate;
+mod approval;
 pub mod circuit_breaker;
 mod crypto;
 mod database;
@@ -36,6 +37,7 @@ mod wait;
 
 pub use agent::AgentNode;
 pub use aggregate::AggregateNode;
+pub use approval::ApprovalNode;
 pub use crypto::CryptoNode;
 pub use database::DatabaseNode;
 pub use datetime::DateTimeNode;

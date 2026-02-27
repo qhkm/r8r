@@ -7,10 +7,10 @@ use serde_json::Value;
 
 use super::types::{Node, NodeContext, NodeResult};
 use super::{
-    AgentNode, AggregateNode, CryptoNode, DatabaseNode, DateTimeNode, DebugNode, DedupeNode,
-    EmailNode, FilterNode, HttpNode, IfNode, LimitNode, MergeNode, S3Node, SetNode, SlackNode,
-    SortNode, SplitNode, SubWorkflowNode, SummarizeNode, SwitchNode, TransformNode, VariablesNode,
-    WaitNode,
+    AgentNode, AggregateNode, ApprovalNode, CryptoNode, DatabaseNode, DateTimeNode, DebugNode,
+    DedupeNode, EmailNode, FilterNode, HttpNode, IfNode, LimitNode, MergeNode, S3Node, SetNode,
+    SlackNode, SortNode, SplitNode, SubWorkflowNode, SummarizeNode, SwitchNode, TransformNode,
+    VariablesNode, WaitNode,
 };
 use crate::error::{Error, Result};
 
@@ -52,6 +52,7 @@ impl NodeRegistry {
         registry.register(Arc::new(SlackNode::new()));
         registry.register(Arc::new(DatabaseNode::new()));
         registry.register(Arc::new(S3Node::new()));
+        registry.register(Arc::new(ApprovalNode::new()));
 
         registry
     }
@@ -144,6 +145,7 @@ mod tests {
         assert!(registry.has("slack"));
         assert!(registry.has("database"));
         assert!(registry.has("s3"));
+        assert!(registry.has("approval"));
         assert!(!registry.has("nonexistent"));
     }
 
@@ -176,5 +178,6 @@ mod tests {
         assert!(types.contains(&"slack"));
         assert!(types.contains(&"database"));
         assert!(types.contains(&"s3"));
+        assert!(types.contains(&"approval"));
     }
 }

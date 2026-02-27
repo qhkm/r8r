@@ -108,6 +108,26 @@ pub struct TestParams {
     pub mode: Option<String>,
 }
 
+/// Parameters for listing approval requests.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListApprovalsParams {
+    /// Filter by status: pending, approved, rejected, expired.
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+/// Parameters for approving or rejecting an approval request.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApproveParams {
+    /// Approval request ID.
+    pub approval_id: String,
+    /// Decision value: approve or reject.
+    pub decision: String,
+    /// Optional decision comment.
+    #[serde(default)]
+    pub comment: Option<String>,
+}
+
 // ============================================================================
 // Tool Implementations
 // ============================================================================
@@ -182,6 +202,50 @@ fn json_diff_recursive(
             }
         }
     }
+}
+
+fn inject_approval_decision_into_checkpoint(
+    checkpoint_outputs: &mut serde_json::Map<String, Value>,
+    approval_id: &str,
+    node_id_hint: Option<&str>,
+    decision: &str,
+    comment: Option<&str>,
+) -> Option<String> {
+    let approved_status = if decision == "approve" {
+        "approved"
+    } else {
+        "rejected"
+    };
+
+    let mut resolved_node_id = node_id_hint
+        .filter(|id| checkpoint_outputs.contains_key(*id))
+        .map(ToOwned::to_owned);
+
+    if resolved_node_id.is_none() {
+        resolved_node_id = checkpoint_outputs.iter().find_map(|(node_id, output)| {
+            output
+                .get("approval_id")
+                .and_then(Value::as_str)
+                .filter(|id| *id == approval_id)
+                .map(|_| node_id.clone())
+        });
+    }
+
+    let node_id = resolved_node_id?;
+    let existing = checkpoint_outputs
+        .get(&node_id)
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let mut output_obj = existing.as_object().cloned().unwrap_or_default();
+    output_obj.insert("approval_id".to_string(), json!(approval_id));
+    output_obj.insert("status".to_string(), json!(approved_status));
+    output_obj.insert("decision".to_string(), json!(decision));
+    output_obj.insert(
+        "comment".to_string(),
+        comment.map(Value::from).unwrap_or(Value::Null),
+    );
+    checkpoint_outputs.insert(node_id.clone(), Value::Object(output_obj));
+    Some(node_id)
 }
 
 #[tool(tool_box)]
@@ -970,6 +1034,184 @@ impl R8rService {
             serde_json::to_string_pretty(&result).unwrap_or_default(),
         )]))
     }
+
+    /// List approval requests, filtered by status (default: pending).
+    #[tool(
+        description = "List workflow approval requests. Default returns pending approvals requiring action."
+    )]
+    pub async fn r8r_list_approvals(
+        &self,
+        #[tool(aggr)] params: ListApprovalsParams,
+    ) -> Result<CallToolResult, McpError> {
+        let status = params.status.as_deref().unwrap_or("pending");
+        let approvals = match self.storage.list_approval_requests(Some(status)).await {
+            Ok(list) => list,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to list approvals: {}",
+                    e
+                ))]));
+            }
+        };
+
+        let items: Vec<Value> = approvals
+            .iter()
+            .map(|a| {
+                json!({
+                    "id": a.id,
+                    "workflow_name": a.workflow_name,
+                    "node_id": a.node_id,
+                    "title": a.title,
+                    "description": a.description,
+                    "status": a.status,
+                    "created_at": a.created_at.to_rfc3339(),
+                    "expires_at": a.expires_at.map(|t| t.to_rfc3339()),
+                    "execution_id": a.execution_id,
+                })
+            })
+            .collect();
+
+        let result = json!({
+            "count": items.len(),
+            "approvals": items,
+        });
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result).unwrap_or_default(),
+        )]))
+    }
+
+    /// Approve/reject a pending approval request and resume execution.
+    #[tool(
+        description = "Approve or reject a pending approval request and resume the paused workflow execution."
+    )]
+    pub async fn r8r_approve(
+        &self,
+        #[tool(aggr)] params: ApproveParams,
+    ) -> Result<CallToolResult, McpError> {
+        if params.decision != "approve" && params.decision != "reject" {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Decision must be \"approve\" or \"reject\", got \"{}\"",
+                params.decision
+            ))]));
+        }
+
+        let mut approval = match self.storage.get_approval_request(&params.approval_id).await {
+            Ok(Some(approval)) => approval,
+            Ok(None) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Approval request not found: {}",
+                    params.approval_id
+                ))]));
+            }
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to load approval request: {}",
+                    e
+                ))]));
+            }
+        };
+
+        if approval.status != "pending" {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Approval {} is already {}, cannot change",
+                params.approval_id, approval.status
+            ))]));
+        }
+
+        let mut checkpoint = match self
+            .storage
+            .get_latest_checkpoint(&approval.execution_id)
+            .await
+        {
+            Ok(Some(checkpoint)) => checkpoint,
+            Ok(None) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "No checkpoint found for execution {}",
+                    approval.execution_id
+                ))]));
+            }
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to load checkpoint: {}",
+                    e
+                ))]));
+            }
+        };
+
+        let mut outputs: serde_json::Map<String, Value> = checkpoint
+            .node_outputs
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        let resolved_node = inject_approval_decision_into_checkpoint(
+            &mut outputs,
+            &approval.id,
+            if approval.node_id.is_empty() {
+                None
+            } else {
+                Some(approval.node_id.as_str())
+            },
+            &params.decision,
+            params.comment.as_deref(),
+        );
+
+        let Some(node_id) = resolved_node else {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Approval {} not found in latest checkpoint outputs",
+                approval.id
+            ))]));
+        };
+
+        checkpoint.node_outputs = Value::Object(outputs);
+        if let Err(e) = self.storage.save_checkpoint(&checkpoint).await {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to update checkpoint with decision: {}",
+                e
+            ))]));
+        }
+
+        let decided_status = if params.decision == "approve" {
+            "approved"
+        } else {
+            "rejected"
+        };
+        approval.status = decided_status.to_string();
+        approval.node_id = node_id;
+        approval.decision_comment = params.comment.clone();
+        approval.decided_by = Some("agent".to_string());
+        approval.decided_at = Some(chrono::Utc::now());
+
+        if let Err(e) = self.storage.save_approval_request(&approval).await {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to persist approval decision: {}",
+                e
+            ))]));
+        }
+
+        match self
+            .executor
+            .resume_from_checkpoint(&approval.execution_id)
+            .await
+        {
+            Ok(execution) => {
+                let result = json!({
+                    "approval_id": approval.id,
+                    "decision": decided_status,
+                    "comment": params.comment,
+                    "execution_id": execution.id,
+                    "execution_status": execution.status.to_string(),
+                    "output": execution.output,
+                });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).unwrap_or_default(),
+                )]))
+            }
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Approval recorded but failed to resume execution: {}",
+                e
+            ))])),
+        }
+    }
 }
 
 #[tool(tool_box)]
@@ -1072,6 +1314,111 @@ nodes:
         let data: Value = serde_json::from_str(text).unwrap();
         assert!(data["execution_id"].is_string());
         assert_eq!(data["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn test_r8r_list_approvals_empty() {
+        let service = test_service();
+        let params = ListApprovalsParams { status: None };
+        let result = service.r8r_list_approvals(params).await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = extract_text(&result);
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["count"], 0);
+        assert_eq!(data["approvals"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_r8r_approve_not_found() {
+        let service = test_service();
+        let params = ApproveParams {
+            approval_id: "missing".to_string(),
+            decision: "approve".to_string(),
+            comment: None,
+        };
+        let result = service.r8r_approve(params).await.unwrap();
+        assert!(result.is_error.unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn test_r8r_approve_invalid_decision() {
+        let service = test_service();
+        let params = ApproveParams {
+            approval_id: "any".to_string(),
+            decision: "maybe".to_string(),
+            comment: None,
+        };
+        let result = service.r8r_approve(params).await.unwrap();
+        assert!(result.is_error.unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn test_r8r_approval_workflow_e2e() {
+        let service = test_service();
+        let yaml = r#"
+name: test-approval
+description: Tests approval pause/resume flow
+version: 1
+nodes:
+  - id: prepare
+    type: set
+    config:
+      fields:
+        - name: amount
+          value: "1500"
+  - id: get-approval
+    type: approval
+    config:
+      title: "Approve large order"
+      description: "Order exceeds $1000"
+    depends_on: [prepare]
+  - id: finalize
+    type: set
+    config:
+      fields:
+        - name: status
+          value: "processed"
+        - name: approved
+          value: "{{ nodes.get-approval.output.decision }}"
+    depends_on: [get-approval]
+"#;
+        save_test_workflow(&service, "test-approval", yaml).await;
+
+        let execute = service
+            .r8r_execute(ExecuteParams {
+                workflow: "test-approval".to_string(),
+                input: Some(json!({})),
+            })
+            .await
+            .unwrap();
+        assert!(!execute.is_error.unwrap_or(false));
+        let execute_data: Value = serde_json::from_str(extract_text(&execute)).unwrap();
+        assert_eq!(execute_data["status"], "paused");
+
+        let listed = service
+            .r8r_list_approvals(ListApprovalsParams { status: None })
+            .await
+            .unwrap();
+        assert!(!listed.is_error.unwrap_or(false));
+        let listed_data: Value = serde_json::from_str(extract_text(&listed)).unwrap();
+        assert_eq!(listed_data["count"], 1);
+        let approval_id = listed_data["approvals"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let approved = service
+            .r8r_approve(ApproveParams {
+                approval_id,
+                decision: "approve".to_string(),
+                comment: Some("Looks good".to_string()),
+            })
+            .await
+            .unwrap();
+        assert!(!approved.is_error.unwrap_or(false));
+        let approved_data: Value = serde_json::from_str(extract_text(&approved)).unwrap();
+        assert_eq!(approved_data["decision"], "approved");
+        assert_eq!(approved_data["execution_status"], "completed");
     }
 
     #[tokio::test]

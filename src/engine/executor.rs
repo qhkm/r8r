@@ -802,6 +802,30 @@ impl Executor {
                             checkpoints_enabled,
                         )
                         .await?;
+
+                        self.sync_approval_request_node_id(node_id, &last_output)
+                            .await?;
+
+                        if Self::is_pending_approval(node, &last_output) {
+                            info!(
+                                "Approval node '{}' requires approval, pausing execution {}",
+                                node_id, execution_id
+                            );
+                            execution.status = ExecutionStatus::Paused;
+                            execution.output = Some(last_output.clone());
+                            execution.finished_at = Some(Utc::now());
+                            self.storage.save_execution(&execution).await?;
+                            emit_execution_finished(self.monitor.as_ref(), &execution);
+
+                            metrics::dec_active_executions();
+                            metrics::record_workflow_execution("paused", trigger_type);
+
+                            if let Some(ref registry) = self.pause_registry {
+                                registry.unregister(&execution_id).await;
+                            }
+
+                            return Ok(execution);
+                        }
                     }
                     Err(e) => {
                         if let Some(recovery_output) = on_error_recovery_output(node) {
@@ -1423,6 +1447,27 @@ impl Executor {
                             checkpoints_enabled,
                         )
                         .await?;
+
+                        self.sync_approval_request_node_id(node_id, &last_output)
+                            .await?;
+
+                        if Self::is_pending_approval(node, &last_output) {
+                            info!(
+                                "Approval node '{}' requires approval, pausing resumed execution {}",
+                                node_id, execution_id
+                            );
+                            execution.status = ExecutionStatus::Paused;
+                            execution.output = Some(last_output.clone());
+                            execution.finished_at = Some(Utc::now());
+                            self.storage.save_execution(&execution).await?;
+                            emit_execution_finished(self.monitor.as_ref(), &execution);
+
+                            if let Some(ref registry) = self.pause_registry {
+                                registry.unregister(&execution_id).await;
+                            }
+
+                            return Ok(execution);
+                        }
                     }
                     Err(e) => {
                         if let Some(recovery_output) = on_error_recovery_output(node) {
@@ -1558,6 +1603,36 @@ impl Executor {
             "Checkpoint saved for execution {} at node {}",
             execution_id, node_id
         );
+        Ok(())
+    }
+
+    fn is_pending_approval(node: &WorkflowNode, output: &Value) -> bool {
+        node.node_type == "approval"
+            && output
+                .get("status")
+                .and_then(Value::as_str)
+                .is_some_and(|status| status == "pending")
+    }
+
+    async fn sync_approval_request_node_id(&self, node_id: &str, output: &Value) -> Result<()> {
+        let Some(approval_id) = output.get("approval_id").and_then(Value::as_str) else {
+            return Ok(());
+        };
+
+        let Some(mut request) = self.storage.get_approval_request(approval_id).await? else {
+            warn!(
+                "Approval output referenced request '{}' but no request row was found",
+                approval_id
+            );
+            return Ok(());
+        };
+
+        if request.node_id == node_id {
+            return Ok(());
+        }
+
+        request.node_id = node_id.to_string();
+        self.storage.save_approval_request(&request).await?;
         Ok(())
     }
 

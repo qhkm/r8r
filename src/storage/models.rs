@@ -174,3 +174,21 @@ pub struct Checkpoint {
     pub node_outputs: serde_json::Value, // All outputs accumulated so far
     pub created_at: DateTime<Utc>,
 }
+
+/// A human-in-the-loop approval request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalRequest {
+    pub id: String,
+    pub execution_id: String,
+    pub node_id: String,
+    pub workflow_name: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub decision_comment: Option<String>,
+    pub decided_by: Option<String>,
+    pub context_data: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub decided_at: Option<DateTime<Utc>>,
+}

@@ -1025,8 +1025,8 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     };
     use r8r::shutdown::ShutdownCoordinator;
     use r8r::triggers::{
-        create_webhook_routes, DelayedEventProcessor, EventSubscriber, NativeEventBackend,
-        Scheduler,
+        create_webhook_routes, ApprovalTimeoutChecker, DelayedEventProcessor, EventSubscriber,
+        NativeEventBackend, Scheduler,
     };
     use std::sync::Arc;
     use tower_http::trace::TraceLayer;
@@ -1107,6 +1107,17 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
             "unavailable"
         }
     };
+
+    // Start approval timeout checker (processes expired approval requests)
+    let timeout_executor = {
+        let mut exec = r8r::engine::Executor::new((*registry).clone(), storage.clone());
+        exec = exec.with_monitor(monitor.clone());
+        exec = exec.with_pause_registry(r8r::engine::PauseRegistry::new());
+        Arc::new(exec)
+    };
+    let mut approval_timeout_checker =
+        ApprovalTimeoutChecker::new(storage.clone(), timeout_executor);
+    approval_timeout_checker.start().await;
 
     // Create API routes (without state)
     let api_routes = create_api_routes();
@@ -1192,9 +1203,10 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         }
     }
 
-    // Gracefully stop the event subscriber, delayed processor, and scheduler
+    // Gracefully stop background tasks
     let _ = event_subscriber.stop().await;
     let _ = delayed_processor.stop().await;
+    approval_timeout_checker.stop().await;
     scheduler.stop().await?;
 
     println!("Server stopped.");
