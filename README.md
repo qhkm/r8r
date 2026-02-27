@@ -263,10 +263,26 @@ r8r templates list                    # List available templates
 r8r templates show <name>             # Show template details
 r8r templates use <name> -o out.yaml  # Create workflow from template
 
+# Generate from natural language
+r8r create <description>              # Generate workflow from prompt
+r8r refine <name> <description>       # Refine existing workflow
+
 # Security
 r8r credentials set <name>            # Store secret
 r8r credentials list                  # List (masked)
 ```
+
+### Generate Workflows from Natural Language
+
+```bash
+# Create a new workflow from a description
+r8r create fetch HN top stories every morning and send digest to Slack
+
+# Refine an existing workflow
+r8r refine hn-digest add error handling that notifies via email on failure
+```
+
+The generator uses your configured LLM provider (set `R8R_AGENT_PROVIDER` and `R8R_AGENT_API_KEY`) to produce valid workflow YAML, validates it, and lets you review before saving.
 
 ## 🔒 Security
 
