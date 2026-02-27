@@ -61,6 +61,21 @@ enum Commands {
         #[arg(value_enum)]
         shell: CompletionShell,
     },
+    /// Generate a workflow from a natural language description
+    #[command(alias = "generate")]
+    Create {
+        /// Natural language description of the workflow to create
+        #[arg(trailing_var_arg = true, required = true)]
+        prompt: Vec<String>,
+    },
+    /// Refine an existing workflow with a natural language change description
+    Refine {
+        /// Name of the workflow to refine
+        name: String,
+        /// Description of the change to make
+        #[arg(trailing_var_arg = true, required = true)]
+        prompt: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -349,6 +364,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Completions { shell } => {
             cmd_completions(shell)?;
         }
+        Commands::Create { prompt } => cmd_create(&prompt).await?,
+        Commands::Refine { name, prompt } => cmd_refine(&name, &prompt).await?,
     }
 
     Ok(())
@@ -1688,4 +1705,178 @@ fn get_storage() -> anyhow::Result<r8r::storage::SqliteStorage> {
         std::fs::create_dir_all(parent)?;
     }
     Ok(SqliteStorage::open(&db_path)?)
+}
+
+// ============================================================================
+// Generate / Refine Commands
+// ============================================================================
+
+async fn cmd_create(prompt_parts: &[String]) -> anyhow::Result<()> {
+    use r8r::generator;
+    use r8r::storage::StoredWorkflow;
+    use std::io::{self, BufRead, Write};
+
+    let user_prompt = prompt_parts.join(" ");
+    if user_prompt.trim().is_empty() {
+        anyhow::bail!(
+            "Please provide a description. Example: r8r create fetch HN top stories and send to Slack"
+        );
+    }
+
+    println!("Generating workflow...\n");
+
+    let mut result = generator::generate(&user_prompt)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    loop {
+        // Show the YAML
+        println!("{}", result.yaml);
+        println!();
+
+        if result.valid {
+            println!("✓ {}", result.summary);
+        } else {
+            println!("⚠ Workflow has validation errors:");
+            for err in &result.errors {
+                println!("  - {}", err);
+            }
+        }
+
+        println!();
+        print!("Save? [yes/no/or type feedback to refine] > ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().lock().read_line(&mut input)?;
+        let input = input.trim();
+
+        match input.to_lowercase().as_str() {
+            "yes" | "y" => {
+                if !result.valid {
+                    println!(
+                        "Cannot save — workflow has validation errors. Provide feedback to fix or type 'no' to discard."
+                    );
+                    continue;
+                }
+
+                let workflow = r8r::workflow::parse_workflow(&result.yaml)?;
+                let storage = get_storage()?;
+                let now = chrono::Utc::now();
+
+                let stored = StoredWorkflow {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    name: workflow.name.clone(),
+                    definition: result.yaml.clone(),
+                    enabled: true,
+                    created_at: now,
+                    updated_at: now,
+                };
+
+                storage.save_workflow(&stored).await?;
+                println!("\n✓ Workflow '{}' saved", workflow.name);
+                println!("Run with: r8r workflows run {}", workflow.name);
+                return Ok(());
+            }
+            "no" | "n" => {
+                println!("Discarded.");
+                return Ok(());
+            }
+            feedback => {
+                println!("\nRefining...\n");
+                result = generator::refine(&result.yaml, feedback)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+            }
+        }
+    }
+}
+
+async fn cmd_refine(name: &str, prompt_parts: &[String]) -> anyhow::Result<()> {
+    use r8r::generator;
+    use r8r::storage::StoredWorkflow;
+    use std::io::{self, BufRead, Write};
+
+    let user_prompt = prompt_parts.join(" ");
+    if user_prompt.trim().is_empty() {
+        anyhow::bail!(
+            "Please describe the change. Example: r8r refine my-workflow add retry with exponential backoff"
+        );
+    }
+
+    // Load existing workflow
+    let storage = get_storage()?;
+    let workflows = storage.list_workflows().await?;
+    let stored = workflows
+        .iter()
+        .find(|w| w.name == name)
+        .ok_or_else(|| anyhow::anyhow!("Workflow '{}' not found", name))?;
+
+    let current_yaml = stored.definition.clone();
+    let stored_id = stored.id.clone();
+    let stored_enabled = stored.enabled;
+    let stored_created_at = stored.created_at;
+
+    println!("Refining workflow '{}'...\n", name);
+
+    let mut result = generator::refine(&current_yaml, &user_prompt)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    loop {
+        println!("{}", result.yaml);
+        println!();
+
+        if result.valid {
+            println!("✓ {}", result.summary);
+        } else {
+            println!("⚠ Workflow has validation errors:");
+            for err in &result.errors {
+                println!("  - {}", err);
+            }
+        }
+
+        println!();
+        print!("Save? [yes/no/or type feedback to refine further] > ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().lock().read_line(&mut input)?;
+        let input = input.trim();
+
+        match input.to_lowercase().as_str() {
+            "yes" | "y" => {
+                if !result.valid {
+                    println!("Cannot save — workflow has validation errors.");
+                    continue;
+                }
+
+                let workflow = r8r::workflow::parse_workflow(&result.yaml)?;
+                let now = chrono::Utc::now();
+
+                let updated = StoredWorkflow {
+                    id: stored_id.clone(),
+                    name: workflow.name.clone(),
+                    definition: result.yaml.clone(),
+                    enabled: stored_enabled,
+                    created_at: stored_created_at,
+                    updated_at: now,
+                };
+
+                storage.save_workflow(&updated).await?;
+                println!("\n✓ Workflow '{}' updated", workflow.name);
+                return Ok(());
+            }
+            "no" | "n" => {
+                println!("Discarded.");
+                return Ok(());
+            }
+            feedback => {
+                println!("\nRefining further...\n");
+                result = generator::refine(&result.yaml, feedback)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+            }
+        }
+    }
 }
