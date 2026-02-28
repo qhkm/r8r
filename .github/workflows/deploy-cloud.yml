@@ -1,0 +1,109 @@
+name: Deploy Cloud
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Container tag (leave empty to use commit SHA)"
+        required: false
+        type: string
+      bootstrap_vps:
+        description: "Install Docker/Compose on Ubuntu/Debian VPS before deploy"
+        required: true
+        default: false
+        type: boolean
+      deploy_now:
+        description: "Deploy to remote host after image push"
+        required: true
+        default: true
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/r8r
+
+jobs:
+  build_push:
+    name: Build and Push Image
+    runs-on: ubuntu-latest
+    outputs:
+      image_ref: ${{ steps.meta.outputs.image_ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image reference
+        id: meta
+        run: |
+          tag="${{ github.event.inputs.image_tag }}"
+          if [ -z "$tag" ]; then
+            tag="${GITHUB_SHA::12}"
+          fi
+          image_ref="${REGISTRY}/${IMAGE_NAME}:${tag}"
+          echo "image_ref=$image_ref" >> "$GITHUB_OUTPUT"
+          echo "Image: $image_ref"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.image_ref }}
+
+  deploy:
+    name: Deploy Remote Host
+    needs: build_push
+    if: ${{ github.event.inputs.deploy_now == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SSH key
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Deploy with script
+        env:
+          IMAGE_REF: ${{ needs.build_push.outputs.image_ref }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+          R8R_MONITOR_TOKEN: ${{ secrets.R8R_MONITOR_TOKEN }}
+          R8R_API_KEY: ${{ secrets.R8R_API_KEY }}
+          R8R_CORS_ORIGINS: ${{ secrets.R8R_CORS_ORIGINS }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          chmod +x scripts/deploy-cloud.sh
+          args=(
+            --host "$DEPLOY_HOST"
+            --user "$DEPLOY_USER"
+            --ssh-key "$HOME/.ssh/id_ed25519"
+            --image "$IMAGE_REF"
+            --monitor-token "$R8R_MONITOR_TOKEN"
+            --registry-username "$GHCR_USERNAME"
+            --registry-token "$GHCR_TOKEN"
+          )
+
+          if [ -n "${DEPLOY_SSH_PORT:-}" ]; then
+            args+=(--ssh-port "$DEPLOY_SSH_PORT")
+          fi
+          if [ -n "${R8R_API_KEY:-}" ]; then
+            args+=(--api-key "$R8R_API_KEY")
+          fi
+          if [ -n "${R8R_CORS_ORIGINS:-}" ]; then
+            args+=(--cors-origins "$R8R_CORS_ORIGINS")
+          fi
+          if [ "${{ github.event.inputs.bootstrap_vps }}" = "true" ]; then
+            args+=(--bootstrap)
+          fi
+
+          ./scripts/deploy-cloud.sh "${args[@]}"
