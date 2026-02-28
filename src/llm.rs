@@ -16,6 +16,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use crate::error::{Error, Result};
@@ -136,6 +137,23 @@ pub struct LlmUsage {
 }
 
 // ---------------------------------------------------------------------------
+// Streaming types
+// ---------------------------------------------------------------------------
+
+/// Events emitted by a streaming LLM response.
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    /// A chunk of assistant text.
+    TextDelta(String),
+    /// Tool call start (name and identifier).
+    ToolCallStart { id: String, name: String },
+    /// Tool call argument chunk.
+    ToolCallDelta { id: String, arguments: String },
+    /// Stream completed.
+    Done,
+}
+
+// ---------------------------------------------------------------------------
 // Default endpoint helpers
 // ---------------------------------------------------------------------------
 
@@ -175,7 +193,10 @@ pub fn create_llm_client() -> Client {
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .build()
         .unwrap_or_else(|e| {
-            warn!("Failed to build LLM HTTP client with timeout defaults: {}", e);
+            warn!(
+                "Failed to build LLM HTTP client with timeout defaults: {}",
+                e
+            );
             Client::new()
         })
 }
@@ -199,9 +220,148 @@ pub async fn call_llm(
     user: &str,
 ) -> Result<LlmResponse> {
     match config.provider {
-        LlmProvider::Openai | LlmProvider::Custom => call_openai(client, config, system, user).await,
+        LlmProvider::Openai | LlmProvider::Custom => {
+            call_openai(client, config, system, user).await
+        }
         LlmProvider::Anthropic => call_anthropic(client, config, system, user).await,
         LlmProvider::Ollama => call_ollama(client, config, system, user).await,
+    }
+}
+
+/// Call the LLM with streaming, returning a channel of parsed stream events.
+///
+/// `messages` should contain OpenAI-style role/content objects.
+pub async fn call_llm_streaming(
+    client: &Client,
+    config: &LlmConfig,
+    system: Option<&str>,
+    messages: &[serde_json::Value],
+    tools: Option<&[serde_json::Value]>,
+) -> Result<mpsc::Receiver<StreamEvent>> {
+    let (tx, rx) = mpsc::channel(256);
+
+    match config.provider {
+        LlmProvider::Openai | LlmProvider::Custom => {
+            let response =
+                build_openai_streaming_request(client, config, system, messages, tools).await?;
+            tokio::spawn(async move {
+                stream_sse_lines(response, tx, parse_openai_sse_line).await;
+            });
+        }
+        LlmProvider::Anthropic => {
+            let response =
+                build_anthropic_streaming_request(client, config, system, messages, tools).await?;
+            tokio::spawn(async move {
+                stream_sse_lines(response, tx, parse_anthropic_sse_line).await;
+            });
+        }
+        LlmProvider::Ollama => {
+            let response = build_ollama_streaming_request(client, config, system, messages).await?;
+            tokio::spawn(async move {
+                stream_ndjson_lines(response, tx).await;
+            });
+        }
+    }
+
+    Ok(rx)
+}
+
+// ---------------------------------------------------------------------------
+// SSE/NDJSON parsers
+// ---------------------------------------------------------------------------
+
+/// Parse one OpenAI-compatible SSE line into a stream event.
+pub fn parse_openai_sse_line(line: &str) -> Option<StreamEvent> {
+    let data = line.strip_prefix("data: ")?;
+    if data == "[DONE]" {
+        return Some(StreamEvent::Done);
+    }
+    let v: serde_json::Value = serde_json::from_str(data).ok()?;
+    let delta = &v["choices"][0]["delta"];
+
+    if let Some(tool_calls) = delta["tool_calls"].as_array() {
+        if let Some(tc) = tool_calls.first() {
+            if let Some(name) = tc["function"]["name"].as_str() {
+                let id = tc["id"].as_str().unwrap_or("").to_string();
+                return Some(StreamEvent::ToolCallStart {
+                    id,
+                    name: name.to_string(),
+                });
+            }
+            if let Some(arguments) = tc["function"]["arguments"].as_str() {
+                if !arguments.is_empty() {
+                    let id = tc["id"].as_str().unwrap_or("").to_string();
+                    return Some(StreamEvent::ToolCallDelta {
+                        id,
+                        arguments: arguments.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    if let Some(content) = delta["content"].as_str() {
+        if !content.is_empty() {
+            return Some(StreamEvent::TextDelta(content.to_string()));
+        }
+    }
+
+    None
+}
+
+/// Parse one Anthropic SSE line into a stream event.
+pub fn parse_anthropic_sse_line(line: &str) -> Option<StreamEvent> {
+    let data = line.strip_prefix("data: ")?;
+    let v: serde_json::Value = serde_json::from_str(data).ok()?;
+
+    match v["type"].as_str()? {
+        "content_block_start" => {
+            let block = &v["content_block"];
+            if block["type"].as_str()? == "tool_use" {
+                return Some(StreamEvent::ToolCallStart {
+                    id: block["id"].as_str().unwrap_or("").to_string(),
+                    name: block["name"].as_str().unwrap_or("").to_string(),
+                });
+            }
+            None
+        }
+        "content_block_delta" => {
+            let delta = &v["delta"];
+            match delta["type"].as_str()? {
+                "text_delta" => {
+                    let text = delta["text"].as_str()?;
+                    if text.is_empty() {
+                        None
+                    } else {
+                        Some(StreamEvent::TextDelta(text.to_string()))
+                    }
+                }
+                "input_json_delta" => {
+                    let partial_json = delta["partial_json"].as_str()?;
+                    Some(StreamEvent::ToolCallDelta {
+                        id: String::new(),
+                        arguments: partial_json.to_string(),
+                    })
+                }
+                _ => None,
+            }
+        }
+        "message_stop" => Some(StreamEvent::Done),
+        _ => None,
+    }
+}
+
+/// Parse one Ollama NDJSON line into a stream event.
+pub fn parse_ollama_ndjson_line(line: &str) -> Option<StreamEvent> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v["done"].as_bool() == Some(true) {
+        return Some(StreamEvent::Done);
+    }
+    let content = v["message"]["content"].as_str()?;
+    if content.is_empty() {
+        None
+    } else {
+        Some(StreamEvent::TextDelta(content.to_string()))
     }
 }
 
@@ -220,10 +380,7 @@ async fn call_openai(
     })?;
 
     let url = resolve_endpoint(config);
-    let model = config
-        .model
-        .clone()
-        .unwrap_or_else(|| "gpt-4o".to_string());
+    let model = config.model.clone().unwrap_or_else(|| "gpt-4o".to_string());
 
     debug!(provider = "openai", model = %model, url = %url, "Sending LLM request");
 
@@ -281,15 +438,10 @@ async fn call_openai(
 
     let content = json["choices"][0]["message"]["content"]
         .as_str()
-        .ok_or_else(|| {
-            Error::Node("Could not extract content from OpenAI response".to_string())
-        })?
+        .ok_or_else(|| Error::Node("Could not extract content from OpenAI response".to_string()))?
         .to_string();
 
-    let returned_model = json["model"]
-        .as_str()
-        .unwrap_or(&model)
-        .to_string();
+    let returned_model = json["model"].as_str().unwrap_or(&model).to_string();
 
     let usage = if json.get("usage").is_some() {
         Some(LlmUsage {
@@ -305,6 +457,62 @@ async fn call_openai(
         model: returned_model,
         usage,
     })
+}
+
+async fn build_openai_streaming_request(
+    client: &Client,
+    config: &LlmConfig,
+    system: Option<&str>,
+    messages: &[serde_json::Value],
+    tools: Option<&[serde_json::Value]>,
+) -> Result<reqwest::Response> {
+    let api_key = config.api_key.as_deref().ok_or_else(|| {
+        Error::Node("OpenAI API key is required. Set `api_key` in LlmConfig.".to_string())
+    })?;
+    let url = resolve_endpoint(config);
+    let model = config.model.clone().unwrap_or_else(|| "gpt-4o".to_string());
+
+    let mut all_messages = Vec::new();
+    if let Some(sys) = system {
+        all_messages.push(json!({"role": "system", "content": sys}));
+    }
+    all_messages.extend_from_slice(messages);
+
+    let mut body = json!({
+        "model": model,
+        "messages": all_messages,
+        "stream": true,
+    });
+    if let Some(temp) = config.temperature {
+        body["temperature"] = json!(temp);
+    }
+    if let Some(max_tok) = config.max_tokens {
+        body["max_tokens"] = json!(max_tok);
+    }
+    if let Some(tool_defs) = tools {
+        body["tools"] = json!(tool_defs);
+    }
+
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .timeout(Duration::from_secs(config.timeout_seconds))
+        .send()
+        .await
+        .map_err(Error::Http)?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(Error::Node(format!(
+            "OpenAI API error {}: {}",
+            status, text
+        )));
+    }
+
+    Ok(response)
 }
 
 async fn call_anthropic(
@@ -332,10 +540,7 @@ async fn call_anthropic(
             .parse()
             .map_err(|_| Error::Node("Invalid Anthropic API key format".to_string()))?,
     );
-    headers.insert(
-        "anthropic-version",
-        HeaderValue::from_static("2023-06-01"),
-    );
+    headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
     headers.insert(
         reqwest::header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
@@ -387,10 +592,7 @@ async fn call_anthropic(
         })?
         .to_string();
 
-    let returned_model = json["model"]
-        .as_str()
-        .unwrap_or(&model)
-        .to_string();
+    let returned_model = json["model"].as_str().unwrap_or(&model).to_string();
 
     let usage = if json.get("usage").is_some() {
         Some(LlmUsage {
@@ -408,6 +610,62 @@ async fn call_anthropic(
     })
 }
 
+async fn build_anthropic_streaming_request(
+    client: &Client,
+    config: &LlmConfig,
+    system: Option<&str>,
+    messages: &[serde_json::Value],
+    tools: Option<&[serde_json::Value]>,
+) -> Result<reqwest::Response> {
+    let api_key = config.api_key.as_deref().ok_or_else(|| {
+        Error::Node("Anthropic API key is required. Set `api_key` in LlmConfig.".to_string())
+    })?;
+    let url = resolve_endpoint(config);
+    let model = config
+        .model
+        .clone()
+        .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
+    let max_tokens = config.max_tokens.unwrap_or(4096);
+
+    let mut body = json!({
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": messages,
+        "stream": true,
+    });
+    if let Some(sys) = system {
+        body["system"] = json!(sys);
+    }
+    if let Some(temp) = config.temperature {
+        body["temperature"] = json!(temp);
+    }
+    if let Some(tool_defs) = tools {
+        body["tools"] = json!(tool_defs);
+    }
+
+    let response = client
+        .post(&url)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .timeout(Duration::from_secs(config.timeout_seconds))
+        .send()
+        .await
+        .map_err(Error::Http)?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(Error::Node(format!(
+            "Anthropic API error {}: {}",
+            status, text
+        )));
+    }
+
+    Ok(response)
+}
+
 async fn call_ollama(
     client: &Client,
     config: &LlmConfig,
@@ -416,10 +674,7 @@ async fn call_ollama(
 ) -> Result<LlmResponse> {
     let url = resolve_endpoint(config);
 
-    let model = config
-        .model
-        .clone()
-        .unwrap_or_else(|| "llama3".to_string());
+    let model = config.model.clone().unwrap_or_else(|| "llama3".to_string());
 
     debug!(provider = "ollama", model = %model, url = %url, "Sending LLM request");
 
@@ -460,16 +715,11 @@ async fn call_ollama(
 
     let content = json["message"]["content"]
         .as_str()
-        .ok_or_else(|| {
-            Error::Node("Could not extract content from Ollama response".to_string())
-        })?
+        .ok_or_else(|| Error::Node("Could not extract content from Ollama response".to_string()))?
         .to_string();
 
     // Ollama echoes the model name in the response; fall back to the config value.
-    let returned_model = json["model"]
-        .as_str()
-        .unwrap_or(&model)
-        .to_string();
+    let returned_model = json["model"].as_str().unwrap_or(&model).to_string();
 
     let usage = if json.get("prompt_eval_count").is_some() {
         Some(LlmUsage {
@@ -485,4 +735,101 @@ async fn call_ollama(
         model: returned_model,
         usage,
     })
+}
+
+async fn build_ollama_streaming_request(
+    client: &Client,
+    config: &LlmConfig,
+    system: Option<&str>,
+    messages: &[serde_json::Value],
+) -> Result<reqwest::Response> {
+    let url = resolve_endpoint(config);
+    let model = config.model.clone().unwrap_or_else(|| "llama3".to_string());
+
+    let mut all_messages = Vec::new();
+    if let Some(sys) = system {
+        all_messages.push(json!({"role": "system", "content": sys}));
+    }
+    all_messages.extend_from_slice(messages);
+
+    let mut body = json!({
+        "model": model,
+        "messages": all_messages,
+        "stream": true,
+    });
+    if let Some(temp) = config.temperature {
+        body["options"] = json!({"temperature": temp});
+    }
+
+    let response = client
+        .post(&url)
+        .json(&body)
+        .timeout(Duration::from_secs(config.timeout_seconds))
+        .send()
+        .await
+        .map_err(Error::Http)?;
+
+    Ok(response)
+}
+
+async fn stream_sse_lines(
+    mut response: reqwest::Response,
+    tx: mpsc::Sender<StreamEvent>,
+    parser: fn(&str) -> Option<StreamEvent>,
+) {
+    let mut buffer = String::new();
+
+    while let Ok(Some(chunk)) = response.chunk().await {
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(newline_pos) = buffer.find('\n') {
+            let line = buffer[..newline_pos].trim().to_string();
+            buffer = buffer[newline_pos + 1..].to_string();
+
+            if line.is_empty() || line.starts_with(':') {
+                continue;
+            }
+
+            if let Some(event) = parser(&line) {
+                let is_done = matches!(event, StreamEvent::Done);
+                if tx.send(event).await.is_err() {
+                    return;
+                }
+                if is_done {
+                    return;
+                }
+            }
+        }
+    }
+
+    let _ = tx.send(StreamEvent::Done).await;
+}
+
+async fn stream_ndjson_lines(mut response: reqwest::Response, tx: mpsc::Sender<StreamEvent>) {
+    let mut buffer = String::new();
+
+    while let Ok(Some(chunk)) = response.chunk().await {
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(newline_pos) = buffer.find('\n') {
+            let line = buffer[..newline_pos].trim().to_string();
+            buffer = buffer[newline_pos + 1..].to_string();
+
+            if line.is_empty() {
+                continue;
+            }
+
+            if let Some(event) = parse_ollama_ndjson_line(&line) {
+                let is_done = matches!(event, StreamEvent::Done);
+                if tx.send(event).await.is_err() {
+                    return;
+                }
+                if is_done {
+                    return;
+                }
+            }
+        }
+    }
+
+    let _ = tx.send(StreamEvent::Done).await;
 }

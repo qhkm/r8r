@@ -8,7 +8,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -75,6 +75,12 @@ enum Commands {
         /// Description of the change to make
         #[arg(trailing_var_arg = true, required = true)]
         prompt: Vec<String>,
+    },
+    /// Interactive REPL — create, manage, and debug workflows with AI
+    Chat {
+        /// Resume a previous session
+        #[arg(long, num_args = 0..=1, default_missing_value = "")]
+        resume: Option<String>,
     },
 }
 
@@ -272,20 +278,35 @@ fn parse_var(s: &str) -> std::result::Result<(String, String), String> {
     Ok((s[..pos].to_string(), s[pos + 1..].to_string()))
 }
 
+fn init_logging(for_chat_tui: bool) {
+    let default_filter = if for_chat_tui { "r8r=warn" } else { "r8r=info" };
+    let env_filter = tracing_subscriber::EnvFilter::new(
+        std::env::var("RUST_LOG").unwrap_or_else(|_| default_filter.into()),
+    );
+
+    if for_chat_tui {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::sink))
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize logging
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "r8r=info".into()),
-        ))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-
     let cli = Cli::parse();
+    let for_chat_tui = matches!(cli.command, None | Some(Commands::Chat { .. }));
+    init_logging(for_chat_tui);
 
     match cli.command {
-        Commands::Workflows { action } => match action {
+        None => cmd_chat(None).await?,
+        Some(Commands::Chat { resume }) => cmd_chat(resume).await?,
+        Some(Commands::Workflows { action }) => match action {
             WorkflowActions::List => cmd_workflows_list().await?,
             WorkflowActions::Create { file } => cmd_workflows_create(&file).await?,
             WorkflowActions::Run {
@@ -336,9 +357,9 @@ async fn main() -> anyhow::Result<()> {
             WorkflowActions::ExportAll { output } => cmd_workflows_export_all(&output).await?,
             WorkflowActions::Dag { name, order } => cmd_workflows_dag(&name, order).await?,
         },
-        Commands::Server { port, no_ui } => cmd_server(port, no_ui).await?,
-        Commands::Dev { file } => cmd_dev(&file).await?,
-        Commands::Credentials { action } => match action {
+        Some(Commands::Server { port, no_ui }) => cmd_server(port, no_ui).await?,
+        Some(Commands::Dev { file }) => cmd_dev(&file).await?,
+        Some(Commands::Credentials { action }) => match action {
             CredentialActions::Set {
                 service,
                 key,
@@ -347,10 +368,10 @@ async fn main() -> anyhow::Result<()> {
             CredentialActions::List => cmd_credentials_list().await?,
             CredentialActions::Delete { service } => cmd_credentials_delete(&service).await?,
         },
-        Commands::Db { action } => match action {
+        Some(Commands::Db { action }) => match action {
             DbActions::Check => cmd_db_check().await?,
         },
-        Commands::Templates { action } => match action {
+        Some(Commands::Templates { action }) => match action {
             TemplateActions::List { by_category } => cmd_templates_list(by_category).await?,
             TemplateActions::Show { name } => cmd_templates_show(&name).await?,
             TemplateActions::Use {
@@ -360,12 +381,12 @@ async fn main() -> anyhow::Result<()> {
                 create,
             } => cmd_templates_use(&name, output.as_deref(), &vars, create).await?,
         },
-        Commands::Monitor { url, token } => cmd_monitor(&url, token.as_deref()).await?,
-        Commands::Completions { shell } => {
+        Some(Commands::Monitor { url, token }) => cmd_monitor(&url, token.as_deref()).await?,
+        Some(Commands::Completions { shell }) => {
             cmd_completions(shell)?;
         }
-        Commands::Create { prompt } => cmd_create(&prompt).await?,
-        Commands::Refine { name, prompt } => cmd_refine(&name, &prompt).await?,
+        Some(Commands::Create { prompt }) => cmd_create(&prompt).await?,
+        Some(Commands::Refine { name, prompt }) => cmd_refine(&name, &prompt).await?,
     }
 
     Ok(())
@@ -405,6 +426,10 @@ fn cmd_completions(shell: CompletionShell) -> anyhow::Result<()> {
     let shell: Shell = shell.into();
     generate(shell, &mut cmd, name, &mut std::io::stdout());
     Ok(())
+}
+
+async fn cmd_chat(resume: Option<String>) -> anyhow::Result<()> {
+    r8r::repl::run_repl(resume).await
 }
 
 // ============================================================================

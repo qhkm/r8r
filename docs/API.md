@@ -125,6 +125,45 @@ List all workflows.
 
 ---
 
+#### POST `/api/workflows`
+
+Create or update a workflow definition.
+
+**Request Body**:
+
+```json
+{
+  "name": "order-notification",
+  "definition": "name: order-notification\nnodes:\n  - id: step\n    type: transform\n    config:\n      expression: '\"ok\"'",
+  "enabled": true
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Workflow name |
+| `definition` | string | Yes | Full YAML definition |
+| `enabled` | boolean | No | Enable workflow immediately (default: true) |
+
+**Response**:
+
+```json
+{
+  "id": "wf-abc123",
+  "name": "order-notification",
+  "enabled": true,
+  "node_count": 1,
+  "trigger_count": 0
+}
+```
+
+**Status Codes**:
+- `201 Created` - Workflow created or updated
+- `400 Bad Request` - Request validation failed
+- `422 Unprocessable Entity` - Invalid workflow definition
+
+---
+
 #### GET `/api/workflows/{name}`
 
 Get details of a specific workflow.

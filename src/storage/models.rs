@@ -192,3 +192,24 @@ pub struct ApprovalRequest {
     pub expires_at: Option<DateTime<Utc>>,
     pub decided_at: Option<DateTime<Utc>>,
 }
+
+/// A stored REPL session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplSession {
+    pub id: String,
+    pub model: String,
+    pub summary: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A stored REPL message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplMessage {
+    pub id: String,
+    pub session_id: String,
+    pub role: String,
+    pub content: String,
+    pub token_count: Option<i64>,
+    pub created_at: DateTime<Utc>,
+}

@@ -212,9 +212,11 @@ pub enum ApiErrorCode {
     InvalidField,
     WorkflowNotFound,
     ExecutionNotFound,
+    ApprovalNotFound,
     InvalidWorkflowDefinition,
     IdempotencyKeyReuse,
     InvalidIdempotencyKey,
+    ConflictError,
 
     // Server errors (5xx equivalents)
     InternalError,
@@ -239,11 +241,15 @@ impl ApiErrorCode {
             | ApiErrorCode::InvalidField
             | ApiErrorCode::WorkflowNotFound
             | ApiErrorCode::ExecutionNotFound
+            | ApiErrorCode::ApprovalNotFound
             | ApiErrorCode::InvalidWorkflowDefinition
             | ApiErrorCode::InvalidIdempotencyKey => ErrorCategory::ClientError,
 
             // Idempotency conflicts - return cached result
             ApiErrorCode::IdempotencyKeyReuse => ErrorCategory::Conflict,
+
+            // General conflict errors
+            ApiErrorCode::ConflictError => ErrorCategory::Conflict,
 
             // Rate limiting - retry after delay
             ApiErrorCode::RateLimited => ErrorCategory::RateLimit,
@@ -269,9 +275,11 @@ impl ApiErrorCode {
             ApiErrorCode::InvalidField => 400,
             ApiErrorCode::WorkflowNotFound => 404,
             ApiErrorCode::ExecutionNotFound => 404,
+            ApiErrorCode::ApprovalNotFound => 404,
             ApiErrorCode::InvalidWorkflowDefinition => 422,
             ApiErrorCode::IdempotencyKeyReuse => 409,
             ApiErrorCode::InvalidIdempotencyKey => 400,
+            ApiErrorCode::ConflictError => 409,
             ApiErrorCode::InternalError => 500,
             ApiErrorCode::StorageError => 500,
             ApiErrorCode::ExecutionFailed => 500,

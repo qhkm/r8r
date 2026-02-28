@@ -27,11 +27,13 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{error, warn};
 
+use crate::engine::executor::emit_audit;
 use crate::engine::{ExecutionMetadata, Executor, PauseRegistry};
 use crate::error::{ApiErrorCode, ApiErrorEnvelope, Error};
+use crate::mcp::tools::inject_approval_decision_into_checkpoint;
 use crate::nodes::NodeRegistry;
 use crate::shutdown::ShutdownCoordinator;
-use crate::storage::{ExecutionStatus, SqliteStorage, StoredWorkflow};
+use crate::storage::{ApprovalRequest, AuditEventType, ExecutionStatus, SqliteStorage, StoredWorkflow};
 use crate::triggers::{EventBackend, EventMessage};
 use crate::workflow::{parse_workflow, validate_workflow};
 
@@ -220,6 +222,10 @@ pub fn create_api_routes() -> Router<AppState> {
             "/api/executions/{id}/resume",
             post(resume_execution_handler),
         )
+        .route("/api/audit", get(list_audit_entries_handler))
+        .route("/api/approvals", get(list_approvals_handler))
+        .route("/api/approvals/{id}", get(get_approval_handler))
+        .route("/api/approvals/{id}/decide", post(decide_approval_handler))
 }
 
 /// Create routes that require the monitored app state (WebSocket).
@@ -480,6 +486,385 @@ async fn list_executions(
             Json(json!({"executions": items})).into_response()
         }
         Err(e) => external_error_response(e).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Audit log
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ListAuditQuery {
+    #[serde(default)]
+    execution_id: Option<String>,
+    #[serde(default)]
+    workflow_name: Option<String>,
+    #[serde(default)]
+    event_type: Option<String>,
+    #[serde(default)]
+    since: Option<String>,
+    #[serde(default = "default_audit_limit")]
+    limit: u32,
+    #[serde(default)]
+    offset: u32,
+}
+
+fn default_audit_limit() -> u32 {
+    50
+}
+
+async fn list_audit_entries_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<ListAuditQuery>,
+) -> impl IntoResponse {
+    let since = params.since.and_then(|s| {
+        chrono::DateTime::parse_from_rfc3339(&s)
+            .ok()
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+    });
+
+    match state
+        .storage
+        .list_audit_entries(
+            params.execution_id.as_deref(),
+            params.workflow_name.as_deref(),
+            params.event_type.as_deref(),
+            since,
+            params.limit,
+            params.offset,
+        )
+        .await
+    {
+        Ok(entries) => {
+            let items: Vec<Value> = entries
+                .into_iter()
+                .map(|e| {
+                    json!({
+                        "id": e.id,
+                        "timestamp": e.timestamp.to_rfc3339(),
+                        "event_type": e.event_type.to_string(),
+                        "execution_id": e.execution_id,
+                        "workflow_name": e.workflow_name,
+                        "node_id": e.node_id,
+                        "actor": e.actor,
+                        "detail": e.detail,
+                        "metadata": e.metadata,
+                    })
+                })
+                .collect();
+            Json(json!({"audit_entries": items, "count": items.len()})).into_response()
+        }
+        Err(e) => external_error_response(e).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Approval Endpoints
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ListApprovalsQuery {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default = "default_approval_limit")]
+    limit: usize,
+    #[serde(default)]
+    offset: usize,
+}
+
+fn default_approval_limit() -> usize {
+    50
+}
+
+#[derive(Deserialize)]
+struct ApprovalDecisionRequest {
+    decision: String,
+    comment: Option<String>,
+    decided_by: Option<String>,
+}
+
+fn approval_to_json(a: &ApprovalRequest) -> Value {
+    json!({
+        "id": a.id,
+        "execution_id": a.execution_id,
+        "node_id": a.node_id,
+        "workflow_name": a.workflow_name,
+        "title": a.title,
+        "description": a.description,
+        "status": a.status,
+        "decision_comment": a.decision_comment,
+        "decided_by": a.decided_by,
+        "context_data": a.context_data,
+        "created_at": a.created_at.to_rfc3339(),
+        "expires_at": a.expires_at.map(|t| t.to_rfc3339()),
+        "decided_at": a.decided_at.map(|t| t.to_rfc3339()),
+    })
+}
+
+async fn list_approvals_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<ListApprovalsQuery>,
+) -> impl IntoResponse {
+    if let Some(ref s) = params.status {
+        if !["pending", "approved", "rejected", "expired"].contains(&s.as_str()) {
+            return api_error_response(
+                ApiErrorCode::InvalidField,
+                format!("Invalid status filter '{}'. Valid values: pending, approved, rejected, expired", s),
+                None,
+            ).into_response();
+        }
+    }
+
+    match state
+        .storage
+        .list_approval_requests(params.status.as_deref(), params.limit, params.offset)
+        .await
+    {
+        Ok(approvals) => {
+            let items: Vec<Value> = approvals.iter().map(approval_to_json).collect();
+            Json(json!({"approvals": items, "count": items.len()})).into_response()
+        }
+        Err(e) => external_error_response(e).into_response(),
+    }
+}
+
+async fn get_approval_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.storage.get_approval_request(&id).await {
+        Ok(Some(approval)) => Json(approval_to_json(&approval)).into_response(),
+        Ok(None) => api_error_response(
+            ApiErrorCode::ApprovalNotFound,
+            format!("Approval request '{}' not found", id),
+            None,
+        )
+        .into_response(),
+        Err(e) => external_error_response(e).into_response(),
+    }
+}
+
+async fn decide_approval_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<ApprovalDecisionRequest>,
+) -> impl IntoResponse {
+    // 1. Validate decision
+    if request.decision != "approve" && request.decision != "reject" {
+        return api_error_response(
+            ApiErrorCode::InvalidField,
+            format!(
+                "Decision must be \"approve\" or \"reject\", got \"{}\"",
+                request.decision
+            ),
+            None,
+        )
+        .into_response();
+    }
+
+    // 2. Load approval by ID
+    let approval = match state.storage.get_approval_request(&id).await {
+        Ok(Some(a)) => a,
+        Ok(None) => {
+            return api_error_response(
+                ApiErrorCode::ApprovalNotFound,
+                format!("Approval request '{}' not found", id),
+                None,
+            )
+            .into_response();
+        }
+        Err(e) => return external_error_response(e).into_response(),
+    };
+
+    // 3. Fast-fail check: status must be pending (atomic check happens later)
+    if approval.status != "pending" {
+        return api_error_response(
+            ApiErrorCode::ConflictError,
+            format!(
+                "Approval '{}' is already {}, cannot change",
+                id, approval.status
+            ),
+            None,
+        )
+        .into_response();
+    }
+
+    // 4. Check expiration
+    if let Some(expires_at) = approval.expires_at {
+        if chrono::Utc::now() > expires_at {
+            return api_error_response(
+                ApiErrorCode::ConflictError,
+                format!("Approval '{}' has expired", id),
+                None,
+            )
+            .into_response();
+        }
+    }
+
+    // 5. Load latest checkpoint
+    let mut checkpoint = match state
+        .storage
+        .get_latest_checkpoint(&approval.execution_id)
+        .await
+    {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            return api_error_response(
+                ApiErrorCode::InternalError,
+                format!(
+                    "No checkpoint found for execution {}",
+                    approval.execution_id
+                ),
+                None,
+            )
+            .into_response();
+        }
+        Err(e) => return external_error_response(e).into_response(),
+    };
+
+    // 6. Inject approval decision into checkpoint outputs
+    let mut outputs: serde_json::Map<String, Value> = checkpoint
+        .node_outputs
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+
+    let resolved_node = inject_approval_decision_into_checkpoint(
+        &mut outputs,
+        &approval.id,
+        if approval.node_id.is_empty() {
+            None
+        } else {
+            Some(approval.node_id.as_str())
+        },
+        &request.decision,
+        request.comment.as_deref(),
+    );
+
+    let Some(node_id) = resolved_node else {
+        return api_error_response(
+            ApiErrorCode::InternalError,
+            format!(
+                "Approval '{}' not found in latest checkpoint outputs",
+                approval.id
+            ),
+            None,
+        )
+        .into_response();
+    };
+
+    // 7. Save updated checkpoint
+    checkpoint.node_outputs = Value::Object(outputs);
+    if let Err(e) = state.storage.save_checkpoint(&checkpoint).await {
+        return external_error_response(e).into_response();
+    }
+
+    // 8. Atomically decide the approval (only if still pending — prevents TOCTOU race)
+    let decided_status = if request.decision == "approve" {
+        "approved"
+    } else {
+        "rejected"
+    };
+    let actor = request
+        .decided_by
+        .clone()
+        .unwrap_or_else(|| "api".to_string());
+    let decided_at = chrono::Utc::now();
+
+    let was_updated = match state
+        .storage
+        .decide_approval_request(
+            &id,
+            decided_status,
+            &actor,
+            request.comment.as_deref(),
+            decided_at,
+            &node_id,
+        )
+        .await
+    {
+        Ok(updated) => updated,
+        Err(e) => return external_error_response(e).into_response(),
+    };
+
+    if !was_updated {
+        return api_error_response(
+            ApiErrorCode::ConflictError,
+            format!(
+                "Approval '{}' was already decided by another request",
+                id
+            ),
+            None,
+        )
+        .into_response();
+    }
+
+    // Reload approval to get the fully updated record for the response
+    let approval = match state.storage.get_approval_request(&id).await {
+        Ok(Some(a)) => a,
+        Ok(None) => {
+            return api_error_response(
+                ApiErrorCode::InternalError,
+                format!("Approval '{}' disappeared after being decided", id),
+                None,
+            )
+            .into_response();
+        }
+        Err(e) => return external_error_response(e).into_response(),
+    };
+
+    // 9. Emit audit event
+    emit_audit(
+        &state.storage,
+        AuditEventType::ApprovalDecided,
+        Some(&approval.execution_id),
+        Some(&approval.workflow_name),
+        None,
+        &actor,
+        &format!("Approval {}: {} by {}", decided_status, approval.id, actor),
+        Some(json!({
+            "approval_id": approval.id,
+            "decision": decided_status,
+            "comment": request.comment,
+        })),
+    )
+    .await;
+
+    // 10. Resume execution
+    match state
+        .create_executor()
+        .resume_from_checkpoint(&approval.execution_id)
+        .await
+    {
+        Ok(execution) => {
+            let duration_ms = execution
+                .finished_at
+                .map(|f| (f - execution.started_at).num_milliseconds());
+            Json(json!({
+                "approval": approval_to_json(&approval),
+                "execution_id": execution.id,
+                "execution_status": execution.status.to_string(),
+                "duration_ms": duration_ms,
+                "output": execution.output,
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            error!(
+                approval_id = %approval.id,
+                "Approval recorded but failed to resume execution: {:?}", e
+            );
+            // Approval was recorded; return it with an error note
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "approval": approval_to_json(&approval),
+                    "error": "Approval recorded but failed to resume execution",
+                    "detail": e.external_message(),
+                })),
+            )
+                .into_response()
+        }
     }
 }
 

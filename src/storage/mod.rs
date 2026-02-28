@@ -1,14 +1,17 @@
 //! Storage layer for workflows and executions.
 
+mod audit;
 mod dlq;
 mod models;
 mod pool;
 mod sqlite;
 
+pub use audit::{AuditEntry, AuditEventType};
 pub use dlq::{DeadLetterEntry, DlqStats, DlqStatus, NewDlqEntry};
 pub use models::{
     ApprovalRequest, Checkpoint, DatabaseHealth, Execution, ExecutionQuery, ExecutionStatus,
-    ExecutionSummary, ExecutionTrace, NodeExecution, StoredWorkflow, WorkflowVersion,
+    ExecutionSummary, ExecutionTrace, NodeExecution, ReplMessage, ReplSession, StoredWorkflow,
+    WorkflowVersion,
 };
 pub use pool::{ConnectionPool, PoolConfig, PoolStats};
 pub use sqlite::SqliteStorage;

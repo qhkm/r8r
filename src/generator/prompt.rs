@@ -39,9 +39,7 @@ pub fn build_system_prompt(ctx: &GeneratorContext) -> String {
 
     // --- Part 3: Credentials (optional) ---
     if !ctx.credential_names.is_empty() {
-        prompt.push_str(
-            "\nCONFIGURED CREDENTIALS (use these names in credential fields):\n",
-        );
+        prompt.push_str("\nCONFIGURED CREDENTIALS (use these names in credential fields):\n");
         for cred in &ctx.credential_names {
             prompt.push_str(&format!("- {}\n", cred));
         }
@@ -136,13 +134,14 @@ mod tests {
         GeneratorContext {
             node_catalog: vec![
                 ("http".to_string(), "Make HTTP requests".to_string()),
-                ("transform".to_string(), "Transform data with Rhai".to_string()),
+                (
+                    "transform".to_string(),
+                    "Transform data with Rhai".to_string(),
+                ),
                 ("agent".to_string(), "Call LLM providers".to_string()),
             ],
             credential_names: vec!["openai".to_string(), "slack-webhook".to_string()],
-            examples: vec![
-                "name: hello\nnodes:\n  - id: greet\n    type: transform".to_string(),
-            ],
+            examples: vec!["name: hello\nnodes:\n  - id: greet\n    type: transform".to_string()],
         }
     }
 
@@ -152,7 +151,10 @@ mod tests {
         let prompt = build_system_prompt(&ctx);
 
         assert!(prompt.contains("http"), "expected 'http' in prompt");
-        assert!(prompt.contains("transform"), "expected 'transform' in prompt");
+        assert!(
+            prompt.contains("transform"),
+            "expected 'transform' in prompt"
+        );
         assert!(prompt.contains("agent"), "expected 'agent' in prompt");
 
         assert!(prompt.contains("Make HTTP requests"));
@@ -238,10 +240,7 @@ mod tests {
         let errors = "triggers is required\nnode 'send' missing depends_on";
         let prompt = build_fix_prompt(yaml, errors);
 
-        assert!(
-            prompt.contains(yaml),
-            "YAML should appear in fix prompt"
-        );
+        assert!(prompt.contains(yaml), "YAML should appear in fix prompt");
         assert!(
             prompt.contains(errors),
             "errors should appear in fix prompt"

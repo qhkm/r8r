@@ -6,8 +6,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::info;
 
+use crate::engine::executor::emit_audit;
 use crate::error::{Error, Result};
-use crate::storage::ApprovalRequest;
+use crate::storage::{ApprovalRequest, AuditEventType};
 
 use super::types::{Node, NodeContext, NodeResult};
 
@@ -101,6 +102,17 @@ impl Node for ApprovalNode {
                 "Created approval request {} for workflow '{}'",
                 approval_id, ctx.workflow_name
             );
+            emit_audit(
+                storage,
+                AuditEventType::ApprovalRequested,
+                Some(&ctx.execution_id),
+                Some(&ctx.workflow_name),
+                None,
+                "system",
+                &format!("Approval requested: {}", config.title),
+                Some(json!({ "approval_id": approval_id })),
+            )
+            .await;
         }
 
         Ok(NodeResult::new(json!({

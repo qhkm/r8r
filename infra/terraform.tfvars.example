@@ -1,0 +1,36 @@
+aws_region   = "us-east-1"
+project_name = "r8r-prod"
+route53_zone_id = "Z0123456789ABCDEF"
+create_client_dns_records = true
+enable_https = true
+
+# Leave empty to auto-create ACM cert with DNS validation in route53_zone_id.
+# Set this to an existing ACM cert ARN if you want to reuse one.
+acm_certificate_arn = ""
+
+clients = {
+  client_a = {
+    domain_name   = "client-a.automations.example.com"
+    image         = "ghcr.io/example/r8r:latest"
+    cpu           = 512
+    memory        = 1024
+    desired_count = 1
+    cors_origins  = ["https://client-a.app.example.com"]
+    autoscaling = {
+      enabled      = true
+      min_capacity = 1
+      max_capacity = 3
+      cpu_target   = 60
+      memory_target = 75
+    }
+  }
+
+  client_b = {
+    domain_name   = "client-b.automations.example.com"
+    image         = "ghcr.io/example/r8r:latest"
+    cpu           = 1024
+    memory        = 2048
+    desired_count = 1
+    cors_origins  = ["https://client-b.app.example.com"]
+  }
+}

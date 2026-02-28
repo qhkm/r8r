@@ -1,14 +1,26 @@
+@import url('https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700&display=swap');
 @import "tailwindcss";
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Public Sans', 'Manrope', 'Segoe UI', sans-serif;
   line-height: 1.5;
   font-weight: 400;
+  color: #0f172a;
+  background-color: #f8fafc;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background-color: #f8fafc;
+  background: linear-gradient(180deg, #f8fafc 0%, #f5f7f4 100%);
+}
+
+code,
+pre {
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
 }

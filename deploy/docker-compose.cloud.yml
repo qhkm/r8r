@@ -1,0 +1,25 @@
+services:
+  r8r:
+    image: ${R8R_IMAGE}
+    container_name: r8r
+    restart: unless-stopped
+    ports:
+      - "${R8R_PORT:-8080}:8080"
+    volumes:
+      - ${R8R_VOLUME_NAME:-r8r-data}:/data
+    environment:
+      - R8R_DB=/data/r8r.db
+      - RUST_LOG=${RUST_LOG:-r8r=info}
+      - R8R_MONITOR_TOKEN=${R8R_MONITOR_TOKEN}
+      - R8R_API_KEY=${R8R_API_KEY}
+      - R8R_CORS_ORIGINS=${R8R_CORS_ORIGINS}
+    healthcheck:
+      test: ["CMD", "r8r", "workflows", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  r8r-data:
+    name: ${R8R_VOLUME_NAME:-r8r-data}

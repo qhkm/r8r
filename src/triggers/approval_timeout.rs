@@ -7,14 +7,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::interval;
 use tracing::{error, info, warn};
 
+use crate::engine::executor::emit_audit;
 use crate::engine::Executor;
-use crate::storage::SqliteStorage;
+use crate::storage::{AuditEventType, SqliteStorage};
 
 /// Default poll interval: 30 seconds.
 const POLL_INTERVAL_MS: u64 = 30_000;
@@ -123,10 +124,7 @@ async fn process_expired_approvals(
         );
 
         // Load checkpoint for this execution
-        let mut checkpoint = match storage
-            .get_latest_checkpoint(&approval.execution_id)
-            .await
-        {
+        let mut checkpoint = match storage.get_latest_checkpoint(&approval.execution_id).await {
             Ok(Some(cp)) => cp,
             Ok(None) => {
                 warn!(
@@ -161,12 +159,8 @@ async fn process_expired_approvals(
             Some(approval.node_id.as_str())
         };
 
-        let resolved_node = inject_timeout_decision(
-            &mut outputs,
-            &approval.id,
-            node_id_hint,
-            &default_action,
-        );
+        let resolved_node =
+            inject_timeout_decision(&mut outputs, &approval.id, node_id_hint, &default_action);
 
         let Some(node_id) = resolved_node else {
             warn!(
@@ -200,12 +194,28 @@ async fn process_expired_approvals(
         approval.decided_by = Some("timeout".to_string());
         approval.decided_at = Some(Utc::now());
         if let Err(e) = storage.save_approval_request(&approval).await {
-            error!(
-                "Failed to update expired approval {}: {}",
-                approval.id, e
-            );
+            error!("Failed to update expired approval {}: {}", approval.id, e);
             continue;
         }
+
+        emit_audit(
+            storage,
+            AuditEventType::ApprovalTimedOut,
+            Some(&approval.execution_id),
+            Some(&approval.workflow_name),
+            None,
+            "system",
+            &format!(
+                "Approval timed out (auto-{}): {}",
+                decided_status, approval.id
+            ),
+            Some(json!({
+                "approval_id": approval.id,
+                "decision": decided_status,
+                "default_action": default_action,
+            })),
+        )
+        .await;
 
         // Resume the paused execution
         match executor

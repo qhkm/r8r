@@ -24,6 +24,6 @@
 //! ```
 
 mod server;
-mod tools;
+pub(crate) mod tools;
 
 pub use server::R8rMcpServer;
