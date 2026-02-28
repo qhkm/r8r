@@ -66,7 +66,13 @@
 ### UI & Developer Experience
 - [x] Web dashboard for monitoring
 - [x] Visual workflow editor
+- [x] Non-builder dashboard UX (overview, runs, approvals, audit)
+- [x] Guided workflow studio (template + plain-language form + publish)
 - [x] CLI autocomplete
+
+### Deployment & Operations
+- [x] VPS deploy wrapper (`scripts/deploy-vps.sh`) that bootstraps Docker/Compose and starts r8r API + embedded UI
+- [x] Post-deploy API/UI health checks in cloud deploy script (`scripts/deploy-cloud.sh`)
 
 ### Reliability (Lightweight Durability)
 - [x] Checkpoint-based durable execution - Persist workflow state after each node
@@ -120,6 +126,59 @@ Unlocks enterprise use cases requiring human approval in automated workflows.
 - [ ] Timeout with default action — auto-approve/reject after configurable wait
 - [ ] Delegation — route approvals to specific users/groups
 
+### 6. CLI Guardrails & UX (MVP, Vision-Aligned)
+Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style durability.
+
+**Sprint 1 (highest ROI, lowest risk)**
+- [ ] Add top-level command aliases: `prompt`, `run`, `watch`, `runs`, `secrets`, `doctor`
+- [ ] Implement `r8r prompt` wrapper over create/refine with `--patch`, `--emit`, `--dry-run`, `--review`, `--yes`, `--json`
+- [ ] Implement `r8r run` review screen on TTY with side-effect summary before execution
+- [ ] Enforce fail-closed non-interactive behavior when approval is required (exit code `42`)
+- [ ] Add tests + docs for new prompt/run flags and non-interactive exit semantics
+
+**Sprint 2 (operations + policy-lite)**
+- [ ] Add `r8r runs pending`, `r8r runs show <run_id>`, `r8r runs export <run_id> --format jsonl`
+- [ ] Add `r8r approve <run_id>` and `r8r deny <run_id>` CLI flow on top of approval requests
+- [ ] Add `r8r policy` profiles: `lenient`, `standard`, `strict`
+- [ ] Implement minimum policy knobs: `require_review_on_patch`, `require_idempotency_key_for_run`, `max_runtime`, `deny_unknown_node_types`
+- [ ] Add policy validation command + docs
+
+**Explicitly deferred (out of Sprint 1/2)**
+- [ ] Full tool capability/scope permission matrix
+- [ ] Cost estimation and `--max-cost` enforcement
+- [ ] Tool version pinning/drift enforcement
+- [ ] Vault/keychain provider integration framework
+- [ ] Channel-specific/2FA approval constraints (e.g., WhatsApp + OTP)
+- [ ] Full execution diff engine
+
+**REPL direction (objective decision: hybrid approach)**
+- [ ] Keep current REPL/TUI architecture and avoid full rewrite
+- [ ] Optimize default UX for builders (fast iteration, low friction)
+- [ ] Add plan-first safety flow incrementally: Draft -> Plan -> Run
+- [ ] Ensure REPL never performs write side effects without explicit approval/gate
+- [ ] Prioritize guardrails over new complexity when trade-offs conflict
+
+**Builder-first UX policy (default mode)**
+- [ ] Keep chat-first interaction as the default (no mandatory mode switching)
+- [ ] Preserve minimal core command set for builders (`/run`, `/show`, `/dag`, `/logs`, `/trace`, `/export`, `/help`)
+- [ ] Keep low-risk runs fast; only escalate UX friction when write/approval risk is detected
+- [ ] Prefer inline safety hints and side-effect summaries over blocking dialogs for routine flows
+- [ ] Stream responses and show YAML/DAG immediately; run validation continuously in the background
+- [ ] Keep policy/permissions/cost controls out of default builder flow (surface in operator mode)
+
+**REPL guardrails (next after Sprint 1/2 core CLI)**
+- [ ] Add `:plan` in REPL to create a plan artifact before execution
+- [ ] Add side-effect summary panel before any write-capable run
+- [ ] Add `:arm writes` with session TTL (default disarmed)
+- [ ] Add high-risk type-to-confirm approval modal for sensitive actions
+- [ ] Persist transcript-to-run correlation (`session_id`, `run_id`, tool calls redacted)
+- [ ] Add fail-closed non-interactive behavior parity for approval-required runs (exit `42`)
+
+**Operator mode (optional/escalated)**
+- [ ] Add explicit operator mode/profile toggle rather than making builder mode heavier
+- [ ] Show policy profile, write arm state, and gate status prominently in operator mode
+- [ ] Require stricter confirms only in operator mode or high-risk paths
+
 ## Backlog
 
 ### Event Triggers
@@ -143,6 +202,12 @@ Unlocks enterprise use cases requiring human approval in automated workflows.
 - [ ] Distributed execution (multiple workers)
 - [ ] PostgreSQL storage backend
 - [ ] Redis-based job queue
+
+### Deployment & Operations (Self-Hosted)
+- [ ] AWS ECS/Fargate reference architecture for per-client deployments (one service per client or pooled cluster with strict isolation)
+- [ ] Terraform modules for ECS service, networking, secrets, logging, and autoscaling defaults
+- [ ] Blue/green deployment and rollback runbook for workflow API uptime
+- [ ] Per-client cost controls (resource limits, autoscaling caps, tagging, budget alarms)
 
 ### Enterprise Features
 - [ ] Multi-tenancy

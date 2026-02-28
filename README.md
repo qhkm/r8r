@@ -58,6 +58,10 @@ EOF
 curl -X POST localhost:3000/api/workflows/hello-world/execute \
   -H "Content-Type: application/json" \
   -d '{"input": {"name": "Agent"}}'
+
+# Open the web UI
+# Dashboard: http://localhost:3000/
+# Guided workflow studio: http://localhost:3000/editor
 ```
 
 ## 🤖 Agent-Native
@@ -244,6 +248,13 @@ See [Node Types](docs/NODE_TYPES.md) for full documentation.
 r8r server --workflows ./workflows    # Start server
 r8r dev --workflows ./workflows       # Hot-reload mode
 
+# Interactive REPL
+r8r                                   # Open interactive REPL
+r8r chat                              # Same as above
+r8r chat --resume <session-id>        # Resume previous session
+# In REPL: /model, /apikey, /endpoint are persisted in the local r8r DB
+# In REPL: /view yaml (or Ctrl+Y) opens YAML panel, /export yaml <path> saves it
+
 # Workflows
 r8r workflows list                    # List workflows
 r8r workflows run <name>              # Execute
@@ -317,6 +328,9 @@ See [Security Audit](SECURITY_AUDIT_REPORT.md) for details.
 | [API Reference](docs/API.md) | REST endpoints |
 | [Node Types](docs/NODE_TYPES.md) | Node configuration |
 | [Environment Variables](docs/ENVIRONMENT_VARIABLES.md) | Configuration |
+| [Deployment Guide](docs/DEPLOYMENT.md) | REPL-to-cloud and one-command VPS deploy (API + UI) |
+| [Client Deployment Model](docs/CLIENT_DEPLOYMENT_MODEL.md) | Per-client ECS/Fargate isolation approach |
+| [Terraform Baseline](infra/README.md) | AWS infrastructure scaffold for per-client deployment |
 | [Architecture](docs/ARCHITECTURE.md) | System design |
 | [Roadmap](docs/TODO.md) | Planned features |
 | [Runner Plan](docs/RUNNER_PLAN.md) | Edge/fleet runner roadmap |
