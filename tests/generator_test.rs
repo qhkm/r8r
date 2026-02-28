@@ -14,10 +14,19 @@ fn test_system_prompt_contains_all_registered_nodes() {
 
     // Must mention key node types
     assert!(system.contains("http"), "System prompt missing http node");
-    assert!(system.contains("transform"), "System prompt missing transform node");
+    assert!(
+        system.contains("transform"),
+        "System prompt missing transform node"
+    );
     assert!(system.contains("agent"), "System prompt missing agent node");
-    assert!(system.contains("filter"), "System prompt missing filter node");
-    assert!(system.contains("switch"), "System prompt missing switch node");
+    assert!(
+        system.contains("filter"),
+        "System prompt missing filter node"
+    );
+    assert!(
+        system.contains("switch"),
+        "System prompt missing switch node"
+    );
 }
 
 #[test]
@@ -29,9 +38,18 @@ fn test_system_prompt_contains_rules() {
     };
     let system = prompt::build_system_prompt(&ctx);
 
-    assert!(system.contains("RULES:"), "System prompt missing rules section");
-    assert!(system.contains("env.VAR_NAME"), "System prompt missing env var instruction");
-    assert!(system.contains("depends_on"), "System prompt missing depends_on instruction");
+    assert!(
+        system.contains("RULES:"),
+        "System prompt missing rules section"
+    );
+    assert!(
+        system.contains("env.VAR_NAME"),
+        "System prompt missing env var instruction"
+    );
+    assert!(
+        system.contains("depends_on"),
+        "System prompt missing depends_on instruction"
+    );
 }
 
 #[test]
@@ -55,10 +73,7 @@ fn test_extract_yaml_from_various_formats() {
     );
 
     // With surrounding whitespace
-    assert_eq!(
-        prompt::extract_yaml("  \n  name: test\n  "),
-        "name: test"
-    );
+    assert_eq!(prompt::extract_yaml("  \n  name: test\n  "), "name: test");
 }
 
 #[test]
@@ -80,7 +95,10 @@ fn test_refine_prompt_includes_current_and_change() {
 
 #[test]
 fn test_fix_prompt_includes_yaml_and_errors() {
-    let p = prompt::build_fix_prompt("name: bad\nnodes: []", "Workflow must have at least one node");
+    let p = prompt::build_fix_prompt(
+        "name: bad\nnodes: []",
+        "Workflow must have at least one node",
+    );
     assert!(p.contains("name: bad"));
     assert!(p.contains("Workflow must have at least one node"));
 }

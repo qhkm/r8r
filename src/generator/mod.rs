@@ -104,6 +104,18 @@ pub async fn generate(user_prompt: &str) -> Result<GenerateResult> {
     }
 
     let llm_config = resolve_llm_config().await?;
+    generate_with_config(&llm_config, user_prompt).await
+}
+
+/// Generate a new workflow using an explicit LLM config (used by REPL runtime overrides).
+pub async fn generate_with_config(
+    llm_config: &LlmConfig,
+    user_prompt: &str,
+) -> Result<GenerateResult> {
+    if user_prompt.trim().is_empty() {
+        return Err(Error::Config("Prompt must not be empty".to_string()));
+    }
+
     let ctx = GeneratorContext::build().await;
     let client = llm::create_llm_client();
 
@@ -112,10 +124,10 @@ pub async fn generate(user_prompt: &str) -> Result<GenerateResult> {
 
     info!(provider = ?llm_config.provider, "Calling LLM for workflow generation");
 
-    let response = llm::call_llm(&client, &llm_config, Some(&system), &user_msg).await?;
+    let response = llm::call_llm(&client, llm_config, Some(&system), &user_msg).await?;
     let yaml = prompt::extract_yaml(&response.content).to_string();
 
-    validate_or_fix(&client, &llm_config, &system, &yaml).await
+    validate_or_fix(&client, llm_config, &system, &yaml).await
 }
 
 /// Refine an existing workflow given a change description.
@@ -235,11 +247,7 @@ fn try_validate(yaml: &str) -> std::result::Result<String, Vec<String>> {
     }
 
     // Build a human-readable summary.
-    let node_types: Vec<String> = workflow
-        .nodes
-        .iter()
-        .map(|n| n.node_type.clone())
-        .collect();
+    let node_types: Vec<String> = workflow.nodes.iter().map(|n| n.node_type.clone()).collect();
 
     let summary = format!(
         "\"{}\" with {} node{}: {}",
