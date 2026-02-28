@@ -247,6 +247,15 @@ pub struct RetryConfig {
     /// Backoff strategy
     #[serde(default)]
     pub backoff: BackoffType,
+
+    /// Maximum delay cap in seconds (for exponential/linear backoff).
+    /// Prevents unbounded growth.
+    #[serde(default)]
+    pub max_delay_seconds: Option<u64>,
+
+    /// Add random jitter (±25%) to avoid thundering herd.
+    #[serde(default)]
+    pub jitter: bool,
 }
 
 fn default_max_attempts() -> u32 {

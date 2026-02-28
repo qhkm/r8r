@@ -11,12 +11,13 @@ use tokio::sync::Mutex;
 
 use super::models::*;
 use crate::error::{Error, Result};
+use crate::llm::{LlmConfig, LlmProvider};
 
 /// Parse an RFC 3339 datetime string into a `chrono::DateTime<Utc>`.
 ///
 /// Returns a `rusqlite::Error` on parse failure instead of panicking,
 /// so it is safe to use inside `query_row` / `query_map` closures.
-fn parse_datetime_utc(s: &str) -> rusqlite::Result<chrono::DateTime<Utc>> {
+pub(super) fn parse_datetime_utc(s: &str) -> rusqlite::Result<chrono::DateTime<Utc>> {
     chrono::DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
         .map_err(|e| {
@@ -176,6 +177,38 @@ impl SqliteStorage {
             );
             CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
 
+            CREATE TABLE IF NOT EXISTS repl_sessions (
+                id TEXT PRIMARY KEY,
+                model TEXT NOT NULL,
+                summary TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS repl_messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                token_count INTEGER,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES repl_sessions(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_repl_messages_session
+                ON repl_messages(session_id, created_at ASC);
+
+            CREATE TABLE IF NOT EXISTS repl_llm_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                provider TEXT NOT NULL,
+                model TEXT,
+                api_key TEXT,
+                endpoint TEXT,
+                temperature REAL,
+                max_tokens INTEGER,
+                timeout_seconds INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS delayed_events (
                 id TEXT PRIMARY KEY,
                 event_name TEXT NOT NULL,
@@ -186,6 +219,41 @@ impl SqliteStorage {
             );
             CREATE INDEX IF NOT EXISTS idx_delayed_events_scheduled ON delayed_events(scheduled_at);
             CREATE INDEX IF NOT EXISTS idx_delayed_events_name ON delayed_events(event_name);
+
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id            TEXT PRIMARY KEY,
+                timestamp     TEXT NOT NULL,
+                event_type    TEXT NOT NULL,
+                execution_id  TEXT,
+                workflow_name TEXT,
+                node_id       TEXT,
+                actor         TEXT NOT NULL,
+                detail        TEXT NOT NULL,
+                metadata      TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_audit_log_execution  ON audit_log(execution_id);
+            CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp  ON audit_log(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_audit_log_event_type ON audit_log(event_type);
+            CREATE INDEX IF NOT EXISTS idx_audit_log_workflow   ON audit_log(workflow_name);
+
+            CREATE TABLE IF NOT EXISTS dead_letter_queue (
+                id TEXT PRIMARY KEY,
+                execution_id TEXT NOT NULL,
+                workflow_id TEXT NOT NULL,
+                workflow_name TEXT NOT NULL,
+                trigger_type TEXT NOT NULL,
+                input TEXT NOT NULL,
+                error TEXT NOT NULL,
+                failed_node_id TEXT,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                next_retry_at TEXT,
+                status TEXT NOT NULL DEFAULT 'pending'
+            );
+            CREATE INDEX IF NOT EXISTS idx_dlq_status ON dead_letter_queue(status);
+            CREATE INDEX IF NOT EXISTS idx_dlq_execution_id ON dead_letter_queue(execution_id);
             "#,
         )?;
 
@@ -1175,29 +1243,58 @@ impl SqliteStorage {
         Ok(approval)
     }
 
+    /// Atomically decide an approval request, only if it is still `pending`.
+    /// Returns `Ok(true)` if the row was updated, `Ok(false)` if it was already decided.
+    pub async fn decide_approval_request(
+        &self,
+        id: &str,
+        new_status: &str,
+        decided_by: &str,
+        decision_comment: Option<&str>,
+        decided_at: chrono::DateTime<chrono::Utc>,
+        node_id: &str,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().await;
+        let rows = conn.execute(
+            "UPDATE approval_requests
+             SET status = ?2, decided_by = ?3, decision_comment = ?4,
+                 decided_at = ?5, node_id = ?6
+             WHERE id = ?1 AND status = 'pending'",
+            params![id, new_status, decided_by, decision_comment,
+                    decided_at.to_rfc3339(), node_id],
+        )?;
+        Ok(rows > 0)
+    }
+
     /// List approval requests, optionally filtering by status.
     pub async fn list_approval_requests(
         &self,
         status_filter: Option<&str>,
+        limit: usize,
+        offset: usize,
     ) -> Result<Vec<ApprovalRequest>> {
         let conn = self.conn.lock().await;
+        let effective_limit = limit.min(MAX_QUERY_LIMIT) as i64;
+        let effective_offset = offset as i64;
 
         let approvals = if let Some(status) = status_filter {
             let mut stmt = conn.prepare(
                 "SELECT id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at
                  FROM approval_requests
                  WHERE status = ?1
-                 ORDER BY created_at DESC",
+                 ORDER BY created_at DESC
+                 LIMIT ?2 OFFSET ?3",
             )?;
-            let rows = stmt.query_map([status], Self::row_to_approval_request)?;
+            let rows = stmt.query_map(params![status, effective_limit, effective_offset], Self::row_to_approval_request)?;
             rows.collect::<std::result::Result<Vec<_>, _>>()?
         } else {
             let mut stmt = conn.prepare(
                 "SELECT id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at
                  FROM approval_requests
-                 ORDER BY created_at DESC",
+                 ORDER BY created_at DESC
+                 LIMIT ?1 OFFSET ?2",
             )?;
-            let rows = stmt.query_map([], Self::row_to_approval_request)?;
+            let rows = stmt.query_map(params![effective_limit, effective_offset], Self::row_to_approval_request)?;
             rows.collect::<std::result::Result<Vec<_>, _>>()?
         };
 
@@ -1220,6 +1317,178 @@ impl SqliteStorage {
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(approvals)
+    }
+
+    /// Create a new REPL session and return its ID.
+    pub async fn create_repl_session(&self, model: &str) -> Result<String> {
+        let conn = self.conn.lock().await;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO repl_sessions (id, model, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![id, model, now, now],
+        )?;
+        Ok(id)
+    }
+
+    /// Fetch a REPL session by ID.
+    pub async fn get_repl_session(&self, session_id: &str) -> Result<Option<ReplSession>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, model, summary, created_at, updated_at
+             FROM repl_sessions
+             WHERE id = ?1",
+        )?;
+
+        let session = stmt
+            .query_row([session_id], Self::row_to_repl_session)
+            .optional()?;
+
+        Ok(session)
+    }
+
+    /// List REPL sessions, sorted by most recently updated first.
+    pub async fn list_repl_sessions(&self, limit: usize) -> Result<Vec<ReplSession>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, model, summary, created_at, updated_at
+             FROM repl_sessions
+             ORDER BY updated_at DESC
+             LIMIT ?1",
+        )?;
+
+        let sessions = stmt
+            .query_map([limit as i64], Self::row_to_repl_session)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(sessions)
+    }
+
+    /// Update a REPL session summary and bump its updated timestamp.
+    pub async fn update_repl_session_summary(&self, session_id: &str, summary: &str) -> Result<()> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE repl_sessions
+             SET summary = ?1, updated_at = ?2
+             WHERE id = ?3",
+            params![summary, now, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// Save one REPL message and refresh the session update timestamp.
+    pub async fn save_repl_message(
+        &self,
+        session_id: &str,
+        role: &str,
+        content: &str,
+        token_count: Option<i64>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().await;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO repl_messages (id, session_id, role, content, token_count, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, session_id, role, content, token_count, now],
+        )?;
+        conn.execute(
+            "UPDATE repl_sessions SET updated_at = ?1 WHERE id = ?2",
+            params![now, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// List messages for a REPL session in ascending creation order.
+    pub async fn list_repl_messages(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ReplMessage>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, session_id, role, content, token_count, created_at
+             FROM repl_messages
+             WHERE session_id = ?1
+             ORDER BY created_at ASC
+             LIMIT ?2",
+        )?;
+
+        let messages = stmt
+            .query_map(params![session_id, limit as i64], Self::row_to_repl_message)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(messages)
+    }
+
+    /// Persist REPL LLM config as the default configuration for future sessions.
+    pub async fn save_repl_llm_config(&self, config: &LlmConfig) -> Result<()> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+        let provider = match config.provider {
+            LlmProvider::Openai => "openai",
+            LlmProvider::Anthropic => "anthropic",
+            LlmProvider::Ollama => "ollama",
+            LlmProvider::Custom => "custom",
+        };
+        conn.execute(
+            "INSERT INTO repl_llm_config
+             (id, provider, model, api_key, endpoint, temperature, max_tokens, timeout_seconds, updated_at)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET
+                provider = excluded.provider,
+                model = excluded.model,
+                api_key = excluded.api_key,
+                endpoint = excluded.endpoint,
+                temperature = excluded.temperature,
+                max_tokens = excluded.max_tokens,
+                timeout_seconds = excluded.timeout_seconds,
+                updated_at = excluded.updated_at",
+            params![
+                provider,
+                config.model,
+                config.api_key,
+                config.endpoint,
+                config.temperature,
+                config.max_tokens.map(i64::from),
+                config.timeout_seconds as i64,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Load persisted REPL LLM config, if present.
+    pub async fn get_repl_llm_config(&self) -> Result<Option<LlmConfig>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT provider, model, api_key, endpoint, temperature, max_tokens, timeout_seconds
+             FROM repl_llm_config
+             WHERE id = 1",
+        )?;
+        let row = stmt
+            .query_row([], |row| {
+                let provider_raw: String = row.get(0)?;
+                let provider = match provider_raw.to_ascii_lowercase().as_str() {
+                    "anthropic" => LlmProvider::Anthropic,
+                    "ollama" => LlmProvider::Ollama,
+                    "custom" => LlmProvider::Custom,
+                    _ => LlmProvider::Openai,
+                };
+                Ok(LlmConfig {
+                    provider,
+                    model: row.get(1)?,
+                    api_key: row.get(2)?,
+                    endpoint: row.get(3)?,
+                    temperature: row.get(4)?,
+                    max_tokens: row.get::<_, Option<i64>>(5)?.map(|v| v as u32),
+                    timeout_seconds: row.get::<_, i64>(6)?.max(1) as u64,
+                })
+            })
+            .optional()?;
+        Ok(row)
     }
 
     fn row_to_workflow_version(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkflowVersion> {
@@ -1286,6 +1555,27 @@ impl SqliteStorage {
                 .get::<_, Option<String>>(12)?
                 .map(|s| parse_datetime_utc(&s))
                 .transpose()?,
+        })
+    }
+
+    fn row_to_repl_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReplSession> {
+        Ok(ReplSession {
+            id: row.get(0)?,
+            model: row.get(1)?,
+            summary: row.get(2)?,
+            created_at: parse_datetime_utc(&row.get::<_, String>(3)?)?,
+            updated_at: parse_datetime_utc(&row.get::<_, String>(4)?)?,
+        })
+    }
+
+    fn row_to_repl_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReplMessage> {
+        Ok(ReplMessage {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            role: row.get(2)?,
+            content: row.get(3)?,
+            token_count: row.get(4)?,
+            created_at: parse_datetime_utc(&row.get::<_, String>(5)?)?,
         })
     }
 
@@ -1607,7 +1897,7 @@ mod tests {
         assert_eq!(loaded.node_id, "gate");
 
         let pending = storage
-            .list_approval_requests(Some("pending"))
+            .list_approval_requests(Some("pending"), 100, 0)
             .await
             .unwrap();
         assert_eq!(pending.len(), 1);
@@ -1620,7 +1910,7 @@ mod tests {
         storage.save_approval_request(&decided).await.unwrap();
 
         let approved = storage
-            .list_approval_requests(Some("approved"))
+            .list_approval_requests(Some("approved"), 100, 0)
             .await
             .unwrap();
         assert_eq!(approved.len(), 1);

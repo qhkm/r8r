@@ -79,34 +79,6 @@ impl std::str::FromStr for DlqStatus {
 }
 
 impl SqliteStorage {
-    pub async fn init_dlq(&self) -> Result<()> {
-        let conn = self.conn.lock().await;
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS dead_letter_queue (
-                id TEXT PRIMARY KEY,
-                execution_id TEXT NOT NULL,
-                workflow_id TEXT NOT NULL,
-                workflow_name TEXT NOT NULL,
-                trigger_type TEXT NOT NULL,
-                input TEXT NOT NULL,
-                error TEXT NOT NULL,
-                failed_node_id TEXT,
-                retry_count INTEGER NOT NULL DEFAULT 0,
-                max_retries INTEGER NOT NULL DEFAULT 3,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                next_retry_at TEXT,
-                status TEXT NOT NULL DEFAULT 'pending'
-            )",
-            [],
-        )?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_dlq_status ON dead_letter_queue(status)",
-            [],
-        )?;
-        Ok(())
-    }
-
     pub async fn add_to_dlq(&self, entry: NewDlqEntry<'_>) -> Result<String> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
@@ -272,7 +244,6 @@ mod tests {
     #[tokio::test]
     async fn test_dlq_add_and_get() {
         let storage = SqliteStorage::open_in_memory().unwrap();
-        storage.init_dlq().await.unwrap();
         let id = storage
             .add_to_dlq(NewDlqEntry {
                 execution_id: "exec-1",
@@ -295,7 +266,6 @@ mod tests {
     #[tokio::test]
     async fn test_dlq_status_transitions() {
         let storage = SqliteStorage::open_in_memory().unwrap();
-        storage.init_dlq().await.unwrap();
         let id = storage
             .add_to_dlq(NewDlqEntry {
                 execution_id: "exec-1",
@@ -320,7 +290,6 @@ mod tests {
     #[tokio::test]
     async fn test_dlq_stats() {
         let storage = SqliteStorage::open_in_memory().unwrap();
-        storage.init_dlq().await.unwrap();
         let id1 = storage
             .add_to_dlq(NewDlqEntry {
                 execution_id: "exec-1",

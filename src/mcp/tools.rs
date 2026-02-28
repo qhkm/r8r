@@ -8,8 +8,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+use crate::engine::executor::emit_audit;
 use crate::engine::Executor;
-use crate::storage::SqliteStorage;
+use crate::storage::{AuditEventType, SqliteStorage};
 use crate::workflow::{parse_workflow, validate_workflow};
 
 /// R8r MCP Service - handles all tool calls
@@ -126,6 +127,9 @@ pub struct ApproveParams {
     /// Optional decision comment.
     #[serde(default)]
     pub comment: Option<String>,
+    /// Identity of the decision-maker (default: "agent").
+    #[serde(default)]
+    pub decided_by: Option<String>,
 }
 
 /// Parameters for generating or refining a workflow from a natural language prompt.
@@ -214,7 +218,7 @@ fn json_diff_recursive(
     }
 }
 
-fn inject_approval_decision_into_checkpoint(
+pub(crate) fn inject_approval_decision_into_checkpoint(
     checkpoint_outputs: &mut serde_json::Map<String, Value>,
     approval_id: &str,
     node_id_hint: Option<&str>,
@@ -1054,7 +1058,7 @@ impl R8rService {
         #[tool(aggr)] params: ListApprovalsParams,
     ) -> Result<CallToolResult, McpError> {
         let status = params.status.as_deref().unwrap_or("pending");
-        let approvals = match self.storage.list_approval_requests(Some(status)).await {
+        let approvals = match self.storage.list_approval_requests(Some(status), 100, 0).await {
             Ok(list) => list,
             Err(e) => {
                 return Ok(CallToolResult::error(vec![Content::text(format!(
@@ -1188,7 +1192,7 @@ impl R8rService {
         approval.status = decided_status.to_string();
         approval.node_id = node_id;
         approval.decision_comment = params.comment.clone();
-        approval.decided_by = Some("agent".to_string());
+        approval.decided_by = Some(params.decided_by.unwrap_or_else(|| "agent".to_string()));
         approval.decided_at = Some(chrono::Utc::now());
 
         if let Err(e) = self.storage.save_approval_request(&approval).await {
@@ -1197,6 +1201,26 @@ impl R8rService {
                 e
             ))]));
         }
+
+        emit_audit(
+            &self.storage,
+            AuditEventType::ApprovalDecided,
+            Some(&approval.execution_id),
+            Some(&approval.workflow_name),
+            None,
+            approval.decided_by.as_deref().unwrap_or("agent"),
+            &format!(
+                "Approval {}: {} by {}",
+                decided_status, approval.id,
+                approval.decided_by.as_deref().unwrap_or("agent")
+            ),
+            Some(json!({
+                "approval_id": approval.id,
+                "decision": decided_status,
+                "comment": params.comment,
+            })),
+        )
+        .await;
 
         match self
             .executor
@@ -1234,16 +1258,9 @@ impl R8rService {
 
         let result = if let Some(name) = &params.workflow_name {
             // Refine existing workflow
-            let stored = self
-                .storage
-                .get_workflow(name)
-                .await
-                .map_err(|e| {
-                    McpError::internal_error(
-                        "storage_error",
-                        Some(json!({"error": e.to_string()})),
-                    )
-                })?;
+            let stored = self.storage.get_workflow(name).await.map_err(|e| {
+                McpError::internal_error("storage_error", Some(json!({"error": e.to_string()})))
+            })?;
 
             let stored = match stored {
                 Some(w) => w,
@@ -1418,6 +1435,7 @@ nodes:
             approval_id: "missing".to_string(),
             decision: "approve".to_string(),
             comment: None,
+            decided_by: None,
         };
         let result = service.r8r_approve(params).await.unwrap();
         assert!(result.is_error.unwrap_or(false));
@@ -1430,6 +1448,7 @@ nodes:
             approval_id: "any".to_string(),
             decision: "maybe".to_string(),
             comment: None,
+            decided_by: None,
         };
         let result = service.r8r_approve(params).await.unwrap();
         assert!(result.is_error.unwrap_or(false));
@@ -1495,6 +1514,7 @@ nodes:
                 approval_id,
                 decision: "approve".to_string(),
                 comment: Some("Looks good".to_string()),
+                decided_by: None,
             })
             .await
             .unwrap();

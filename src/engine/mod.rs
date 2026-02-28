@@ -1,6 +1,6 @@
 //! Execution engine for workflows.
 
-mod executor;
+pub(crate) mod executor;
 pub mod rate_limiter;
 
 pub use executor::{ExecutionMetadata, Executor, PauseRegistry};
