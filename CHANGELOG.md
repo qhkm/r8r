@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+#### Enterprise Feature Gaps
+- **Unified audit log** — queryable `audit_events` table with REST API (`GET /api/audit`), filterable by event type, execution, workflow, actor, and time range with pagination
+- **REST Approval API** — full CRUD endpoints (`GET/POST /api/approvals/{id}/decide`) for human-in-the-loop without MCP, with `decided_by` identity tracking
+- **DLQ auto-push** — failed executions automatically create dead letter queue entries for retry
+- **Retry backoff cap** — `max_delay_seconds` field prevents unbounded retry delays; `jitter` adds ±25% randomization to avoid thundering herd
+- **Fallback node routing** — `on_error.fallback_node` executes an alternate node on failure, with cascading fallback to `fallback_value`
+- **Parallel sibling execution** — independent nodes at the same DAG depth run concurrently via `futures::join_all`, respecting `max_concurrency` setting
+- **`store_traces` gating** — when `store_traces: false`, node-level execution records are skipped for performance
+- **`decided_by` on `r8r_approve`** — optional parameter to identify the decision-maker (defaults to "agent")
+
+#### Interactive REPL
+- **`r8r repl` command** — interactive TUI with ratatui for workflow management
+- **Conversation engine** — multi-turn conversation with history and context
+- **Tool integration** — workflow CRUD, execution, and LLM generation from the REPL
+- **LLM streaming** — `StreamEvent` enum and `call_llm_streaming()` for SSE/NDJSON streaming across OpenAI, Anthropic, and Ollama providers
+- **`generate_with_config()`** — allows REPL runtime LLM config overrides
+
+#### Infrastructure
+- **Terraform modules** — multi-tenant ECS deployment with per-client services, ALB, DNS, autoscaling
+- **GitHub Actions** — cloud deploy and Terraform infra CI/CD workflows
+
+### Changed
+- Test count increased from 483 to 583
+- Audit events emitted from executor, approval, and timeout paths
+- Validator now accepts `fallback_node` as valid alternative to `fallback_value` for fallback error action
+
 ## [0.2.0] - 2026-02-27
 
 ### Added
@@ -81,5 +111,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive security audit with 335+ tests
 - AGPL-3.0 license with dual licensing option
 
+[Unreleased]: https://github.com/qhkm/r8r/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/qhkm/r8r/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/qhkm/r8r/releases/tag/v0.1.0
