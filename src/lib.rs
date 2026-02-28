@@ -48,6 +48,7 @@ pub mod llm;
 pub mod mcp;
 pub mod metrics;
 pub mod nodes;
+pub mod repl;
 #[cfg(feature = "sandbox")]
 pub mod sandbox;
 pub mod shutdown;
