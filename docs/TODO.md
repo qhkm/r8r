@@ -7,10 +7,14 @@
 - [x] Node types: http, transform, agent, subworkflow, debug, variables, template, circuit_breaker, wait, switch, filter, sort, limit, set, aggregate, split, crypto, datetime, dedupe, summarize, if
 - [x] Conditional execution (`condition` field)
 - [x] Retry with backoff strategies (fixed, linear, exponential)
+- [x] Retry backoff cap (`max_delay_seconds`) and jitter (±25%) to prevent unbounded delays
 - [x] Error handling with fallback values
+- [x] Fallback node routing — `on_error.fallback_node` executes alternate node on failure
 - [x] For-each iteration with chunked processing
 - [x] Workflow timeout enforcement
 - [x] Max concurrency limits
+- [x] Parallel sibling execution — independent nodes at same DAG depth run concurrently via `join_all`
+- [x] `store_traces` setting to gate node-level execution record writes
 
 ### Storage & Versioning
 - [x] SQLite storage with WAL mode
@@ -20,6 +24,7 @@
 - [x] Execution replay from version
 - [x] Resume from failed node
 - [x] Dead Letter Queue for failed executions
+- [x] DLQ auto-push — failed executions automatically create DLQ entries
 
 ### Triggers
 - [x] Cron scheduling
@@ -40,6 +45,7 @@
 - [x] OpenTelemetry tracing
 - [x] Structured access logging
 - [x] Request ID propagation
+- [x] Unified audit log — queryable `audit_events` table with REST API (`GET /api/audit`)
 
 ### API & Integration
 - [x] REST API server
@@ -47,11 +53,13 @@
 - [x] WebSocket monitoring
 - [x] OpenAPI specification
 - [x] Workflow import/export CLI
+- [x] REST Approval API — CRUD endpoints (`GET/POST /api/approvals`) for human-in-the-loop without MCP
 
 ### Workflow Features
 - [x] Workflow templates/blueprints (5 built-in, custom templates supported)
 - [x] Parameterized workflows (with type validation & defaults)
 - [x] Workflow dependencies (DAG of workflows with cycle detection)
+- [x] Prompt-to-workflow generation via CLI (`r8r generate`) and MCP (`r8r_generate`)
 
 ### Sandbox (Code Execution)
 - [x] Pluggable `SandboxBackend` trait with feature-flagged backends
@@ -69,10 +77,13 @@
 - [x] Non-builder dashboard UX (overview, runs, approvals, audit)
 - [x] Guided workflow studio (template + plain-language form + publish)
 - [x] CLI autocomplete
+- [x] Interactive REPL with TUI — conversation engine, tool integration, LLM streaming
 
 ### Deployment & Operations
 - [x] VPS deploy wrapper (`scripts/deploy-vps.sh`) that bootstraps Docker/Compose and starts r8r API + embedded UI
 - [x] Post-deploy API/UI health checks in cloud deploy script (`scripts/deploy-cloud.sh`)
+- [x] Terraform modules for multi-tenant ECS deployment (per-client services, ALB, autoscaling)
+- [x] GitHub Actions CI/CD for cloud deploy and Terraform infra
 
 ### Reliability (Lightweight Durability)
 - [x] Checkpoint-based durable execution - Persist workflow state after each node
@@ -109,21 +120,22 @@ Make r8r the best workflow engine for AI agents to operate.
 - [ ] `r8r_discover` tool — parameter discovery, schema introspection
 - [ ] Structured error responses — actionable error messages agents can reason about
 - [ ] `r8r_lint` tool — validate YAML before submission
-- [ ] `r8r_generate` tool — scaffold workflows from natural language descriptions
+- [x] `r8r_generate` tool — scaffold workflows from natural language descriptions
 
 ### 4. Workflow Linting & Generation Helpers
 Make it trivial for LLMs to produce valid workflow YAML.
 - [ ] `r8r lint` CLI command — validate YAML syntax, node references, dependency cycles
 - [ ] JSON Schema for workflow YAML — enables IDE autocomplete
-- [ ] `r8r generate` CLI — scaffold workflow from template + parameters
+- [x] `r8r generate` CLI — generate workflow from natural language prompt (with refine support)
 - [ ] Common error suggestions — "did you mean `depends_on` instead of `dependsOn`?"
 
-### 5. Human-in-the-Loop Node
-Unlocks enterprise use cases requiring human approval in automated workflows.
-- [ ] `approval` node type — pause execution, wait for human input
+### ~~5. Human-in-the-Loop Node~~ ✅ Complete
+- [x] `approval` node type — pause execution, wait for human input
+- [x] REST Approval API — list, decide, with `decided_by` identity tracking
+- [x] MCP `r8r_approve` tool with optional `decided_by` parameter
+- [x] Approval UI in dashboard — review pending approvals, approve/reject with comments
+- [x] Timeout with default action — auto-approve/reject after configurable wait
 - [ ] Notification channels — webhook callback, email, Slack
-- [ ] Approval UI in dashboard — review pending approvals, approve/reject with comments
-- [ ] Timeout with default action — auto-approve/reject after configurable wait
 - [ ] Delegation — route approvals to specific users/groups
 
 ### 6. CLI Guardrails & UX (MVP, Vision-Aligned)
@@ -204,15 +216,15 @@ Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style
 - [ ] Redis-based job queue
 
 ### Deployment & Operations (Self-Hosted)
-- [ ] AWS ECS/Fargate reference architecture for per-client deployments (one service per client or pooled cluster with strict isolation)
-- [ ] Terraform modules for ECS service, networking, secrets, logging, and autoscaling defaults
+- [x] AWS ECS/Fargate reference architecture for per-client deployments (one service per client)
+- [x] Terraform modules for ECS service, networking, secrets, logging, and autoscaling defaults
 - [ ] Blue/green deployment and rollback runbook for workflow API uptime
 - [ ] Per-client cost controls (resource limits, autoscaling caps, tagging, budget alarms)
 
 ### Enterprise Features
 - [ ] Multi-tenancy
 - [ ] RBAC (Role-Based Access Control)
-- [ ] Audit logging
+- [x] Audit logging — unified audit_events table with REST API, emitted from executor/approval/timeout paths
 - [ ] SSO integration
 
 ## NOT Planned (Intentional Design Decisions)
