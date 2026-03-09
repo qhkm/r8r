@@ -4,7 +4,7 @@
 
 use crate::engine::Executor;
 use crate::llm::{self, LlmConfig, StreamEvent};
-use crate::storage::SqliteStorage;
+use crate::storage::Storage;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -57,7 +57,7 @@ pub async fn run_turn(
     system_prompt: &str,
     llm_config: &LlmConfig,
     llm_client: &reqwest::Client,
-    storage: &SqliteStorage,
+    storage: &dyn Storage,
     executor: &Arc<Executor>,
     tool_defs: &[Value],
     on_update: &StreamCallback,

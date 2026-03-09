@@ -5,6 +5,10 @@ mod dlq;
 mod models;
 mod pool;
 mod sqlite;
+mod r#trait;
+
+#[cfg(feature = "storage-postgres")]
+mod postgres;
 
 pub use audit::{AuditEntry, AuditEventType};
 pub use dlq::{DeadLetterEntry, DlqStats, DlqStatus, NewDlqEntry};
@@ -15,3 +19,7 @@ pub use models::{
 };
 pub use pool::{ConnectionPool, PoolConfig, PoolStats};
 pub use sqlite::SqliteStorage;
+pub use r#trait::Storage;
+
+#[cfg(feature = "storage-postgres")]
+pub use postgres::PostgresStorage;

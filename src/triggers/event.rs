@@ -15,7 +15,7 @@ use tracing::{debug, error, info, warn};
 use crate::api::Monitor;
 use crate::engine::Executor;
 use crate::nodes::NodeRegistry;
-use crate::storage::SqliteStorage;
+use crate::storage::Storage;
 use crate::triggers::delayed::DelayedEvent;
 use crate::triggers::event_backend::EventBackend;
 use crate::workflow::{parse_workflow, EventRouting, Trigger};
@@ -111,7 +111,7 @@ impl EventFanOut {
 
 /// Event subscriber that listens for events via an `EventBackend`.
 pub struct EventSubscriber {
-    storage: SqliteStorage,
+    storage: Arc<dyn Storage>,
     registry: Arc<NodeRegistry>,
     backend: Arc<dyn EventBackend>,
     monitor: Option<Arc<Monitor>>,
@@ -124,7 +124,7 @@ pub struct EventSubscriber {
 impl EventSubscriber {
     /// Create a new event subscriber with the given backend.
     pub fn new(
-        storage: SqliteStorage,
+        storage: Arc<dyn Storage>,
         registry: Arc<NodeRegistry>,
         backend: Arc<dyn EventBackend>,
     ) -> Self {
@@ -290,7 +290,7 @@ impl EventSubscriber {
                                     if let Some(routing_rules) = &sub.routing {
                                         if let Some(target) = evaluate_routing(routing_rules, &event.data) {
                                             if let Err(e) = trigger_workflow(
-                                                &storage,
+                                                Arc::clone(&storage),
                                                 &registry,
                                                 &sub.workflow_id,
                                                 &target,
@@ -310,7 +310,7 @@ impl EventSubscriber {
 
                                     // Trigger workflow execution
                                     if let Err(e) = trigger_workflow(
-                                        &storage,
+                                        Arc::clone(&storage),
                                         &registry,
                                         &sub.workflow_id,
                                         &sub.workflow_name,
@@ -330,7 +330,7 @@ impl EventSubscriber {
                                 for fan_out in &fan_out_configs {
                                     if fan_out.event == event.event {
                                         handle_fan_out(
-                                            &storage,
+                                            Arc::clone(&storage),
                                             &registry,
                                             fan_out,
                                             &event,
@@ -411,7 +411,7 @@ fn get_delay_from_subscriptions(
 
 /// Schedule a delayed event for future processing.
 async fn schedule_delayed_event(
-    storage: &SqliteStorage,
+    storage: &dyn Storage,
     delayed_processor: &Option<Arc<crate::triggers::delayed::DelayedEventProcessor>>,
     event: &EventMessage,
     delay_seconds: u64,
@@ -446,7 +446,7 @@ async fn schedule_delayed_event(
 
 /// Handle event fan-out to multiple workflows.
 async fn handle_fan_out(
-    storage: &SqliteStorage,
+    storage: Arc<dyn Storage>,
     registry: &Arc<NodeRegistry>,
     fan_out: &EventFanOut,
     event: &EventMessage,
@@ -473,7 +473,7 @@ async fn handle_fan_out(
                 match storage.get_workflow(&workflow_name).await {
                     Ok(Some(stored)) => {
                         if let Err(e) = trigger_workflow(
-                            &storage,
+                            Arc::clone(&storage),
                             &registry,
                             &stored.id,
                             &workflow_name,
@@ -505,7 +505,7 @@ async fn handle_fan_out(
             match storage.get_workflow(workflow_name).await {
                 Ok(Some(stored)) => {
                     if let Err(e) = trigger_workflow(
-                        storage,
+                        Arc::clone(&storage),
                         registry,
                         &stored.id,
                         workflow_name,
@@ -629,7 +629,7 @@ fn evaluate_routing(routing_rules: &[EventRouting], data: &Value) -> Option<Stri
 
 /// Trigger a workflow execution based on an event.
 async fn trigger_workflow(
-    storage: &SqliteStorage,
+    storage: Arc<dyn Storage>,
     registry: &Arc<NodeRegistry>,
     workflow_id: &str,
     workflow_name: &str,

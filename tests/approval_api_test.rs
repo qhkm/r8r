@@ -74,6 +74,8 @@ fn make_approval(id: &str, status: &str) -> ApprovalRequest {
         created_at: Utc::now(),
         expires_at: None,
         decided_at: None,
+        assignee: None,
+        groups: vec![],
     }
 }
 
@@ -194,6 +196,8 @@ async fn test_get_approval_found() {
         created_at: Utc::now(),
         expires_at: None,
         decided_at: None,
+        assignee: None,
+        groups: vec![],
     };
 
     storage.save_approval_request(&approval).await.unwrap();

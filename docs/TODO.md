@@ -99,35 +99,37 @@
 
 ## Planned (Priority Order)
 
-### 1. Synchronous Workflow Execution
+### ~~1. Synchronous Workflow Execution~~ ✅ Complete
 Make r8r seamless for AI agents by returning results inline instead of requiring polling.
-- [ ] Webhook response mode — `POST /api/webhooks/:id?wait=true` returns workflow output directly
-- [ ] `run_and_wait` MCP tool — agents call one tool, get structured results back
-- [ ] Configurable timeout with streaming progress updates
-- [ ] Response format options (full trace vs. final output only)
+- [x] Webhook response mode — `response_mode: wait_for_result` on webhook triggers returns output directly
+- [x] `r8r_run_and_wait` MCP tool — agents call one tool, get structured results back
+- [x] Configurable timeout — `timeout_seconds` on sync execution
+- [x] Response format options — final output only via `r8r_run_and_wait`; full trace via standard execution API
 
-### 2. Workflow Testing & Mocking Framework
+### ~~2. Workflow Testing & Mocking Framework~~ ✅ Complete
 No competitor has this — huge DX win for workflow development.
-- [ ] `r8r test` CLI command — run workflows against mock fixtures
-- [ ] Mock definitions in YAML — stub HTTP responses, agent outputs, external services
-- [ ] Assertion syntax — validate node outputs, execution order, error handling
-- [ ] Snapshot testing — detect unexpected output changes
-- [ ] CI-friendly output (JUnit XML, exit codes)
+- [x] `r8r test <fixture.yaml>` CLI — run workflows against mock fixtures
+- [x] Mock definitions in YAML — `mocks:` map of node_id → pinned output (injected as `pinned_data`)
+- [x] Assertion syntax — `expected:` + `mode: exact|contains`; `expected_error:` for failure cases
+- [x] Snapshot mode — `--update-snapshots` prints actual output for copying into fixture
+- [x] CI-friendly output — exit code 1 on failure, `--junit-xml <path>` for JUnit XML report
+- [x] `--filter / -k` to run matching test names only
 
-### 3. Enhanced MCP Tools
+### ~~3. Enhanced MCP Tools~~ ✅ Complete
 Make r8r the best workflow engine for AI agents to operate.
-- [ ] `r8r_run_and_wait` tool — synchronous execution with structured output
-- [ ] `r8r_discover` tool — parameter discovery, schema introspection
-- [ ] Structured error responses — actionable error messages agents can reason about
-- [ ] `r8r_lint` tool — validate YAML before submission
+- [x] `r8r_run_and_wait` tool — synchronous execution with structured output
+- [x] `r8r_discover` tool — parameter discovery, schema introspection
+- [x] `r8r_lint` tool — validate YAML before submission
 - [x] `r8r_generate` tool — scaffold workflows from natural language descriptions
+- [x] Structured error responses — `{ error_code, message, details }` on all tools; codes: `workflow_not_found`, `yaml_parse_error`, `execution_failed`, `approval_required`, `invalid_input`, `resource_not_found`, `internal_error`
 
-### 4. Workflow Linting & Generation Helpers
+### ~~4. Workflow Linting & Generation Helpers~~ ✅ Complete
 Make it trivial for LLMs to produce valid workflow YAML.
-- [ ] `r8r lint` CLI command — validate YAML syntax, node references, dependency cycles
-- [ ] JSON Schema for workflow YAML — enables IDE autocomplete
-- [x] `r8r generate` CLI — generate workflow from natural language prompt (with refine support)
-- [ ] Common error suggestions — "did you mean `depends_on` instead of `dependsOn`?"
+- [x] `r8r lint <file...>` CLI — validate YAML syntax, node references, dependency cycles
+- [x] Common error suggestions — "did you mean `depends_on` instead of `dependsOn`?"
+- [x] `--errors-only` flag to suppress warnings; `--json` for machine output
+- [x] `r8r generate` / `r8r create` / `r8r prompt` CLI — generate workflow from natural language
+- [x] JSON Schema for workflow YAML — `assets/r8r-workflow.schema.json`, emitted via `r8r schema [--output file]`
 
 ### ~~5. Human-in-the-Loop Node~~ ✅ Complete
 - [x] `approval` node type — pause execution, wait for human input
@@ -135,25 +137,25 @@ Make it trivial for LLMs to produce valid workflow YAML.
 - [x] MCP `r8r_approve` tool with optional `decided_by` parameter
 - [x] Approval UI in dashboard — review pending approvals, approve/reject with comments
 - [x] Timeout with default action — auto-approve/reject after configurable wait
-- [ ] Notification channels — webhook callback, email, Slack
-- [ ] Delegation — route approvals to specific users/groups
+- [x] Notification channels — `notify:` list in approval node config; supports `webhook`, `slack`, `email` (SMTP relay via `R8R_SMTP_RELAY_URL`)
+- [x] Delegation — `assign_to` and `assign_groups` on approval node; filterable via REST API and MCP tool
 
-### 6. CLI Guardrails & UX (MVP, Vision-Aligned)
+### ~~6. CLI Guardrails & UX (MVP, Vision-Aligned)~~ ✅ Sprint 1 & 2 Complete
 Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style durability.
 
-**Sprint 1 (highest ROI, lowest risk)**
-- [ ] Add top-level command aliases: `prompt`, `run`, `watch`, `runs`, `secrets`, `doctor`
-- [ ] Implement `r8r prompt` wrapper over create/refine with `--patch`, `--emit`, `--dry-run`, `--review`, `--yes`, `--json`
-- [ ] Implement `r8r run` review screen on TTY with side-effect summary before execution
-- [ ] Enforce fail-closed non-interactive behavior when approval is required (exit code `42`)
+**Sprint 1 ✅ Complete**
+- [x] Add top-level command aliases: `prompt`, `run`, `watch`, `runs`, `secrets`, `doctor`
+- [x] `r8r prompt` wrapper over create/refine with `--patch`, `--emit`, `--dry-run`, `--yes`, `--json`
+- [x] `r8r run` review screen on TTY with side-effect node summary before execution
+- [x] Fail-closed non-interactive behavior when `waiting_for_approval` — exits with code `42`
 - [ ] Add tests + docs for new prompt/run flags and non-interactive exit semantics
 
-**Sprint 2 (operations + policy-lite)**
-- [ ] Add `r8r runs pending`, `r8r runs show <run_id>`, `r8r runs export <run_id> --format jsonl`
-- [ ] Add `r8r approve <run_id>` and `r8r deny <run_id>` CLI flow on top of approval requests
-- [ ] Add `r8r policy` profiles: `lenient`, `standard`, `strict`
-- [ ] Implement minimum policy knobs: `require_review_on_patch`, `require_idempotency_key_for_run`, `max_runtime`, `deny_unknown_node_types`
-- [ ] Add policy validation command + docs
+**Sprint 2 ✅ Complete**
+- [x] Add `r8r runs pending`, `r8r runs show <run_id>`, `r8r runs export <run_id> --format jsonl`
+- [x] Add `r8r approve <run_id>` and `r8r deny <run_id>` CLI flow on top of approval requests
+- [x] Add `r8r policy` profiles: `lenient`, `standard`, `strict`
+- [x] Implement minimum policy knobs: `require_review_on_patch`, `require_idempotency_key_for_run`, `max_runtime`, `deny_unknown_node_types`
+- [x] Add policy validation command + docs
 
 **Explicitly deferred (out of Sprint 1/2)**
 - [ ] Full tool capability/scope permission matrix
@@ -179,16 +181,16 @@ Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style
 - [ ] Keep policy/permissions/cost controls out of default builder flow (surface in operator mode)
 
 **REPL guardrails (next after Sprint 1/2 core CLI)**
-- [ ] Add `:plan` in REPL to create a plan artifact before execution
-- [ ] Add side-effect summary panel before any write-capable run
-- [ ] Add `:arm writes` with session TTL (default disarmed)
-- [ ] Add high-risk type-to-confirm approval modal for sensitive actions
+- [x] Add `/plan` in REPL to create a plan artifact before execution
+- [x] Add side-effect summary panel before any write-capable run (write-gate confirmation)
+- [x] Add `/arm` with session TTL (default disarmed — safe mode)
+- [x] Add type-to-confirm (yes/no) approval for write-intent inputs when disarmed
 - [ ] Persist transcript-to-run correlation (`session_id`, `run_id`, tool calls redacted)
 - [ ] Add fail-closed non-interactive behavior parity for approval-required runs (exit `42`)
 
 **Operator mode (optional/escalated)**
-- [ ] Add explicit operator mode/profile toggle rather than making builder mode heavier
-- [ ] Show policy profile, write arm state, and gate status prominently in operator mode
+- [x] Add `/operator [on|off]` toggle command — shows arm state in status bar
+- [x] Show write arm state prominently when operator mode is on
 - [ ] Require stricter confirms only in operator mode or high-risk paths
 
 ## Backlog
@@ -203,16 +205,18 @@ Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style
 - [ ] `telegram` - Telegram Bot API
 
 ### Sandbox v2
-- [ ] File artifacts — output directory collection from sandbox executions
-- [ ] Warm pools — pre-started containers/VMs for sub-100ms cold starts
-- [ ] Streaming output — WebSocket streaming of stdout during execution
-- [ ] Package caching — pre-installed pip/npm packages in Docker images
+- [x] File artifacts — `collect_artifacts: true` + `R8R_OUTPUT_DIR` env; collected per-execution in subprocess and Docker backends
+- [x] Streaming output — `execute_streaming()` on `SandboxBackend` trait; subprocess backend streams stdout/stderr line-by-line via mpsc channel
+- [x] Package caching — `packages: [...]` in sandbox node config; pip/npm install prefix for subprocess and Docker; `image:` override for custom Docker images
+- [ ] Warm pools — pre-started containers/VMs for sub-100ms cold starts (backlogged)
+- [ ] Firecracker guest agent reference implementation
+- [ ] WASM backend (`sandbox-wasm`) — for trusted, high-frequency tool execution
 - [ ] Firecracker guest agent reference implementation
 - [ ] WASM backend (`sandbox-wasm`) — for trusted, high-frequency tool execution
 
 ### Scalability
 - [ ] Distributed execution (multiple workers)
-- [ ] PostgreSQL storage backend
+- [x] PostgreSQL storage backend (`--features storage-postgres`, `Storage` trait, `Arc<dyn Storage>` everywhere)
 - [ ] Redis-based job queue
 
 ### Deployment & Operations (Self-Hosted)
@@ -248,8 +252,8 @@ The following features are intentionally **not** on the roadmap to maintain r8r'
 
 We welcome contributions! Pick an item from "Planned" or "Backlog" and open an issue to discuss before starting work.
 
-Priority areas:
-1. Synchronous execution & MCP tool improvements (items 1 & 3)
-2. Workflow testing framework (item 2)
-3. Documentation improvements
-4. Test coverage
+Priority areas (next):
+1. Approval delegation — route to specific users/groups
+2. Sandbox v2 — file artifacts, warm pools, streaming output
+3. Scalability — PostgreSQL backend, distributed workers, Redis job queue
+4. Enterprise — multi-tenancy, RBAC, SSO

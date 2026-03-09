@@ -17,6 +17,7 @@ redis = ["dep:redis"]
 sandbox = ["dep:tempfile"]
 sandbox-docker = ["sandbox", "dep:bollard"]
 sandbox-firecracker = ["sandbox"]
+storage-postgres = ["dep:sqlx"]
 
 [[bin]]
 name = "r8r"
@@ -121,6 +122,9 @@ moka = { version = "0.12", features = ["future"] }
 # Sandbox
 bollard = { version = "0.18", optional = true }
 tempfile = { version = "3", optional = true }
+
+# PostgreSQL storage backend (optional, enable with --features storage-postgres)
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "chrono", "uuid", "json"], optional = true }
 
 
 [dev-dependencies]

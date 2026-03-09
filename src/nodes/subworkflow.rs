@@ -180,7 +180,7 @@ fn get_field_value(value: &Value, path: &str) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::nodes::NodeRegistry;
-    use crate::storage::{SqliteStorage, StoredWorkflow};
+    use crate::storage::{SqliteStorage, Storage, StoredWorkflow};
     use chrono::Utc;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -229,7 +229,7 @@ mod tests {
         }
     }
 
-    async fn save_test_workflow(storage: &SqliteStorage, id: &str, yaml: &str) {
+    async fn save_test_workflow(storage: &dyn Storage, id: &str, yaml: &str) {
         let workflow = parse_workflow(yaml).unwrap();
         let now = Utc::now();
         storage
@@ -289,7 +289,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_subworkflow_inherits_credentials_when_enabled() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::default();
         registry.register(Arc::new(RequireCredentialNode));
         let registry = Arc::new(registry);
@@ -322,7 +322,7 @@ nodes:
 
     #[tokio::test]
     async fn test_subworkflow_does_not_inherit_credentials_when_disabled() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::default();
         registry.register(Arc::new(RequireCredentialNode));
         let registry = Arc::new(registry);
@@ -355,7 +355,7 @@ nodes:
 
     #[tokio::test]
     async fn test_subworkflow_timeout_override_applies() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::default();
         registry.register(Arc::new(SlowChildNode));
         let registry = Arc::new(registry);

@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 use crate::api::Monitor;
 use crate::engine::Executor;
 use crate::nodes::NodeRegistry;
-use crate::storage::SqliteStorage;
+use crate::storage::Storage;
 use crate::triggers::event::{EventError, EventMessage};
 use crate::triggers::event_backend::EventBackend;
 use crate::workflow::parse_workflow;
@@ -124,7 +124,7 @@ impl DelayedEvent {
 /// triggering a target workflow directly or re-publishing via the backend),
 /// and handles retries with exponential backoff.
 pub struct DelayedEventProcessor {
-    storage: SqliteStorage,
+    storage: Arc<dyn Storage>,
     registry: Arc<NodeRegistry>,
     backend: Arc<dyn EventBackend>,
     monitor: Option<Arc<Monitor>>,
@@ -136,7 +136,7 @@ pub struct DelayedEventProcessor {
 impl DelayedEventProcessor {
     /// Create a new delayed event processor.
     pub fn new(
-        storage: SqliteStorage,
+        storage: Arc<dyn Storage>,
         registry: Arc<NodeRegistry>,
         backend: Arc<dyn EventBackend>,
     ) -> Self {
@@ -185,7 +185,7 @@ impl DelayedEventProcessor {
                     }
                     _ = ticker.tick() => {
                         if let Err(e) = process_due_events(
-                            &storage,
+                            Arc::clone(&storage),
                             &registry,
                             &backend,
                             monitor.clone(),
@@ -229,7 +229,7 @@ impl DelayedEventProcessor {
 
 /// Process all due delayed events from SQLite.
 async fn process_due_events(
-    storage: &SqliteStorage,
+    storage: Arc<dyn Storage>,
     registry: &Arc<NodeRegistry>,
     backend: &Arc<dyn EventBackend>,
     monitor: Option<Arc<Monitor>>,
@@ -260,7 +260,7 @@ async fn process_due_events(
         // Delete from queue first (prevents re-processing on crash/restart)
         let _ = storage.delete_delayed_event(&event_id).await;
 
-        match process_single_event(&event, storage, registry, backend, monitor.clone()).await {
+        match process_single_event(&event, Arc::clone(&storage), registry, backend, monitor.clone()).await {
             Ok(()) => {
                 processed += 1;
             }
@@ -307,7 +307,7 @@ async fn process_due_events(
 /// Process a single delayed event.
 async fn process_single_event(
     event: &DelayedEvent,
-    storage: &SqliteStorage,
+    storage: Arc<dyn Storage>,
     registry: &Arc<NodeRegistry>,
     backend: &Arc<dyn EventBackend>,
     monitor: Option<Arc<Monitor>>,

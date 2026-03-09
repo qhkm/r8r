@@ -18,7 +18,7 @@ use tracing::{debug, error, info, warn};
 use crate::api::AppState;
 use crate::engine::Executor;
 use crate::nodes::NodeRegistry;
-use crate::storage::SqliteStorage;
+use crate::storage::Storage;
 use crate::workflow::{parse_workflow, DebounceConfig, HeaderFilter, Trigger};
 
 /// Maximum allowed length for header filter regex patterns (ReDoS guard).
@@ -63,7 +63,7 @@ impl CompiledHeaderFilter {
 
 /// Create webhook routes for all workflows with webhook triggers.
 pub async fn create_webhook_routes(
-    storage: SqliteStorage,
+    storage: Arc<dyn Storage>,
     _registry: Arc<NodeRegistry>,
 ) -> Router<AppState> {
     let mut router = Router::new();

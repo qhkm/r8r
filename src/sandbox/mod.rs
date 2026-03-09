@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::fmt;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 #[cfg(feature = "sandbox-docker")]
 pub mod docker;
@@ -29,6 +30,37 @@ pub use subprocess::SubprocessBackend;
 pub trait SandboxBackend: Send + Sync + 'static {
     /// Execute code in a sandboxed environment.
     async fn execute(&self, req: SandboxRequest) -> Result<SandboxResult, SandboxError>;
+
+    /// Execute code and stream stdout/stderr events through a channel.
+    ///
+    /// Default implementation buffers all output and sends a single Done event.
+    /// Backends that support real streaming should override this.
+    async fn execute_streaming(
+        &self,
+        req: SandboxRequest,
+        tx: mpsc::Sender<SandboxStreamEvent>,
+    ) {
+        match self.execute(req).await {
+            Ok(result) => {
+                if !result.stdout.is_empty() {
+                    let _ = tx.send(SandboxStreamEvent::Stdout(result.stdout)).await;
+                }
+                if !result.stderr.is_empty() {
+                    let _ = tx.send(SandboxStreamEvent::Stderr(result.stderr)).await;
+                }
+                let _ = tx
+                    .send(SandboxStreamEvent::Done {
+                        exit_code: result.exit_code,
+                        duration_ms: result.duration_ms,
+                        artifacts: result.artifacts,
+                    })
+                    .await;
+            }
+            Err(e) => {
+                let _ = tx.send(SandboxStreamEvent::Error(e.to_string())).await;
+            }
+        }
+    }
 
     /// Human-readable backend name for logs and metadata.
     fn name(&self) -> &str;
@@ -54,6 +86,15 @@ pub struct SandboxRequest {
     pub network: bool,
     /// Max bytes for stdout + stderr combined
     pub max_output_bytes: u64,
+    /// Collect files written to the output dir as artifacts (default: false).
+    /// Code should write output files to the path in `R8R_OUTPUT_DIR` env var.
+    pub collect_artifacts: bool,
+    /// Max total bytes for all collected artifacts (default: 50 MB).
+    pub max_artifact_bytes: u64,
+    /// Packages to install before running code (pip for python, npm for node).
+    pub packages: Vec<String>,
+    /// Docker-only: custom image name to use instead of the backend default.
+    pub image: Option<String>,
 }
 
 impl Default for SandboxRequest {
@@ -66,8 +107,23 @@ impl Default for SandboxRequest {
             memory_mb: None,
             network: false,
             max_output_bytes: 1_048_576, // 1MB
+            collect_artifacts: false,
+            max_artifact_bytes: 50 * 1024 * 1024, // 50MB
+            packages: Vec::new(),
+            image: None,
         }
     }
+}
+
+/// A file artifact collected from the sandbox output directory.
+#[derive(Debug, Clone)]
+pub struct SandboxArtifact {
+    /// Relative path within the output directory.
+    pub path: String,
+    /// File contents (raw bytes).
+    pub content: Vec<u8>,
+    /// Size in bytes.
+    pub size: usize,
 }
 
 /// Result of sandbox code execution.
@@ -77,6 +133,25 @@ pub struct SandboxResult {
     pub stderr: String,
     pub exit_code: i32,
     pub duration_ms: u64,
+    /// Files collected from the output directory (empty if `collect_artifacts` was false).
+    pub artifacts: Vec<SandboxArtifact>,
+}
+
+/// A streaming event from a sandbox execution.
+#[derive(Debug, Clone)]
+pub enum SandboxStreamEvent {
+    /// A chunk of stdout.
+    Stdout(String),
+    /// A chunk of stderr.
+    Stderr(String),
+    /// Execution completed.
+    Done {
+        exit_code: i32,
+        duration_ms: u64,
+        artifacts: Vec<SandboxArtifact>,
+    },
+    /// Execution failed.
+    Error(String),
 }
 
 /// Errors from sandbox execution.
@@ -123,6 +198,69 @@ impl From<std::io::Error> for SandboxError {
 }
 
 // ============================================================================
+// Shared helpers
+// ============================================================================
+
+/// Walk `dir` and collect all files as `SandboxArtifact`s.
+///
+/// Skips files that would push total size over `max_bytes`.
+/// Returns paths relative to `dir`.
+pub fn collect_output_artifacts(
+    dir: impl AsRef<std::path::Path>,
+    max_bytes: u64,
+) -> Result<Vec<SandboxArtifact>, SandboxError> {
+    let dir = dir.as_ref();
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut artifacts = Vec::new();
+    let mut total_bytes: u64 = 0;
+
+    collect_dir_recursive(dir, dir, &mut artifacts, &mut total_bytes, max_bytes)?;
+
+    // Sort for deterministic ordering
+    artifacts.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(artifacts)
+}
+
+fn collect_dir_recursive(
+    base: &std::path::Path,
+    current: &std::path::Path,
+    artifacts: &mut Vec<SandboxArtifact>,
+    total_bytes: &mut u64,
+    max_bytes: u64,
+) -> Result<(), SandboxError> {
+    let entries = std::fs::read_dir(current)?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_dir_recursive(base, &path, artifacts, total_bytes, max_bytes)?;
+        } else if path.is_file() {
+            let file_size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            if *total_bytes + file_size > max_bytes {
+                // Skip files that exceed the budget
+                continue;
+            }
+            let content = std::fs::read(&path)?;
+            let size = content.len();
+            *total_bytes += size as u64;
+
+            // Relative path from the output dir root
+            let rel = path.strip_prefix(base).unwrap_or(&path);
+            let rel_str = rel.to_string_lossy().to_string();
+
+            artifacts.push(SandboxArtifact {
+                path: rel_str,
+                content,
+                size,
+            });
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
 // Mock backend for testing
 // ============================================================================
 
@@ -145,6 +283,7 @@ pub mod mock {
                 stderr: String::new(),
                 exit_code: 0,
                 duration_ms: 10,
+                artifacts: Vec::new(),
             })
         }
     }

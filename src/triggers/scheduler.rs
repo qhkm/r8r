@@ -14,7 +14,7 @@ use tracing::{error, info, warn};
 use crate::api::Monitor;
 use crate::engine::Executor;
 use crate::nodes::NodeRegistry;
-use crate::storage::SqliteStorage;
+use crate::storage::Storage;
 use crate::workflow::{parse_workflow, Trigger, Workflow};
 use crate::Result;
 
@@ -25,7 +25,7 @@ pub struct Scheduler {
     /// Map of workflow name to job UUIDs for tracking
     jobs: Arc<RwLock<HashMap<String, Vec<uuid::Uuid>>>>,
     /// Storage for loading workflows
-    storage: SqliteStorage,
+    storage: Arc<dyn Storage>,
     /// Node registry for execution
     registry: Arc<NodeRegistry>,
     /// Optional monitor for broadcasting execution lifecycle events
@@ -34,7 +34,7 @@ pub struct Scheduler {
 
 impl Scheduler {
     /// Create a new scheduler.
-    pub async fn new(storage: SqliteStorage, registry: Arc<NodeRegistry>) -> Result<Self> {
+    pub async fn new(storage: Arc<dyn Storage>, registry: Arc<NodeRegistry>) -> Result<Self> {
         let job_scheduler = JobScheduler::new()
             .await
             .map_err(|e| crate::Error::Internal(format!("Failed to create scheduler: {}", e)))?;
@@ -278,7 +278,7 @@ fn parse_fixed_offset(raw: &str) -> Option<FixedOffset> {
 fn create_cron_job<TZ: TimeZone + Send + Sync + 'static>(
     schedule: &str,
     timezone: TZ,
-    storage: SqliteStorage,
+    storage: Arc<dyn Storage>,
     registry: Arc<NodeRegistry>,
     workflow_id: String,
     workflow_name: String,

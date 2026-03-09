@@ -191,6 +191,10 @@ pub struct ApprovalRequest {
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
     pub decided_at: Option<DateTime<Utc>>,
+    /// Specific user this approval is routed to (optional delegation).
+    pub assignee: Option<String>,
+    /// Groups this approval is routed to (optional delegation).
+    pub groups: Vec<String>,
 }
 
 /// A stored REPL session.

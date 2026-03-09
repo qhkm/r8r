@@ -173,9 +173,12 @@ impl SqliteStorage {
                 created_at TEXT NOT NULL,
                 expires_at TEXT,
                 decided_at TEXT,
+                assignee TEXT,
+                groups TEXT NOT NULL DEFAULT '[]',
                 FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
+            CREATE INDEX IF NOT EXISTS idx_approval_requests_assignee ON approval_requests(assignee);
 
             CREATE TABLE IF NOT EXISTS repl_sessions (
                 id TEXT PRIMARY KEY,
@@ -260,6 +263,7 @@ impl SqliteStorage {
         Self::migrate_foreign_keys_to_cascade(conn)?;
         Self::ensure_execution_workflow_version_column(conn)?;
         Self::ensure_execution_trace_columns(conn)?;
+        Self::ensure_approval_delegation_columns(conn)?;
         Self::repair_orphans(conn)?;
         Ok(())
     }
@@ -284,6 +288,23 @@ impl SqliteStorage {
         // Add origin column if not exists
         if !Self::has_column(conn, "executions", "origin")? {
             conn.execute("ALTER TABLE executions ADD COLUMN origin TEXT", [])?;
+        }
+        Ok(())
+    }
+
+    fn ensure_approval_delegation_columns(conn: &Connection) -> Result<()> {
+        if !Self::has_column(conn, "approval_requests", "assignee")? {
+            conn.execute("ALTER TABLE approval_requests ADD COLUMN assignee TEXT", [])?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_approval_requests_assignee ON approval_requests(assignee)",
+                [],
+            )?;
+        }
+        if !Self::has_column(conn, "approval_requests", "groups")? {
+            conn.execute(
+                "ALTER TABLE approval_requests ADD COLUMN groups TEXT NOT NULL DEFAULT '[]'",
+                [],
+            )?;
         }
         Ok(())
     }
@@ -1196,15 +1217,18 @@ impl SqliteStorage {
     /// Save an approval request.
     pub async fn save_approval_request(&self, request: &ApprovalRequest) -> Result<()> {
         let conn = self.conn.lock().await;
+        let groups_json = serde_json::to_string(&request.groups).unwrap_or_else(|_| "[]".to_string());
         conn.execute(
-            "INSERT INTO approval_requests (id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "INSERT INTO approval_requests (id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at, assignee, groups)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
              ON CONFLICT(id) DO UPDATE SET
                 node_id = excluded.node_id,
                 status = excluded.status,
                 decision_comment = excluded.decision_comment,
                 decided_by = excluded.decided_by,
-                decided_at = excluded.decided_at",
+                decided_at = excluded.decided_at,
+                assignee = excluded.assignee,
+                groups = excluded.groups",
             params![
                 request.id,
                 request.execution_id,
@@ -1222,6 +1246,8 @@ impl SqliteStorage {
                 request.created_at.to_rfc3339(),
                 request.expires_at.map(|t| t.to_rfc3339()),
                 request.decided_at.map(|t| t.to_rfc3339()),
+                request.assignee,
+                groups_json,
             ],
         )?;
         Ok(())
@@ -1231,7 +1257,7 @@ impl SqliteStorage {
     pub async fn get_approval_request(&self, id: &str) -> Result<Option<ApprovalRequest>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "SELECT id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at
+            "SELECT id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at, assignee, groups
              FROM approval_requests
              WHERE id = ?1",
         )?;
@@ -1266,10 +1292,22 @@ impl SqliteStorage {
         Ok(rows > 0)
     }
 
-    /// List approval requests, optionally filtering by status.
+    /// List approval requests, optionally filtering by status, assignee, or group.
     pub async fn list_approval_requests(
         &self,
         status_filter: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<ApprovalRequest>> {
+        self.list_approval_requests_filtered(status_filter, None, None, limit, offset).await
+    }
+
+    /// List approval requests with optional delegation filters.
+    pub async fn list_approval_requests_filtered(
+        &self,
+        status_filter: Option<&str>,
+        assignee_filter: Option<&str>,
+        group_filter: Option<&str>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<ApprovalRequest>> {
@@ -1277,27 +1315,40 @@ impl SqliteStorage {
         let effective_limit = limit.min(MAX_QUERY_LIMIT) as i64;
         let effective_offset = offset as i64;
 
-        let approvals = if let Some(status) = status_filter {
-            let mut stmt = conn.prepare(
-                "SELECT id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at
-                 FROM approval_requests
-                 WHERE status = ?1
-                 ORDER BY created_at DESC
-                 LIMIT ?2 OFFSET ?3",
-            )?;
-            let rows = stmt.query_map(params![status, effective_limit, effective_offset], Self::row_to_approval_request)?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        // Build dynamic WHERE clause
+        let mut conditions: Vec<&str> = Vec::new();
+        if status_filter.is_some() { conditions.push("status = ?1"); }
+        if assignee_filter.is_some() { conditions.push("assignee = ?2"); }
+        if group_filter.is_some() { conditions.push("groups LIKE ?3"); }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
         } else {
-            let mut stmt = conn.prepare(
-                "SELECT id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at
-                 FROM approval_requests
-                 ORDER BY created_at DESC
-                 LIMIT ?1 OFFSET ?2",
-            )?;
-            let rows = stmt.query_map(params![effective_limit, effective_offset], Self::row_to_approval_request)?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()?
+            format!("WHERE {}", conditions.join(" AND "))
         };
 
+        let sql = format!(
+            "SELECT id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at, assignee, groups
+             FROM approval_requests
+             {}
+             ORDER BY created_at DESC
+             LIMIT ?4 OFFSET ?5",
+            where_clause
+        );
+
+        let group_pattern = group_filter.map(|g| format!("%\"{}\"% ", g));
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(
+            params![
+                status_filter,
+                assignee_filter,
+                group_pattern.as_deref(),
+                effective_limit,
+                effective_offset
+            ],
+            Self::row_to_approval_request,
+        )?;
+        let approvals = rows.collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(approvals)
     }
 
@@ -1306,7 +1357,7 @@ impl SqliteStorage {
         let conn = self.conn.lock().await;
         let now = Utc::now().to_rfc3339();
         let mut stmt = conn.prepare(
-            "SELECT id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at
+            "SELECT id, execution_id, node_id, workflow_name, title, description, status, decision_comment, decided_by, context_data, created_at, expires_at, decided_at, assignee, groups
              FROM approval_requests
              WHERE status = 'pending' AND expires_at IS NOT NULL AND expires_at < ?1
              ORDER BY expires_at ASC",
@@ -1533,6 +1584,10 @@ impl SqliteStorage {
     }
 
     fn row_to_approval_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApprovalRequest> {
+        let groups: Vec<String> = row
+            .get::<_, Option<String>>(14)?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
         Ok(ApprovalRequest {
             id: row.get(0)?,
             execution_id: row.get(1)?,
@@ -1555,6 +1610,8 @@ impl SqliteStorage {
                 .get::<_, Option<String>>(12)?
                 .map(|s| parse_datetime_utc(&s))
                 .transpose()?,
+            assignee: row.get(13)?,
+            groups,
         })
     }
 
@@ -1713,6 +1770,220 @@ impl SqliteStorage {
             |row| row.get(0),
         )?;
         Ok(count.max(0) as u64)
+    }
+}
+
+// ============================================================================
+// Storage trait implementation — delegates to inherent methods above
+// ============================================================================
+
+#[async_trait::async_trait]
+impl super::Storage for SqliteStorage {
+    async fn check_health(&self) -> crate::error::Result<super::models::DatabaseHealth> {
+        SqliteStorage::check_health(self).await
+    }
+    async fn save_workflow(&self, w: &super::models::StoredWorkflow) -> crate::error::Result<()> {
+        SqliteStorage::save_workflow(self, w).await
+    }
+    async fn get_workflow(&self, name: &str) -> crate::error::Result<Option<super::models::StoredWorkflow>> {
+        SqliteStorage::get_workflow(self, name).await
+    }
+    async fn get_workflow_by_id(&self, id: &str) -> crate::error::Result<Option<super::models::StoredWorkflow>> {
+        SqliteStorage::get_workflow_by_id(self, id).await
+    }
+    async fn list_workflows(&self) -> crate::error::Result<Vec<super::models::StoredWorkflow>> {
+        SqliteStorage::list_workflows(self).await
+    }
+    async fn delete_workflow(&self, name: &str) -> crate::error::Result<()> {
+        SqliteStorage::delete_workflow(self, name).await
+    }
+    async fn list_workflow_versions(&self, n: &str) -> crate::error::Result<Vec<super::models::WorkflowVersion>> {
+        SqliteStorage::list_workflow_versions(self, n).await
+    }
+    async fn get_workflow_version(&self, n: &str, v: u32) -> crate::error::Result<Option<super::models::WorkflowVersion>> {
+        SqliteStorage::get_workflow_version(self, n, v).await
+    }
+    async fn get_workflow_version_by_id(&self, id: &str, v: u32) -> crate::error::Result<Option<super::models::WorkflowVersion>> {
+        SqliteStorage::get_workflow_version_by_id(self, id, v).await
+    }
+    async fn get_latest_workflow_version_number(&self, id: &str) -> crate::error::Result<Option<u32>> {
+        SqliteStorage::get_latest_workflow_version_number(self, id).await
+    }
+    async fn get_workflow_version_at_or_before(
+        &self,
+        id: &str,
+        ts: chrono::DateTime<chrono::Utc>,
+    ) -> crate::error::Result<Option<super::models::WorkflowVersion>> {
+        SqliteStorage::get_workflow_version_at_or_before(self, id, ts).await
+    }
+    async fn rollback_workflow(
+        &self,
+        name: &str,
+        version: u32,
+        created_by: Option<&str>,
+    ) -> crate::error::Result<super::models::StoredWorkflow> {
+        SqliteStorage::rollback_workflow(self, name, version, created_by).await
+    }
+    async fn save_execution(&self, e: &super::models::Execution) -> crate::error::Result<()> {
+        SqliteStorage::save_execution(self, e).await
+    }
+    async fn get_execution(&self, id: &str) -> crate::error::Result<Option<super::models::Execution>> {
+        SqliteStorage::get_execution(self, id).await
+    }
+    async fn check_idempotency_key(&self, key: &str) -> crate::error::Result<Option<super::models::Execution>> {
+        SqliteStorage::check_idempotency_key(self, key).await
+    }
+    async fn list_executions(&self, name: &str, limit: usize) -> crate::error::Result<Vec<super::models::Execution>> {
+        SqliteStorage::list_executions(self, name, limit).await
+    }
+    async fn query_executions(&self, q: &super::models::ExecutionQuery) -> crate::error::Result<Vec<super::models::Execution>> {
+        SqliteStorage::query_executions(self, q).await
+    }
+    async fn get_execution_trace(&self, id: &str) -> crate::error::Result<Option<super::models::ExecutionTrace>> {
+        SqliteStorage::get_execution_trace(self, id).await
+    }
+    async fn save_node_execution(&self, n: &super::models::NodeExecution) -> crate::error::Result<()> {
+        SqliteStorage::save_node_execution(self, n).await
+    }
+    async fn get_node_executions(&self, id: &str) -> crate::error::Result<Vec<super::models::NodeExecution>> {
+        SqliteStorage::get_node_executions(self, id).await
+    }
+    async fn save_checkpoint(&self, c: &super::models::Checkpoint) -> crate::error::Result<()> {
+        SqliteStorage::save_checkpoint(self, c).await
+    }
+    async fn get_latest_checkpoint(&self, id: &str) -> crate::error::Result<Option<super::models::Checkpoint>> {
+        SqliteStorage::get_latest_checkpoint(self, id).await
+    }
+    async fn list_checkpoints(&self, id: &str) -> crate::error::Result<Vec<super::models::Checkpoint>> {
+        SqliteStorage::list_checkpoints(self, id).await
+    }
+    async fn save_approval_request(&self, r: &super::models::ApprovalRequest) -> crate::error::Result<()> {
+        SqliteStorage::save_approval_request(self, r).await
+    }
+    async fn get_approval_request(&self, id: &str) -> crate::error::Result<Option<super::models::ApprovalRequest>> {
+        SqliteStorage::get_approval_request(self, id).await
+    }
+    async fn decide_approval_request(
+        &self,
+        id: &str,
+        new_status: &str,
+        decided_by: &str,
+        decision_comment: Option<&str>,
+        decided_at: chrono::DateTime<chrono::Utc>,
+        node_id: &str,
+    ) -> crate::error::Result<bool> {
+        SqliteStorage::decide_approval_request(self, id, new_status, decided_by, decision_comment, decided_at, node_id).await
+    }
+    async fn list_approval_requests(
+        &self,
+        status: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> crate::error::Result<Vec<super::models::ApprovalRequest>> {
+        SqliteStorage::list_approval_requests(self, status, limit, offset).await
+    }
+    async fn list_approval_requests_filtered(
+        &self,
+        status: Option<&str>,
+        assignee: Option<&str>,
+        group: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> crate::error::Result<Vec<super::models::ApprovalRequest>> {
+        SqliteStorage::list_approval_requests_filtered(self, status, assignee, group, limit, offset).await
+    }
+    async fn list_expired_approvals(&self) -> crate::error::Result<Vec<super::models::ApprovalRequest>> {
+        SqliteStorage::list_expired_approvals(self).await
+    }
+    async fn create_repl_session(&self, model: &str) -> crate::error::Result<String> {
+        SqliteStorage::create_repl_session(self, model).await
+    }
+    async fn get_repl_session(&self, id: &str) -> crate::error::Result<Option<super::models::ReplSession>> {
+        SqliteStorage::get_repl_session(self, id).await
+    }
+    async fn list_repl_sessions(&self, limit: usize) -> crate::error::Result<Vec<super::models::ReplSession>> {
+        SqliteStorage::list_repl_sessions(self, limit).await
+    }
+    async fn update_repl_session_summary(&self, id: &str, summary: &str) -> crate::error::Result<()> {
+        SqliteStorage::update_repl_session_summary(self, id, summary).await
+    }
+    async fn save_repl_message(
+        &self,
+        session_id: &str,
+        role: &str,
+        content: &str,
+        token_count: Option<i64>,
+    ) -> crate::error::Result<()> {
+        SqliteStorage::save_repl_message(self, session_id, role, content, token_count).await
+    }
+    async fn list_repl_messages(&self, session_id: &str, limit: usize) -> crate::error::Result<Vec<super::models::ReplMessage>> {
+        SqliteStorage::list_repl_messages(self, session_id, limit).await
+    }
+    async fn save_repl_llm_config(&self, config: &crate::llm::LlmConfig) -> crate::error::Result<()> {
+        SqliteStorage::save_repl_llm_config(self, config).await
+    }
+    async fn get_repl_llm_config(&self) -> crate::error::Result<Option<crate::llm::LlmConfig>> {
+        SqliteStorage::get_repl_llm_config(self).await
+    }
+    async fn store_delayed_event(
+        &self,
+        name: &str,
+        data: &str,
+        scheduled_at: chrono::DateTime<chrono::Utc>,
+    ) -> crate::error::Result<String> {
+        SqliteStorage::store_delayed_event(self, name, data, scheduled_at).await
+    }
+    async fn get_due_delayed_events(&self) -> crate::error::Result<Vec<(String, String, String)>> {
+        SqliteStorage::get_due_delayed_events(self).await
+    }
+    async fn delete_delayed_event(&self, id: &str) -> crate::error::Result<()> {
+        SqliteStorage::delete_delayed_event(self, id).await
+    }
+    async fn count_pending_delayed_events(&self) -> crate::error::Result<u64> {
+        SqliteStorage::count_pending_delayed_events(self).await
+    }
+    async fn save_audit_entry(&self, entry: &super::audit::AuditEntry) -> crate::error::Result<()> {
+        SqliteStorage::save_audit_entry(self, entry).await
+    }
+    async fn list_audit_entries(
+        &self,
+        execution_id: Option<&str>,
+        workflow_name: Option<&str>,
+        event_type: Option<&str>,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        limit: u32,
+        offset: u32,
+    ) -> crate::error::Result<Vec<super::audit::AuditEntry>> {
+        SqliteStorage::list_audit_entries(self, execution_id, workflow_name, event_type, since, limit, offset).await
+    }
+    async fn add_to_dlq(&self, entry: super::dlq::NewDlqEntry<'_>) -> crate::error::Result<String> {
+        SqliteStorage::add_to_dlq(self, entry).await
+    }
+    async fn get_dlq_entry(&self, id: &str) -> crate::error::Result<Option<super::dlq::DeadLetterEntry>> {
+        SqliteStorage::get_dlq_entry(self, id).await
+    }
+    async fn list_dlq_entries(
+        &self,
+        status: Option<super::dlq::DlqStatus>,
+        limit: u32,
+        offset: u32,
+    ) -> crate::error::Result<Vec<super::dlq::DeadLetterEntry>> {
+        SqliteStorage::list_dlq_entries(self, status, limit, offset).await
+    }
+    async fn schedule_dlq_retry(&self, id: &str, next_retry_at: chrono::DateTime<chrono::Utc>) -> crate::error::Result<()> {
+        SqliteStorage::schedule_dlq_retry(self, id, next_retry_at).await
+    }
+    async fn resolve_dlq_entry(&self, id: &str) -> crate::error::Result<()> {
+        SqliteStorage::resolve_dlq_entry(self, id).await
+    }
+    async fn discard_dlq_entry(&self, id: &str) -> crate::error::Result<()> {
+        SqliteStorage::discard_dlq_entry(self, id).await
+    }
+    async fn increment_dlq_retry(&self, id: &str) -> crate::error::Result<u32> {
+        SqliteStorage::increment_dlq_retry(self, id).await
+    }
+    async fn get_dlq_stats(&self) -> crate::error::Result<super::dlq::DlqStats> {
+        SqliteStorage::get_dlq_stats(self).await
     }
 }
 
@@ -1885,6 +2156,8 @@ mod tests {
             created_at: Utc::now(),
             expires_at: None,
             decided_at: None,
+            assignee: None,
+            groups: vec![],
         };
 
         storage.save_approval_request(&request).await.unwrap();

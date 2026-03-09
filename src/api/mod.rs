@@ -33,7 +33,7 @@ use crate::error::{ApiErrorCode, ApiErrorEnvelope, Error};
 use crate::mcp::tools::inject_approval_decision_into_checkpoint;
 use crate::nodes::NodeRegistry;
 use crate::shutdown::ShutdownCoordinator;
-use crate::storage::{ApprovalRequest, AuditEventType, ExecutionStatus, SqliteStorage, StoredWorkflow};
+use crate::storage::{ApprovalRequest, AuditEventType, ExecutionStatus, Storage, StoredWorkflow};
 use crate::triggers::{EventBackend, EventMessage};
 use crate::workflow::{parse_workflow, validate_workflow};
 
@@ -184,7 +184,7 @@ pub fn create_request_body_limit() -> DefaultBodyLimit {
 /// Shared application state.
 #[derive(Clone)]
 pub struct AppState {
-    pub storage: SqliteStorage,
+    pub storage: Arc<dyn Storage>,
     pub registry: Arc<NodeRegistry>,
     pub monitor: Option<Arc<Monitor>>,
     pub shutdown: Arc<ShutdownCoordinator>,
@@ -195,7 +195,7 @@ pub struct AppState {
 impl AppState {
     /// Create a new executor with the current state.
     pub fn create_executor(&self) -> Executor {
-        let mut executor = Executor::new((*self.registry).clone(), self.storage.clone());
+        let mut executor = Executor::new((*self.registry).clone(), Arc::clone(&self.storage));
         if let Some(monitor) = self.monitor.clone() {
             executor = executor.with_monitor(monitor);
         }
@@ -570,6 +570,12 @@ struct ListApprovalsQuery {
     limit: usize,
     #[serde(default)]
     offset: usize,
+    /// Filter by assignee identity (exact match).
+    #[serde(default)]
+    assignee: Option<String>,
+    /// Filter by group name (approval must include this group).
+    #[serde(default)]
+    group: Option<String>,
 }
 
 fn default_approval_limit() -> usize {
@@ -598,6 +604,8 @@ fn approval_to_json(a: &ApprovalRequest) -> Value {
         "created_at": a.created_at.to_rfc3339(),
         "expires_at": a.expires_at.map(|t| t.to_rfc3339()),
         "decided_at": a.decided_at.map(|t| t.to_rfc3339()),
+        "assignee": a.assignee,
+        "groups": a.groups,
     })
 }
 
@@ -617,7 +625,13 @@ async fn list_approvals_handler(
 
     match state
         .storage
-        .list_approval_requests(params.status.as_deref(), params.limit, params.offset)
+        .list_approval_requests_filtered(
+            params.status.as_deref(),
+            params.assignee.as_deref(),
+            params.group.as_deref(),
+            params.limit,
+            params.offset,
+        )
         .await
     {
         Ok(approvals) => {
@@ -1397,7 +1411,7 @@ mod tests {
 
     fn test_app_state() -> AppState {
         AppState {
-            storage: SqliteStorage::open_in_memory().unwrap(),
+            storage: Arc::new(crate::storage::SqliteStorage::open_in_memory().unwrap()),
             registry: Arc::new(NodeRegistry::new()),
             monitor: None,
             shutdown: Arc::new(ShutdownCoordinator::new()),

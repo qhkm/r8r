@@ -5,6 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+#### PostgreSQL Storage Backend
+
+- **`Storage` trait** — backend-agnostic async trait (`src/storage/trait.rs`) with ~50 methods covering workflows, executions, checkpoints, approvals, REPL sessions, delayed events, audit log, and DLQ; blanket `impl Storage for Arc<S>` so `Arc<dyn Storage>` itself implements `Storage`
+- **`PostgresStorage`** — full `sqlx`-based PostgreSQL implementation (`src/storage/postgres.rs`) using `PgPool` connection pooling; schema auto-created on first connect; enabled via `--features storage-postgres`
+- **Dynamic backend selection** — `get_storage()` in `main.rs` checks `DATABASE_URL` env var at runtime: if it starts with `postgres://` or `postgresql://`, uses `PostgresStorage`; otherwise falls back to `SqliteStorage`
+- **`Arc<dyn Storage>` everywhere** — all callers updated (`AppState`, `Executor`, `NodeContext`, `R8rService`, triggers, REPL) to use `Arc<dyn Storage>` instead of concrete `SqliteStorage`; enables zero-copy sharing across async tasks
+
+#### Sandbox v2
+
+- **File artifacts** — `collect_artifacts: true` on sandbox nodes; code writes files to `$R8R_OUTPUT_DIR`; all files are collected after execution as `artifacts` in the node result (base64-encoded + decoded `text` for UTF-8 files)
+- **Streaming output** — `execute_streaming()` added to `SandboxBackend` trait; subprocess backend streams stdout/stderr line-by-line via `mpsc::Sender<SandboxStreamEvent>`; default trait impl buffers for non-streaming backends
+- **Package caching** — `packages: [requests, numpy]` on sandbox nodes; pip/npm installed before code execution (subprocess: inline install prefix; Docker: shell-wrapped cmd); `image: custom/image:tag` for Docker to use pre-built images with packages
+- **Custom Docker images** — `image:` field in sandbox node config overrides the backend default image per-execution
+- **Bind-mount code execution** — Docker backend now writes code to a host temp file and bind-mounts it as `/r8r_sandbox/code.<ext>`, avoiding shell-quoting issues and CLI arg size limits
+- **`SandboxArtifact`** — new struct with `path`, `content: Vec<u8>`, `size`; `collect_output_artifacts()` shared helper walks output dir recursively
+- **`SandboxStreamEvent`** — enum with `Stdout`, `Stderr`, `Done`, `Error` variants for streaming consumers
+
+#### Approval Delegation
+
+- **`assign_to` field** on approval nodes — route a pending approval to a specific user identity (e.g. email or username)
+- **`assign_groups` field** on approval nodes — route to one or more groups; any member of a listed group can act
+- **`GET /api/approvals?assignee=<id>`** — REST filter by assignee
+- **`GET /api/approvals?group=<name>`** — REST filter by group membership
+- **`r8r_list_approvals` MCP tool** — now accepts `assignee` and `group` params for delegation filtering
+- **`r8r runs pending`** — now shows assignee/group routing info per approval
+- **SQLite migration** — `assignee` and `groups` columns added automatically via `ALTER TABLE` on startup
+
+#### JSON Schema & REPL Guardrails
+
+- **`r8r schema`** — emits the JSON Schema for workflow YAML to stdout or `--output <file>`. Enables IDE autocomplete in VSCode/Cursor with the YAML Language Server.
+- **`assets/r8r-workflow.schema.json`** — full JSON Schema Draft 2020-12 covering all triggers, node types, retry, error handling, settings, and workflow-level fields.
+- **REPL `/plan`** — slash command that loads a pre-execution plan into the Log panel, showing what write operations will be triggered and the current gate state.
+- **REPL `/arm` / `/disarm`** — session-scoped write gate. Default: disarmed (safe). When disarmed and a message has write intent (create/run/approve/delete), the REPL shows a side-effect summary and requires typing `yes` to confirm before executing.
+- **REPL `/operator [on|off]`** — operator mode toggle. Shows write-gate arm state in the status bar. Default: off (builder mode).
+- **SSRF protection shared module** — extracted `validate_url` and `is_private_or_special_ip` into `src/ssrf.rs`, shared by `nodes/http.rs` and `notifications.rs`.
+- **Notification security** — webhook/Slack/SMTP URLs now SSRF-validated; email bodies HTML-escaped; all notification clients use a 10-second timeout.
+
+#### CLI Guardrails & UX (Sprint 1 & 2)
+- **`r8r prompt`** — wrapper over workflow create/refine with `--patch`, `--emit`, `--dry-run`, `--yes`, `--json` flags
+- **`r8r run`** — TTY review screen showing side-effect nodes (http, agent, approval) before execution with optional skip via `--yes`; exits with code `42` in non-interactive mode when workflow is waiting for approval
+- **`r8r runs`** — list recent executions with status, duration, and timing
+- **`r8r runs pending`** — filter executions awaiting approval (status: `waiting_for_approval`)
+- **`r8r runs show <run_id>`** — full execution detail with `--trace` flag for per-node results
+- **`r8r runs export <run_id>`** — export execution data as JSONL or JSON with `--output` path
+- **`r8r approve <id>`** — approve a pending run by approval_id or execution_id with optional `--comment` and `--by` identity
+- **`r8r deny <id>`** — deny a pending run by approval_id or execution_id with optional `--comment` and `--by` identity
+- **`r8r policy show`** — display current active policy profile and settings
+- **`r8r policy set <profile>`** — activate `lenient`, `standard`, or `strict` policy profile
+- **`r8r policy validate <file>`** — validate a workflow YAML file against the active policy, reporting violations
+- **Policy profiles** — three built-in profiles with knobs for `require_review_on_patch`, `require_idempotency_key_for_run`, `max_runtime_seconds`, `deny_unknown_node_types`; stored at `~/.config/r8r/policy.toml`
+- **`r8r watch`** — alias for monitoring running executions
+- **`r8r secrets`** — subcommand for credential management (`list`, `set`, `delete`)
+- **`r8r doctor`** — health check: verifies DB connectivity, LLM configuration, credential store, and registered node types
+
+#### Workflow Testing (`r8r test`)
+- **`r8r test <fixture.yaml>`** — run workflows against mock fixtures in isolated in-memory storage
+- **Mock injection** — `mocks:` map of node_id → pinned output injected as `pinned_data` before execution
+- **Assertion modes** — `expected:` + `mode: exact|contains`; `expected_error:` for failure cases
+- **Snapshot mode** — `--update-snapshots` prints actual output for easy fixture authoring
+- **CI-friendly output** — exits with code `1` on failure; `--junit-xml <path>` emits JUnit XML
+- **Test filtering** — `--filter / -k` to run matching test names only
+
+#### Workflow Linting (`r8r lint`)
+- **`r8r lint <file...>`** — validate YAML syntax, node references, and dependency cycles
+- **Smart suggestions** — e.g., "did you mean `depends_on` instead of `dependsOn`?"
+- **`--errors-only`** flag to suppress warnings; `--json` for machine-readable output
+
+#### Structured MCP Error Codes
+- All MCP tools now return `{ error_code, message, details }` on failure
+- Error codes: `workflow_not_found`, `yaml_parse_error`, `validation_error`, `execution_failed`, `execution_timeout`, `approval_required`, `resource_not_found`, `invalid_input`, `internal_error`
+
+#### Approval Notification Channels
+- **`notify:` field** on approval nodes — list of channels to notify when approval is requested
+- **Webhook** — HTTP POST with approval payload JSON
+- **Slack** — Block Kit message with workflow name, approval ID, description, and expiry
+- **Email** — HTML email via SMTP relay configured with `R8R_SMTP_RELAY_URL` env var
+
 ## [0.3.0] - 2026-03-01
 
 ### Added

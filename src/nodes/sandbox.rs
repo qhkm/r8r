@@ -4,6 +4,7 @@
 //! The backend is selected globally at startup (subprocess or Docker).
 
 use async_trait::async_trait;
+use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -54,6 +55,24 @@ struct SandboxNodeConfig {
     /// Environment variables to pass into the sandbox
     #[serde(default)]
     env: HashMap<String, String>,
+
+    /// Collect files from the output dir after execution.
+    /// Code can write files to the path in `R8R_OUTPUT_DIR` env var.
+    #[serde(default)]
+    collect_artifacts: bool,
+
+    /// Max total size of all collected artifacts in MB (default: 50 MB).
+    #[serde(default)]
+    max_artifact_mb: Option<u64>,
+
+    /// Packages to install before running code.
+    /// Python: pip packages. Node: npm global packages.
+    #[serde(default)]
+    packages: Vec<String>,
+
+    /// Docker-only: custom Docker image to use instead of the backend default.
+    #[serde(default)]
+    image: Option<String>,
 }
 
 fn default_timeout() -> u64 {
@@ -95,6 +114,8 @@ impl Node for SandboxNode {
             &code.chars().take(80).collect::<String>()
         );
 
+        let max_artifact_bytes = config.max_artifact_mb.unwrap_or(50) * 1024 * 1024;
+
         let request = SandboxRequest {
             runtime: config.runtime.clone(),
             code,
@@ -103,6 +124,10 @@ impl Node for SandboxNode {
             memory_mb: config.memory_mb,
             network: config.network,
             max_output_bytes: 1_048_576, // 1MB default
+            collect_artifacts: config.collect_artifacts,
+            max_artifact_bytes,
+            packages: config.packages.clone(),
+            image: config.image.clone(),
         };
 
         let result = self.backend.execute(request).await.map_err(|e| match e {
@@ -124,21 +149,39 @@ impl Node for SandboxNode {
         })?;
 
         debug!(
-            "Sandbox completed: exit_code={} duration={}ms stdout_len={} stderr_len={}",
+            "Sandbox completed: exit_code={} duration={}ms stdout_len={} stderr_len={} artifacts={}",
             result.exit_code,
             result.duration_ms,
             result.stdout.len(),
             result.stderr.len(),
+            result.artifacts.len(),
         );
 
         // Try to parse stdout as JSON for structured output
         let parsed_output = serde_json::from_str::<Value>(result.stdout.trim()).ok();
+
+        // Serialize artifacts: base64-encode content; include utf8 text when decodable
+        let artifacts_json: Vec<Value> = result
+            .artifacts
+            .iter()
+            .map(|a| {
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&a.content);
+                let text = std::str::from_utf8(&a.content).ok().map(|s| s.to_string());
+                json!({
+                    "path": a.path,
+                    "size": a.size,
+                    "content_base64": b64,
+                    "text": text,
+                })
+            })
+            .collect();
 
         let data = json!({
             "stdout": result.stdout,
             "stderr": result.stderr,
             "exit_code": result.exit_code,
             "output": parsed_output,
+            "artifacts": artifacts_json,
         });
 
         let metadata = json!({
@@ -146,6 +189,7 @@ impl Node for SandboxNode {
             "runtime": config.runtime,
             "duration_ms": result.duration_ms,
             "network": config.network,
+            "artifact_count": result.artifacts.len(),
         });
 
         Ok(NodeResult::with_metadata(data, metadata))

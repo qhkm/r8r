@@ -48,10 +48,13 @@ pub mod llm;
 pub mod mcp;
 pub mod metrics;
 pub mod nodes;
+pub mod notifications;
 pub mod repl;
 #[cfg(feature = "sandbox")]
 pub mod sandbox;
+pub mod schema;
 pub mod shutdown;
+pub mod ssrf;
 pub mod storage;
 pub mod telemetry;
 pub mod templates;

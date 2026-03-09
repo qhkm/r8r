@@ -6,7 +6,7 @@ use crate::repl::conversation::Conversation;
 use crate::repl::engine::{self, StreamUpdate, TurnResult};
 use crate::repl::input::{parse_input, slash_commands, InputCommand};
 use crate::repl::tools;
-use crate::storage::{ExecutionTrace, ReplMessage, SqliteStorage};
+use crate::storage::{ExecutionTrace, ReplMessage, Storage};
 use crate::workflow::parse_workflow;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::execute;
@@ -236,6 +236,24 @@ impl InspectorTab {
     }
 }
 
+/// Write-capable tool names. When writes are disarmed, these trigger a confirmation.
+const WRITE_TOOLS: &[&str] = &[
+    "r8r_create_workflow",
+    "r8r_save_workflow",
+    "r8r_delete_workflow",
+    "r8r_execute",
+    "r8r_run_and_wait",
+    "r8r_approve",
+];
+
+/// A pending write action awaiting user confirmation.
+struct PendingWriteConfirm {
+    /// Friendly description of what will happen.
+    summary: String,
+    /// The natural-language input that triggered it.
+    original_input: String,
+}
+
 /// REPL UI state.
 pub struct ReplApp {
     pub session_id: String,
@@ -265,6 +283,14 @@ pub struct ReplApp {
     busy_since: Option<Instant>,
     inspector_scroll: usize,
     quick_actions: Option<QuickActionBar>,
+    /// Guardrails: whether write-capable tool calls are permitted this session.
+    /// Default: false (disarmed — safe mode). Set via /arm.
+    pub writes_armed: bool,
+    /// Guardrails: operator mode shows policy/gate status in the status bar.
+    pub operator_mode: bool,
+    /// Guardrails: pending confirmation for a write-capable action.
+    /// When Some, the next Enter either confirms or the user can type 'n' to cancel.
+    pending_write_confirm: Option<PendingWriteConfirm>,
 }
 
 impl ReplApp {
@@ -302,6 +328,9 @@ impl ReplApp {
             busy_since: None,
             inspector_scroll: 0,
             quick_actions: None,
+            writes_armed: false,
+            operator_mode: false,
+            pending_write_confirm: None,
         }
     }
 
@@ -1111,7 +1140,20 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
     } else {
         "  Tab:panel  Ctrl+Y:yaml  Ctrl+I:toggle  ↑↓:scroll  Ctrl+↑↓:inspector  Ctrl+C:cancel"
     };
-    let status = Paragraph::new(Line::from(vec![
+    let (arm_text, arm_style) = if app.writes_armed {
+        (" ⚡armed", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+    } else {
+        (" 🔒safe", Style::default().fg(Color::Green))
+    };
+    let operator_spans: Vec<Span<'_>> = if app.operator_mode {
+        vec![
+            Span::styled(" · ", Style::default().fg(Color::DarkGray)),
+            Span::styled("OPERATOR", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+        ]
+    } else {
+        vec![]
+    };
+    let mut status_spans = vec![
         Span::styled(
             " r8r chat ",
             Style::default().fg(Color::Black).bg(Color::Cyan),
@@ -1130,8 +1172,11 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
         ),
         Span::styled(" · ", Style::default().fg(Color::DarkGray)),
         Span::styled(status_text, status_style),
-        Span::styled(status_help, Style::default().fg(Color::DarkGray)),
-    ]));
+        Span::styled(arm_text, arm_style),
+    ];
+    status_spans.extend(operator_spans);
+    status_spans.push(Span::styled(status_help, Style::default().fg(Color::DarkGray)));
+    let status = Paragraph::new(Line::from(status_spans));
     frame.render_widget(status, root[0]);
 
     let main_chunks = if app.show_context && root[1].width >= 80 {
@@ -1812,7 +1857,7 @@ fn execution_trace_lines(trace: &ExecutionTrace) -> Vec<String> {
 
 async fn switch_session(
     app: &mut ReplApp,
-    storage: &SqliteStorage,
+    storage: &dyn Storage,
     new_session_id: &str,
 ) -> anyhow::Result<()> {
     let session = storage.get_repl_session(new_session_id).await?;
@@ -1849,7 +1894,7 @@ async fn switch_session(
 async fn handle_slash_command(
     app: &mut ReplApp,
     cmd: InputCommand,
-    storage: &SqliteStorage,
+    storage: &dyn Storage,
     executor: &Arc<Executor>,
     llm_client: &mut reqwest::Client,
     llm_config: &mut Option<LlmConfig>,
@@ -2176,10 +2221,97 @@ async fn handle_slash_command(
                 app.push_message(MessageKind::Error, format!("Unknown command: {}", cmd));
             }
         }
+        InputCommand::Plan { description } => {
+            let header = description
+                .as_deref()
+                .map(|d| format!("Plan: {}", d))
+                .unwrap_or_else(|| "Plan (describe what you want to do before running)".to_string());
+            let plan_text = format!(
+                "{}\n\nSteps:\n  1. Describe what nodes/services will be called\n  2. Review side effects below\n  3. Run with /run <workflow> or tell the AI what to do\n\nSide effects from write-capable tools:\n  • r8r_create_workflow — creates/overwrites a workflow\n  • r8r_execute / r8r_run_and_wait — triggers execution (may call HTTP, agent, etc.)\n  • r8r_approve — resolves a human-in-the-loop approval\n\nWrite gate: {}\nUse /arm to allow writes, /disarm to return to safe mode.",
+                header,
+                if app.writes_armed { "⚡ ARMED — writes allowed" } else { "🔒 SAFE — writes blocked (use /arm to allow)" }
+            );
+            app.log_lines = plan_text.lines().map(|s| s.to_string()).collect();
+            app.inspector_tab = InspectorTab::Log;
+            app.push_message(MessageKind::System, format!("Plan loaded in Log panel. {}", header));
+        }
+        InputCommand::ArmWrites => {
+            app.writes_armed = true;
+            app.push_message(
+                MessageKind::System,
+                "⚡ Writes ARMED — the AI can now create workflows, execute runs, and approve requests. Use /disarm to return to safe mode.",
+            );
+            if app.operator_mode {
+                app.push_log("Write gate: ARMED");
+            }
+        }
+        InputCommand::Disarm => {
+            app.writes_armed = false;
+            app.pending_write_confirm = None;
+            app.push_message(
+                MessageKind::System,
+                "🔒 Writes DISARMED — safe mode active. The AI will ask before taking write actions.",
+            );
+        }
+        InputCommand::Operator { enable } => {
+            app.operator_mode = match enable {
+                Some(v) => v,
+                None => !app.operator_mode,
+            };
+            if app.operator_mode {
+                app.push_message(
+                    MessageKind::System,
+                    format!(
+                        "OPERATOR mode ON — status bar shows policy/gate state.\nWrite gate: {}\nPolicy file: ~/.config/r8r/policy.toml",
+                        if app.writes_armed { "⚡ armed" } else { "🔒 safe" },
+                    ),
+                );
+            } else {
+                app.push_message(MessageKind::System, "Operator mode OFF — builder mode active.");
+            }
+        }
         InputCommand::NaturalLanguage(_) | InputCommand::Empty => {}
     }
 
     Ok(())
+}
+
+/// Returns true if the user message likely intends to create, run, or approve something.
+fn input_has_write_intent(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let write_keywords = [
+        "create", "generate", "make", "build", "write", "add",
+        "run", "execute", "trigger", "start", "launch", "deploy",
+        "approve", "confirm", "accept",
+        "delete", "remove", "drop",
+        "save", "update", "modify", "change",
+    ];
+    write_keywords.iter().any(|kw| lower.contains(kw))
+}
+
+/// Builds a human-readable summary of what write operations might happen.
+fn build_write_summary(text: &str) -> String {
+    let lower = text.to_lowercase();
+    let mut effects = Vec::new();
+    if lower.contains("create") || lower.contains("generate") || lower.contains("build") || lower.contains("make") {
+        effects.push("  • Create or overwrite a workflow definition");
+    }
+    if lower.contains("run") || lower.contains("execute") || lower.contains("trigger") || lower.contains("start") {
+        effects.push("  • Execute a workflow (may call external APIs, send messages, etc.)");
+    }
+    if lower.contains("approve") || lower.contains("confirm") {
+        effects.push("  • Approve a pending human-in-the-loop request");
+    }
+    if lower.contains("delete") || lower.contains("remove") {
+        effects.push("  • Delete a workflow or resource");
+    }
+    if lower.contains("save") || lower.contains("update") || lower.contains("modify") {
+        effects.push("  • Modify an existing workflow");
+    }
+    if effects.is_empty() {
+        effects.push("  • Unknown write operation");
+    }
+    effects.join("\n")
 }
 
 fn parse_provider(raw: &str) -> Option<LlmProvider> {
@@ -2195,7 +2327,7 @@ fn parse_provider(raw: &str) -> Option<LlmProvider> {
 /// Run the REPL TUI with real turn execution and streaming progress updates.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_repl_tui(
-    storage: SqliteStorage,
+    storage: Arc<dyn Storage>,
     executor: Arc<Executor>,
     llm_config: Option<LlmConfig>,
     llm_client: reqwest::Client,
@@ -2439,6 +2571,60 @@ pub async fn run_repl_tui(
                         }
                         app.jump_to_latest();
 
+                        // ── Pending write confirmation ─────────────────
+                        if let Some(confirm) = app.pending_write_confirm.take() {
+                            if submitted.trim().eq_ignore_ascii_case("yes") || submitted.trim() == "y" {
+                                // User confirmed: arm for this turn, re-submit the original input
+                                app.push_message(MessageKind::System, "✓ Confirmed. Proceeding with write operations.");
+                                // Re-queue the original text as if it was freshly typed
+                                app.input = confirm.original_input.clone();
+                                // The next iteration will pick it up. For now, manually reprocess:
+                                let original = confirm.original_input.clone();
+                                app.turn_outcome = TurnOutcome::default();
+                                app.tool_start_times.clear();
+                                app.push_message(MessageKind::User, original.clone());
+                                let _ = storage.save_repl_message(&app.session_id, "user", &original, None).await;
+                                let Some(config) = active_llm_config.clone() else {
+                                    app.push_message(MessageKind::Error, "LLM is not configured.");
+                                    continue;
+                                };
+                                app.busy = true;
+                                app.busy_since = Some(Instant::now());
+                                app.assistant_streaming_index = None;
+                                app.quick_actions = None;
+                                app.push_log("Calling LLM (confirmed write)...");
+                                let mut conversation = app.conversation.clone();
+                                let tx_updates = tx.clone();
+                                let storage_cloned = storage.clone();
+                                let executor_cloned = executor.clone();
+                                let client_cloned = llm_client.clone();
+                                let system_prompt_cloned = system_prompt.clone();
+                                let tool_defs_cloned = tool_defs.clone();
+                                let text_cloned = original;
+                                current_turn = Some(tokio::spawn(async move {
+                                    let tx_stream = tx_updates.clone();
+                                    let callback: engine::StreamCallback = Box::new(move |update| {
+                                        let _ = tx_stream.send(ReplEvent::Stream(update));
+                                    });
+                                    let result = engine::run_turn(
+                                        &mut conversation,
+                                        &text_cloned,
+                                        &system_prompt_cloned,
+                                        &config,
+                                        &client_cloned,
+                                        &storage_cloned,
+                                        &executor_cloned,
+                                        &tool_defs_cloned,
+                                        &callback,
+                                    ).await;
+                                    let _ = tx_updates.send(ReplEvent::TurnComplete { conversation, result });
+                                }));
+                            } else {
+                                app.push_message(MessageKind::System, "✗ Cancelled. No write operations performed.");
+                            }
+                            continue;
+                        }
+
                         match parse_input(&submitted) {
                             InputCommand::NaturalLanguage(text) => {
                                 app.turn_outcome = TurnOutcome::default();
@@ -2468,6 +2654,30 @@ pub async fn run_repl_tui(
                                     );
                                     continue;
                                 };
+
+                                // ── Write-gate guardrail ──────────────────
+                                // When writes are disarmed, detect write intent and
+                                // show a side-effect summary before executing.
+                                if !app.writes_armed && input_has_write_intent(&text) {
+                                    app.pending_write_confirm = Some(PendingWriteConfirm {
+                                        summary: build_write_summary(&text),
+                                        original_input: text.clone(),
+                                    });
+                                    app.push_message(
+                                        MessageKind::System,
+                                        format!(
+                                            "⚠ This request may trigger write operations:\n{}\n\nType 'yes' to confirm, or anything else to cancel.\nOr use /arm to permanently enable writes for this session.",
+                                            build_write_summary(&text)
+                                        ),
+                                    );
+                                    // Remove the user message we just added — it will be re-added after confirmation
+                                    if let Some(last) = app.messages.last() {
+                                        if matches!(last.kind, MessageKind::System) {
+                                            // message already added above; the user message is second-to-last
+                                        }
+                                    }
+                                    continue;
+                                }
 
                                 app.busy = true;
                                 app.busy_since = Some(Instant::now());

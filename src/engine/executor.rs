@@ -59,7 +59,7 @@ use crate::engine::rate_limiter::RateLimiterRegistry;
 use crate::error::{Error, Result};
 use crate::nodes::{Node, NodeContext, NodeRegistry, NodeResult};
 use crate::shutdown::ShutdownCoordinator;
-use crate::storage::{AuditEntry, AuditEventType, Checkpoint, Execution, ExecutionStatus, NodeExecution, SqliteStorage};
+use crate::storage::{AuditEntry, AuditEventType, Checkpoint, Execution, ExecutionStatus, NodeExecution, Storage};
 use crate::workflow::{
     parse_workflow, BackoffType, Node as WorkflowNode, OnErrorAction, RetryConfig, Workflow,
 };
@@ -70,7 +70,7 @@ const DEFAULT_DLQ_MAX_RETRIES: u32 = 3;
 /// Fire-and-forget audit log entry.  Errors are logged but never propagate
 /// so audit instrumentation cannot break the execution path.
 pub(crate) async fn emit_audit(
-    storage: &SqliteStorage,
+    storage: &dyn Storage,
     event_type: AuditEventType,
     execution_id: Option<&str>,
     workflow_name: Option<&str>,
@@ -98,7 +98,7 @@ pub(crate) async fn emit_audit(
 /// Workflow executor.
 pub struct Executor {
     registry: NodeRegistry,
-    storage: SqliteStorage,
+    storage: Arc<dyn Storage>,
     monitor: Option<Arc<Monitor>>,
     inherited_credentials: Option<HashMap<String, String>>,
     timeout_override_seconds: Option<u64>,
@@ -125,7 +125,7 @@ struct ExecutionOptions {
 
 impl Executor {
     /// Create a new executor.
-    pub fn new(registry: NodeRegistry, storage: SqliteStorage) -> Self {
+    pub fn new(registry: NodeRegistry, storage: Arc<dyn Storage>) -> Self {
         Self {
             registry,
             storage,
@@ -2633,7 +2633,7 @@ impl Executor {
 /// This is a standalone function to avoid recursive async issues.
 /// It runs in a spawned task and logs any errors.
 async fn trigger_error_workflow_task(
-    storage: SqliteStorage,
+    storage: Arc<dyn Storage>,
     registry: NodeRegistry,
     error_workflow_name: &str,
     failed_execution: &Execution,
@@ -3268,7 +3268,7 @@ async fn load_workflow_credentials(workflow: &Workflow) -> Result<HashMap<String
 mod tests {
     use super::*;
     use crate::api::MonitorEvent;
-    use crate::storage::StoredWorkflow;
+    use crate::storage::{SqliteStorage, StoredWorkflow};
     use crate::workflow::parse_workflow;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -3373,7 +3373,7 @@ mod tests {
     // Helper Functions
     // ============================================================================
 
-    async fn save_test_workflow(storage: &SqliteStorage, id: &str, yaml: &str) {
+    async fn save_test_workflow(storage: &dyn Storage, id: &str, yaml: &str) {
         let workflow = parse_workflow(yaml).unwrap();
         let now = Utc::now();
         storage
@@ -3395,7 +3395,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_simple_workflow() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -3432,7 +3432,7 @@ nodes:
 
     #[tokio::test]
     async fn test_monitor_emits_execution_lifecycle_events() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let monitor = Arc::new(Monitor::new());
         let mut rx = monitor.subscribe();
@@ -3474,7 +3474,7 @@ nodes:
 
     #[tokio::test]
     async fn test_monitor_emits_failure_events() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let monitor = Arc::new(Monitor::new());
@@ -3512,7 +3512,7 @@ nodes:
 
     #[tokio::test]
     async fn test_replay_execution() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -3560,7 +3560,7 @@ nodes:
 
     #[tokio::test]
     async fn test_replay_uses_original_workflow_version() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -3605,7 +3605,7 @@ nodes:
 
     #[tokio::test]
     async fn test_retry_with_fixed_backoff_succeeds() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let failing_node = Arc::new(FailingNode::new());
         let mut registry = NodeRegistry::new();
         registry.register(failing_node.clone());
@@ -3643,7 +3643,7 @@ nodes:
 
     #[tokio::test]
     async fn test_retry_with_linear_backoff_succeeds() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let failing_node = Arc::new(FailingNode::new());
         let mut registry = NodeRegistry::new();
         registry.register(failing_node.clone());
@@ -3680,7 +3680,7 @@ nodes:
 
     #[tokio::test]
     async fn test_retry_with_exponential_backoff_succeeds() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let failing_node = Arc::new(FailingNode::new());
         let mut registry = NodeRegistry::new();
         registry.register(failing_node.clone());
@@ -3715,7 +3715,7 @@ nodes:
 
     #[tokio::test]
     async fn test_retry_exhausted_fails() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -3749,7 +3749,7 @@ nodes:
 
     #[tokio::test]
     async fn test_no_retry_fails_immediately() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -3779,7 +3779,7 @@ nodes:
 
     #[tokio::test]
     async fn test_workflow_timeout() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(SlowNode));
         let executor = Executor::new(registry, storage.clone());
@@ -3815,7 +3815,7 @@ nodes:
 
     #[tokio::test]
     async fn test_retry_delay_exceeds_timeout() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -3857,7 +3857,7 @@ nodes:
 
     #[tokio::test]
     async fn test_on_error_fallback_value() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -3911,7 +3911,7 @@ nodes:
 
     #[tokio::test]
     async fn test_on_error_continue() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -3945,7 +3945,7 @@ nodes:
 
     #[tokio::test]
     async fn test_on_error_skip() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -3982,7 +3982,7 @@ nodes:
 
     #[tokio::test]
     async fn test_condition_skips_node_when_false() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4015,7 +4015,7 @@ nodes:
 
     #[tokio::test]
     async fn test_condition_runs_node_when_true() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4043,7 +4043,7 @@ nodes:
 
     #[tokio::test]
     async fn test_condition_evaluation_error_fails() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4075,7 +4075,7 @@ nodes:
 
     #[tokio::test]
     async fn test_for_each_non_array_fails() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4112,7 +4112,7 @@ nodes:
 
     #[tokio::test]
     async fn test_for_each_with_fallback_recovers() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4148,7 +4148,7 @@ nodes:
 
     #[tokio::test]
     async fn test_for_each_processes_array() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4184,7 +4184,7 @@ nodes:
 
     #[tokio::test]
     async fn test_for_each_empty_array_succeeds() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4212,7 +4212,7 @@ nodes:
 
     #[tokio::test]
     async fn test_for_each_max_items_limit() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4249,7 +4249,7 @@ nodes:
 
     #[tokio::test]
     async fn test_for_each_within_limit_succeeds() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4428,7 +4428,7 @@ nodes:
 
     #[tokio::test]
     async fn test_unknown_node_type_fails() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4462,7 +4462,7 @@ nodes:
 
     #[tokio::test]
     async fn test_node_chain_propagates_data() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4500,7 +4500,7 @@ nodes:
 
     #[tokio::test]
     async fn test_failure_in_chain_stops_execution() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -4548,7 +4548,7 @@ nodes:
 
     #[tokio::test]
     async fn test_resume_failed_execution() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let failing_node = Arc::new(FailingNode::new());
         let mut registry = NodeRegistry::new();
         registry.register(failing_node.clone());
@@ -4616,7 +4616,7 @@ nodes:
 
     #[tokio::test]
     async fn test_resume_non_failed_execution_errors() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4652,7 +4652,7 @@ nodes:
 
     #[tokio::test]
     async fn test_resume_uses_original_workflow_version() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -4706,7 +4706,7 @@ nodes:
 
     #[tokio::test]
     async fn test_chunked_for_each_processing() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4745,7 +4745,7 @@ nodes:
 
     #[tokio::test]
     async fn test_chunked_processing_with_failure() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -4778,7 +4778,7 @@ nodes:
 
     #[tokio::test]
     async fn test_chunk_size_zero_processes_all_at_once() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -4816,7 +4816,7 @@ nodes:
 
     #[tokio::test]
     async fn test_resume_skips_completed_nodes() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -4892,7 +4892,7 @@ nodes:
 
     #[tokio::test]
     async fn test_resume_skips_recovered_failed_nodes() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -4957,7 +4957,7 @@ nodes:
 
     #[tokio::test]
     async fn test_fallback_node_executes_on_failure() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -5000,7 +5000,7 @@ nodes:
 
     #[tokio::test]
     async fn test_fallback_node_not_found_uses_fallback_value() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -5033,7 +5033,7 @@ nodes:
 
     #[tokio::test]
     async fn test_fallback_node_itself_fails_uses_fallback_value() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -5075,7 +5075,7 @@ nodes:
 
     #[tokio::test]
     async fn test_fallback_node_fails_no_fallback_value_propagates_error() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -5110,7 +5110,7 @@ nodes:
 
     #[tokio::test]
     async fn test_no_fallback_node_uses_recovery_output() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());
@@ -5146,7 +5146,7 @@ nodes:
 
     #[tokio::test]
     async fn test_parallel_siblings_run_concurrently() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(SlowNode));
         let executor = Executor::new(registry, storage.clone());
@@ -5199,7 +5199,7 @@ nodes:
 
     #[tokio::test]
     async fn test_serial_dependencies_respected() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
         let executor = Executor::new(registry, storage.clone());
 
@@ -5237,7 +5237,7 @@ nodes:
 
     #[tokio::test]
     async fn test_max_concurrency_respected() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(SlowNode));
         let executor = Executor::new(registry, storage.clone());
@@ -5303,7 +5303,7 @@ nodes:
 
     #[tokio::test]
     async fn test_parallel_failure_propagates() {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let mut registry = NodeRegistry::new();
         registry.register(Arc::new(AlwaysFailNode));
         let executor = Executor::new(registry, storage.clone());

@@ -13,7 +13,7 @@ use serde_json::json;
 /// Helper: parse YAML, build executor, run workflow, return execution.
 async fn run_workflow_yaml(yaml: &str) -> r8r::storage::Execution {
     let workflow = parse_workflow(yaml).expect("YAML should parse");
-    let storage = SqliteStorage::open_in_memory().expect("storage should open");
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().expect("storage should open"));
 
     // The executor saves an execution record that references the workflow_id
     // via a foreign key, so the workflow must exist in storage first.

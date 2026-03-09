@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use crate::error::Result;
-use crate::storage::SqliteStorage;
+use crate::storage::Storage;
 
 /// Result of node execution.
 #[derive(Debug, Clone)]
@@ -79,7 +79,7 @@ pub struct NodeContext {
     pub credentials: Arc<std::collections::HashMap<String, String>>,
 
     /// Storage for sub-workflow execution (optional)
-    pub storage: Option<SqliteStorage>,
+    pub storage: Option<Arc<dyn Storage>>,
 
     /// Node registry for sub-workflow execution (optional)
     pub registry: Option<Arc<super::NodeRegistry>>,
@@ -178,7 +178,7 @@ impl NodeContext {
     }
 
     /// Set storage for sub-workflow execution.
-    pub fn with_storage(mut self, storage: SqliteStorage) -> Self {
+    pub fn with_storage(mut self, storage: Arc<dyn Storage>) -> Self {
         self.storage = Some(storage);
         self
     }

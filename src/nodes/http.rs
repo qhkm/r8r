@@ -1,6 +1,5 @@
 //! HTTP node - make HTTP requests.
 
-use std::net::IpAddr;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -13,98 +12,16 @@ use tracing::{debug, info, warn};
 use super::template::{render_body, render_template, RenderMode};
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
+use crate::ssrf;
 
-/// Check if SSRF protection is enabled (default: true).
-/// Set R8R_ALLOW_INTERNAL_URLS=true to disable protection.
-fn is_ssrf_protection_enabled() -> bool {
-    std::env::var("R8R_ALLOW_INTERNAL_URLS")
-        .map(|v| v.to_lowercase() != "true")
-        .unwrap_or(true)
-}
-
-/// Validate URL to prevent SSRF attacks.
-/// Blocks access to localhost, private IP ranges, and non-http(s) schemes.
+/// Thin wrapper: delegates to the shared `ssrf::check_ssrf` and maps errors to `Error::Node`.
 fn validate_url(url: &str) -> Result<()> {
-    if !is_ssrf_protection_enabled() {
-        return Ok(());
-    }
-
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|e| Error::Node(format!("Invalid URL '{}': {}", url, e)))?;
-
-    // Only allow http/https schemes
-    match parsed.scheme() {
-        "http" | "https" => {}
-        scheme => {
-            return Err(Error::Node(format!(
-                "Unsupported URL scheme '{}'. Only http and https are allowed.",
-                scheme
-            )));
+    ssrf::check_ssrf(url).map_err(|msg| {
+        if msg.starts_with("Access to") {
+            warn!("Blocked SSRF attempt: {}", url);
         }
-    }
-
-    // Check host
-    if let Some(host) = parsed.host_str() {
-        // Block localhost variants
-        let host_lower = host.to_lowercase();
-        if host_lower == "localhost"
-            || host_lower == "127.0.0.1"
-            || host_lower == "::1"
-            || host_lower == "[::1]"
-            || host_lower == "0.0.0.0"
-        {
-            warn!("Blocked SSRF attempt to localhost: {}", url);
-            return Err(Error::Node(
-                "Access to localhost is not allowed for security reasons.".to_string(),
-            ));
-        }
-
-        // Check if host is an IP address
-        if let Ok(ip) = host.parse::<IpAddr>() {
-            if is_private_or_special_ip(&ip) {
-                warn!("Blocked SSRF attempt to private IP: {}", url);
-                return Err(Error::Node(
-                    "Access to private or internal IP addresses is not allowed for security reasons.".to_string(),
-                ));
-            }
-        }
-
-        // Block common internal hostnames
-        if host_lower.ends_with(".local")
-            || host_lower.ends_with(".internal")
-            || host_lower.ends_with(".localhost")
-            || host_lower == "metadata.google.internal"  // GCP metadata
-            || host_lower == "169.254.169.254"
-        // Cloud metadata endpoint
-        {
-            warn!("Blocked SSRF attempt to internal host: {}", url);
-            return Err(Error::Node(
-                "Access to internal hostnames is not allowed for security reasons.".to_string(),
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-/// Check if an IP address is private, loopback, or otherwise special.
-fn is_private_or_special_ip(ip: &IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ipv4) => {
-            ipv4.is_loopback()              // 127.0.0.0/8
-                || ipv4.is_private()         // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-                || ipv4.is_link_local()      // 169.254.0.0/16
-                || ipv4.is_broadcast()       // 255.255.255.255
-                || ipv4.is_unspecified()     // 0.0.0.0
-                || ipv4.octets()[0] == 100 && (ipv4.octets()[1] & 0xc0) == 64 // 100.64.0.0/10 (CGNAT)
-        }
-        IpAddr::V6(ipv6) => {
-            ipv6.is_loopback()              // ::1
-                || ipv6.is_unspecified()     // ::
-                // Check for IPv4-mapped addresses
-                || ipv6.to_ipv4_mapped().map(|v4| is_private_or_special_ip(&IpAddr::V4(v4))).unwrap_or(false)
-        }
-    }
+        Error::Node(msg)
+    })
 }
 
 use super::circuit_breaker::CircuitBreakerRegistry;

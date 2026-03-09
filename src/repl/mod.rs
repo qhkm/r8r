@@ -12,7 +12,7 @@ use crate::engine::Executor;
 use crate::generator;
 use crate::llm;
 use crate::nodes::NodeRegistry;
-use crate::storage::SqliteStorage;
+use crate::storage::{SqliteStorage, Storage};
 use std::io::{self, Write};
 use std::sync::Arc;
 
@@ -27,7 +27,7 @@ pub async fn run_repl(resume_session: Option<String>) -> anyhow::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let storage = SqliteStorage::open(&db_path)?;
+    let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open(&db_path)?);
     let persisted_llm_config = storage.get_repl_llm_config().await?;
     let env_llm_config = generator::resolve_llm_config().await;
     let llm_config = persisted_llm_config
@@ -45,7 +45,7 @@ pub async fn run_repl(resume_session: Option<String>) -> anyhow::Result<()> {
         }
     }
 
-    let executor = Arc::new(Executor::new(NodeRegistry::new(), storage.clone()));
+    let executor = Arc::new(Executor::new(NodeRegistry::new(), Arc::clone(&storage)));
 
     let model_name = llm_config
         .as_ref()
@@ -112,7 +112,7 @@ pub async fn run_repl(resume_session: Option<String>) -> anyhow::Result<()> {
     .await
 }
 
-async fn pick_resume_session(storage: &SqliteStorage, model_name: &str) -> anyhow::Result<String> {
+async fn pick_resume_session(storage: &dyn Storage, model_name: &str) -> anyhow::Result<String> {
     let sessions = storage.list_repl_sessions(20).await?;
     if sessions.is_empty() {
         eprintln!("No previous sessions found. Creating a new one.");

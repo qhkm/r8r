@@ -44,6 +44,14 @@ pub enum InputCommand {
     Exit,
     /// Natural language input.
     NaturalLanguage(String),
+    /// Plan a workflow before execution: /plan [description]
+    Plan { description: Option<String> },
+    /// Arm write operations for the session: /arm [writes]
+    ArmWrites,
+    /// Disarm write operations (revert to safe mode): /disarm
+    Disarm,
+    /// Toggle operator mode: /operator [on|off]
+    Operator { enable: Option<bool> },
     /// Unknown slash command.
     Unknown(String),
     /// Empty input.
@@ -139,6 +147,18 @@ pub fn parse_input(input: &str) -> InputCommand {
         },
         "/help" => InputCommand::Help,
         "/exit" | "/quit" | "/q" => InputCommand::Exit,
+        "/plan" => InputCommand::Plan {
+            description: arg.filter(|s| !s.is_empty()),
+        },
+        "/arm" => InputCommand::ArmWrites,
+        "/disarm" => InputCommand::Disarm,
+        "/operator" => {
+            let enable = arg.as_deref().map(|s| match s.to_lowercase().as_str() {
+                "on" | "true" | "1" => true,
+                _ => false,
+            });
+            InputCommand::Operator { enable }
+        }
         _ => InputCommand::Unknown(trimmed.to_string()),
     }
 }
@@ -165,6 +185,10 @@ pub fn slash_commands() -> Vec<(&'static str, &'static str)> {
         ("/llm", "Show current LLM config"),
         ("/view <target>", "Switch panel: log|tools|yaml|dag|trace"),
         ("/export yaml <path>", "Export current YAML to a file"),
+        ("/plan [description]", "Draft a plan before executing"),
+        ("/arm", "Arm write operations for this session"),
+        ("/disarm", "Disarm write operations (safe mode)"),
+        ("/operator [on|off]", "Toggle operator mode (policy/gate status visible)"),
         ("/help", "Show this help"),
         ("/exit", "Exit the REPL"),
     ]

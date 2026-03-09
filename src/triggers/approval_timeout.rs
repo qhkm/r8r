@@ -15,14 +15,14 @@ use tracing::{error, info, warn};
 
 use crate::engine::executor::emit_audit;
 use crate::engine::Executor;
-use crate::storage::{AuditEventType, SqliteStorage};
+use crate::storage::{AuditEventType, Storage};
 
 /// Default poll interval: 30 seconds.
 const POLL_INTERVAL_MS: u64 = 30_000;
 
 /// Background task that resolves expired approval requests.
 pub struct ApprovalTimeoutChecker {
-    storage: SqliteStorage,
+    storage: Arc<dyn Storage>,
     executor: Arc<Executor>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     handle: Option<JoinHandle<()>>,
@@ -30,7 +30,7 @@ pub struct ApprovalTimeoutChecker {
 }
 
 impl ApprovalTimeoutChecker {
-    pub fn new(storage: SqliteStorage, executor: Arc<Executor>) -> Self {
+    pub fn new(storage: Arc<dyn Storage>, executor: Arc<Executor>) -> Self {
         Self {
             storage,
             executor,
@@ -99,7 +99,7 @@ impl ApprovalTimeoutChecker {
 
 /// Process all expired approval requests.
 async fn process_expired_approvals(
-    storage: &SqliteStorage,
+    storage: &dyn Storage,
     executor: &Executor,
 ) -> crate::Result<()> {
     let expired = storage.list_expired_approvals().await?;

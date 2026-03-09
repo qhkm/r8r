@@ -3,7 +3,7 @@
 
 use crate::engine::Executor;
 use crate::llm::LlmConfig;
-use crate::storage::SqliteStorage;
+use crate::storage::Storage;
 use crate::workflow::{parse_workflow, validate_workflow};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -194,7 +194,7 @@ pub fn parse_text_tool_call(text: &str) -> Option<(String, Value)> {
 pub async fn execute_tool(
     name: &str,
     args: &Value,
-    storage: &SqliteStorage,
+    storage: &dyn Storage,
     executor: &Arc<Executor>,
 ) -> String {
     execute_tool_with_config(name, args, storage, executor, None).await
@@ -204,7 +204,7 @@ pub async fn execute_tool(
 pub async fn execute_tool_with_config(
     name: &str,
     args: &Value,
-    storage: &SqliteStorage,
+    storage: &dyn Storage,
     executor: &Arc<Executor>,
     llm_config: Option<&LlmConfig>,
 ) -> String {
@@ -230,7 +230,7 @@ pub async fn execute_tool_with_config(
     }
 }
 
-async fn exec_list_workflows(storage: &SqliteStorage) -> String {
+async fn exec_list_workflows(storage: &dyn Storage) -> String {
     match storage.list_workflows().await {
         Ok(workflows) => {
             let list: Vec<Value> = workflows
@@ -248,7 +248,7 @@ async fn exec_list_workflows(storage: &SqliteStorage) -> String {
     }
 }
 
-async fn exec_get_workflow(storage: &SqliteStorage, args: &Value) -> String {
+async fn exec_get_workflow(storage: &dyn Storage, args: &Value) -> String {
     let name = args["name"].as_str().unwrap_or("");
     match storage.get_workflow(name).await {
         Ok(Some(wf)) => {
@@ -259,7 +259,7 @@ async fn exec_get_workflow(storage: &SqliteStorage, args: &Value) -> String {
     }
 }
 
-async fn exec_execute(storage: &SqliteStorage, executor: &Arc<Executor>, args: &Value) -> String {
+async fn exec_execute(storage: &dyn Storage, executor: &Arc<Executor>, args: &Value) -> String {
     let workflow_name = args["workflow"].as_str().unwrap_or("");
     let input = args.get("input").cloned().unwrap_or(Value::Null);
 
@@ -295,7 +295,7 @@ async fn exec_execute(storage: &SqliteStorage, executor: &Arc<Executor>, args: &
 }
 
 async fn exec_run_and_wait(
-    storage: &SqliteStorage,
+    storage: &dyn Storage,
     executor: &Arc<Executor>,
     args: &Value,
 ) -> String {
@@ -308,7 +308,7 @@ async fn exec_run_and_wait(
     }
 }
 
-async fn exec_discover(storage: &SqliteStorage, args: &Value) -> String {
+async fn exec_discover(storage: &dyn Storage, args: &Value) -> String {
     let name = args["workflow"].as_str().unwrap_or("");
     match storage.get_workflow(name).await {
         Ok(Some(wf)) => match parse_workflow(&wf.definition) {
@@ -333,7 +333,7 @@ async fn exec_discover(storage: &SqliteStorage, args: &Value) -> String {
     }
 }
 
-async fn exec_get_execution(storage: &SqliteStorage, args: &Value) -> String {
+async fn exec_get_execution(storage: &dyn Storage, args: &Value) -> String {
     let exec_id = args["execution_id"].as_str().unwrap_or("");
     match storage.get_execution(exec_id).await {
         Ok(Some(exec)) => json!({
@@ -350,7 +350,7 @@ async fn exec_get_execution(storage: &SqliteStorage, args: &Value) -> String {
     }
 }
 
-async fn exec_list_executions(storage: &SqliteStorage, args: &Value) -> String {
+async fn exec_list_executions(storage: &dyn Storage, args: &Value) -> String {
     let workflow = args["workflow"].as_str().unwrap_or("");
     let limit = args["limit"].as_u64().unwrap_or(10) as usize;
     match storage.list_executions(workflow, limit).await {
@@ -371,7 +371,7 @@ async fn exec_list_executions(storage: &SqliteStorage, args: &Value) -> String {
     }
 }
 
-async fn exec_get_trace(storage: &SqliteStorage, args: &Value) -> String {
+async fn exec_get_trace(storage: &dyn Storage, args: &Value) -> String {
     let exec_id = args["execution_id"].as_str().unwrap_or("");
     match storage.get_node_executions(exec_id).await {
         Ok(nodes) => {
@@ -404,7 +404,7 @@ async fn exec_validate(args: &Value) -> String {
     }
 }
 
-async fn exec_create_workflow(storage: &SqliteStorage, args: &Value) -> String {
+async fn exec_create_workflow(storage: &dyn Storage, args: &Value) -> String {
     let yaml = args["yaml"].as_str().unwrap_or("");
     match parse_workflow(yaml) {
         Ok(workflow) => {
@@ -462,7 +462,7 @@ async fn exec_test(args: &Value) -> String {
     }
 }
 
-async fn exec_list_approvals(storage: &SqliteStorage, args: &Value) -> String {
+async fn exec_list_approvals(storage: &dyn Storage, args: &Value) -> String {
     let status = args
         .get("status")
         .and_then(|v| v.as_str())
@@ -479,7 +479,7 @@ async fn exec_list_approvals(storage: &SqliteStorage, args: &Value) -> String {
     }
 }
 
-async fn exec_approve(storage: &SqliteStorage, args: &Value) -> String {
+async fn exec_approve(storage: &dyn Storage, args: &Value) -> String {
     let approval_id = args["approval_id"].as_str().unwrap_or("");
     let decision = args["decision"].as_str().unwrap_or("");
     let comment = args.get("comment").and_then(|v| v.as_str());

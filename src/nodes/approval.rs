@@ -8,6 +8,7 @@ use tracing::info;
 
 use crate::engine::executor::emit_audit;
 use crate::error::{Error, Result};
+use crate::notifications::{send_approval_notifications, NotifyChannel, NotifyContext};
 use crate::storage::{ApprovalRequest, AuditEventType};
 
 use super::types::{Node, NodeContext, NodeResult};
@@ -40,6 +41,16 @@ struct ApprovalConfig {
     /// Action on timeout: "approve" or "reject".
     #[serde(default)]
     default_action: Option<String>,
+    /// Notification channels to fire when approval is requested.
+    /// Each entry must have a `type` field: `webhook`, `slack`, or `email`.
+    #[serde(default)]
+    notify: Vec<NotifyChannel>,
+    /// Route this approval to a specific user identity (e.g. email or username).
+    #[serde(default)]
+    assign_to: Option<String>,
+    /// Route this approval to one or more groups. Reviewers in any listed group can act.
+    #[serde(default)]
+    assign_groups: Vec<String>,
 }
 
 #[async_trait]
@@ -94,6 +105,8 @@ impl Node for ApprovalNode {
             created_at: now,
             expires_at,
             decided_at: None,
+            assignee: config.assign_to.clone(),
+            groups: config.assign_groups.clone(),
         };
 
         if let Some(storage) = &ctx.storage {
@@ -115,6 +128,20 @@ impl Node for ApprovalNode {
             .await;
         }
 
+        // Fire notification channels (non-blocking failures)
+        if !config.notify.is_empty() {
+            let expires_str = expires_at.map(|t| t.to_rfc3339());
+            let notify_ctx = NotifyContext {
+                approval_id: &approval_id,
+                execution_id: &ctx.execution_id,
+                workflow_name: &ctx.workflow_name,
+                title: &config.title,
+                description: config.description.as_deref(),
+                expires_at: expires_str.as_deref(),
+            };
+            send_approval_notifications(&config.notify, &notify_ctx).await;
+        }
+
         Ok(NodeResult::new(json!({
             "approval_id": approval_id,
             "status": "pending",
@@ -122,6 +149,8 @@ impl Node for ApprovalNode {
             "description": config.description,
             "expires_at": expires_at.map(|t| t.to_rfc3339()),
             "default_action": config.default_action,
+            "assignee": config.assign_to,
+            "groups": config.assign_groups,
         })))
     }
 }

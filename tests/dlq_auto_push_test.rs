@@ -9,7 +9,7 @@ use chrono::Utc;
 use r8r::engine::Executor;
 use r8r::error::{Error, Result};
 use r8r::nodes::{Node, NodeContext, NodeRegistry, NodeResult};
-use r8r::storage::{DlqStatus, ExecutionStatus, SqliteStorage, StoredWorkflow};
+use r8r::storage::{DlqStatus, ExecutionStatus, SqliteStorage, Storage, StoredWorkflow};
 use r8r::workflow::parse_workflow;
 use serde_json::Value;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ impl Node for AlwaysFailNode {
 // Helper: save a workflow to storage
 // ============================================================================
 
-async fn save_test_workflow(storage: &SqliteStorage, id: &str, yaml: &str) {
+async fn save_test_workflow(storage: &dyn Storage, id: &str, yaml: &str) {
     let workflow = parse_workflow(yaml).unwrap();
     let now = Utc::now();
     storage
@@ -61,7 +61,7 @@ async fn save_test_workflow(storage: &SqliteStorage, id: &str, yaml: &str) {
 
 #[tokio::test]
 async fn test_failed_execution_creates_dlq_entry() {
-    let storage = SqliteStorage::open_in_memory().unwrap();
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
     // DLQ table is created by init_schema_sync — no separate init_dlq() call needed.
 
     let mut registry = NodeRegistry::new();
@@ -115,7 +115,7 @@ nodes:
 
 #[tokio::test]
 async fn test_dlq_entry_has_correct_fields() {
-    let storage = SqliteStorage::open_in_memory().unwrap();
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
 
     let mut registry = NodeRegistry::new();
     registry.register(Arc::new(AlwaysFailNode));
@@ -196,7 +196,7 @@ nodes:
 
 #[tokio::test]
 async fn test_dlq_not_created_on_success() {
-    let storage = SqliteStorage::open_in_memory().unwrap();
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
 
     let registry = NodeRegistry::new();
     let executor = Executor::new(registry, storage.clone());
@@ -239,7 +239,7 @@ nodes:
 
 #[tokio::test]
 async fn test_unknown_node_type_creates_dlq_entry() {
-    let storage = SqliteStorage::open_in_memory().unwrap();
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
 
     // Default registry does not have 'nonexistent_node_type_xyz'
     let registry = NodeRegistry::new();

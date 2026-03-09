@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use super::{SandboxBackend, SandboxError, SandboxRequest, SandboxResult};
+use super::{collect_output_artifacts, SandboxBackend, SandboxError, SandboxRequest, SandboxResult};
 use crate::config::SandboxDockerConfig;
 
 /// Docker-based sandbox backend.
@@ -44,7 +44,14 @@ impl DockerBackend {
         })
     }
 
-    fn image_for_runtime(&self, runtime: &str) -> Result<&str, SandboxError> {
+    fn image_for_runtime<'a>(
+        &'a self,
+        runtime: &str,
+        override_image: Option<&'a str>,
+    ) -> Result<&'a str, SandboxError> {
+        if let Some(img) = override_image {
+            return Ok(img);
+        }
         match runtime {
             "python3" | "python" => Ok(&self.config.python_image),
             "node" | "nodejs" | "javascript" => Ok(&self.config.node_image),
@@ -55,32 +62,78 @@ impl DockerBackend {
         }
     }
 
-    fn cmd_for_runtime(runtime: &str, code: &str) -> Vec<String> {
-        match runtime {
-            "python3" | "python" => vec!["python3".to_string(), "-c".to_string(), code.to_string()],
-            "node" | "nodejs" | "javascript" => {
-                vec!["node".to_string(), "-e".to_string(), code.to_string()]
+    /// Build the shell command to run inside the container.
+    ///
+    /// Code is written to a bind-mounted temp file at `/r8r_sandbox/code.<ext>`.
+    /// If packages are specified they are installed first via pip/npm.
+    fn cmd_for_runtime(runtime: &str, packages: &[String]) -> Result<Vec<String>, SandboxError> {
+        // Code is always in /r8r_sandbox/code.<ext> via bind mount
+        let (ext, runner) = match runtime {
+            "python3" | "python" => ("py", "python3"),
+            "node" | "nodejs" | "javascript" => ("js", "node"),
+            "bash" | "sh" => ("sh", "bash"),
+            other => {
+                return Err(SandboxError::RuntimeNotFound {
+                    runtime: other.to_string(),
+                })
             }
-            _ => vec!["sh".to_string(), "-c".to_string(), code.to_string()],
-        }
+        };
+
+        let code_path = format!("/r8r_sandbox/code.{}", ext);
+
+        let install_prefix = if packages.is_empty() {
+            String::new()
+        } else {
+            match runtime {
+                "python3" | "python" => {
+                    format!("pip install -q {} 2>/dev/null && ", packages.join(" "))
+                }
+                "node" | "nodejs" | "javascript" => {
+                    format!("npm install -g {} 2>/dev/null && ", packages.join(" "))
+                }
+                _ => String::new(),
+            }
+        };
+
+        let full_cmd = format!("{}{} {}", install_prefix, runner, code_path);
+        Ok(vec!["sh".to_string(), "-c".to_string(), full_cmd])
     }
 }
 
 #[async_trait]
 impl SandboxBackend for DockerBackend {
     async fn execute(&self, req: SandboxRequest) -> Result<SandboxResult, SandboxError> {
-        let image = self.image_for_runtime(&req.runtime)?;
-        let cmd = Self::cmd_for_runtime(&req.runtime, &req.code);
+        let image = self.image_for_runtime(&req.runtime, req.image.as_deref())?;
+        let cmd = Self::cmd_for_runtime(&req.runtime, &req.packages)?;
         let start = Instant::now();
 
         let container_name = format!("r8r-sandbox-{}", uuid::Uuid::new_v4());
 
+        // Create temp sandbox dir on host for code + artifacts
+        let sandbox_dir = tempfile::TempDir::new()?;
+
+        // Write code to sandbox dir (bind-mounted into container)
+        let ext = match req.runtime.as_str() {
+            "python3" | "python" => "py",
+            "node" | "nodejs" | "javascript" => "js",
+            _ => "sh",
+        };
+        let code_file = sandbox_dir.path().join(format!("code.{}", ext));
+        std::fs::write(&code_file, &req.code)?;
+
+        // Create output dir for artifacts
+        let output_dir = sandbox_dir.path().join("output");
+        std::fs::create_dir_all(&output_dir)?;
+
         // Build env vars as Vec<String> "KEY=VALUE"
-        let env_vars: Vec<String> = req
+        let mut env_vars: Vec<String> = req
             .env
             .iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect();
+
+        // Always expose output dir path inside container
+        env_vars.push("R8R_OUTPUT_DIR=/r8r_sandbox/output".to_string());
 
         // Build host config with resource limits
         let mut host_config = HostConfig::default();
@@ -102,6 +155,12 @@ impl SandboxBackend for DockerBackend {
             "/tmp".to_string(),
             "rw,noexec,nosuid,size=64m".to_string(),
         )]));
+
+        // Bind-mount sandbox dir: code readable, output writable
+        host_config.binds = Some(vec![format!(
+            "{}:/r8r_sandbox:rw",
+            sandbox_dir.path().to_string_lossy()
+        )]);
 
         let container_config = ContainerConfig {
             image: Some(image.to_string()),
@@ -223,11 +282,19 @@ impl SandboxBackend for DockerBackend {
             exit_code, duration_ms
         );
 
+        // Collect file artifacts from the bind-mounted output dir
+        let artifacts = if req.collect_artifacts {
+            collect_output_artifacts(&output_dir, req.max_artifact_bytes).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
         Ok(SandboxResult {
             stdout,
             stderr,
             exit_code,
             duration_ms,
+            artifacts,
         })
     }
 

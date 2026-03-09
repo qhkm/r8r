@@ -8,15 +8,78 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+// ============================================================================
+// Structured error helpers (Task #4)
+// ============================================================================
+
+/// Machine-readable error codes for MCP tools.
+/// Agents can branch on `error_code` to decide how to recover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorCode {
+    /// Workflow name does not exist in the registry.
+    WorkflowNotFound,
+    /// Workflow YAML could not be parsed.
+    YamlParseError,
+    /// Workflow failed structural validation.
+    ValidationError,
+    /// Execution engine returned a failure status.
+    ExecutionFailed,
+    /// Execution timed out waiting for a result.
+    ExecutionTimeout,
+    /// Execution is paused waiting for human approval.
+    ApprovalRequired,
+    /// Requested resource (execution, approval, etc.) was not found.
+    ResourceNotFound,
+    /// Input parameters are missing or malformed.
+    InvalidInput,
+    /// Internal storage or I/O error.
+    InternalError,
+}
+
+impl ErrorCode {
+    fn as_str(self) -> &'static str {
+        match self {
+            ErrorCode::WorkflowNotFound  => "workflow_not_found",
+            ErrorCode::YamlParseError    => "yaml_parse_error",
+            ErrorCode::ValidationError   => "validation_error",
+            ErrorCode::ExecutionFailed   => "execution_failed",
+            ErrorCode::ExecutionTimeout  => "execution_timeout",
+            ErrorCode::ApprovalRequired  => "approval_required",
+            ErrorCode::ResourceNotFound  => "resource_not_found",
+            ErrorCode::InvalidInput      => "invalid_input",
+            ErrorCode::InternalError     => "internal_error",
+        }
+    }
+}
+
+/// Build a structured error `CallToolResult` agents can parse.
+///
+/// Response shape:
+/// ```json
+/// { "error_code": "workflow_not_found", "message": "...", "details": { ... } }
+/// ```
+fn mcp_error(code: ErrorCode, message: impl Into<String>) -> CallToolResult {
+    mcp_error_with_details(code, message, json!(null))
+}
+
+fn mcp_error_with_details(code: ErrorCode, message: impl Into<String>, details: Value) -> CallToolResult {
+    let body = json!({
+        "error_code": code.as_str(),
+        "message": message.into(),
+        "details": details,
+    });
+    CallToolResult::error(vec![Content::text(serde_json::to_string_pretty(&body).unwrap_or_default())])
+}
+
 use crate::engine::executor::emit_audit;
 use crate::engine::Executor;
-use crate::storage::{AuditEventType, SqliteStorage};
+use crate::storage::{AuditEventType, SqliteStorage, Storage};
 use crate::workflow::{parse_workflow, validate_workflow};
 
 /// R8r MCP Service - handles all tool calls
 #[derive(Clone)]
 pub struct R8rService {
-    pub storage: SqliteStorage,
+    pub storage: Arc<dyn Storage>,
     pub executor: Arc<Executor>,
 }
 
@@ -115,6 +178,12 @@ pub struct ListApprovalsParams {
     /// Filter by status: pending, approved, rejected, expired.
     #[serde(default)]
     pub status: Option<String>,
+    /// Filter by assignee identity (exact match).
+    #[serde(default)]
+    pub assignee: Option<String>,
+    /// Filter by group name (approval must include this group).
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 /// Parameters for approving or rejecting an approval request.
@@ -278,16 +347,14 @@ impl R8rService {
         let stored = match self.storage.get_workflow(&params.workflow).await {
             Ok(Some(wf)) => wf,
             Ok(None) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Workflow not found: {}",
-                    params.workflow
-                ))]));
+                return Ok(mcp_error_with_details(
+                    ErrorCode::WorkflowNotFound,
+                    format!("Workflow not found: {}", params.workflow),
+                    json!({ "workflow": params.workflow }),
+                ));
             }
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Storage error: {}",
-                    e
-                ))]));
+                return Ok(mcp_error(ErrorCode::InternalError, format!("Storage error: {}", e)));
             }
         };
 
@@ -295,10 +362,7 @@ impl R8rService {
         let workflow = match parse_workflow(&stored.definition) {
             Ok(wf) => wf,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Invalid workflow definition: {}",
-                    e
-                ))]));
+                return Ok(mcp_error(ErrorCode::YamlParseError, format!("Invalid workflow definition: {}", e)));
             }
         };
 
@@ -313,10 +377,26 @@ impl R8rService {
                     .finished_at
                     .map(|f| (f - execution.started_at).num_milliseconds());
 
+                let status_str = execution.status.to_string();
+                if status_str == "failed" {
+                    return Ok(mcp_error_with_details(
+                        ErrorCode::ExecutionFailed,
+                        execution.error.as_deref().unwrap_or("Workflow execution failed"),
+                        json!({ "execution_id": execution.id, "status": status_str }),
+                    ));
+                }
+                if status_str == "waiting_for_approval" {
+                    return Ok(mcp_error_with_details(
+                        ErrorCode::ApprovalRequired,
+                        "Workflow is paused waiting for human approval",
+                        json!({ "execution_id": execution.id }),
+                    ));
+                }
+
                 let result = json!({
                     "execution_id": execution.id,
                     "workflow": execution.workflow_name,
-                    "status": execution.status.to_string(),
+                    "status": status_str,
                     "output": execution.output,
                     "error": execution.error,
                     "duration_ms": duration_ms
@@ -326,10 +406,7 @@ impl R8rService {
                     serde_json::to_string_pretty(&result).unwrap_or_default(),
                 )]))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Workflow execution failed: {}",
-                e
-            ))])),
+            Err(e) => Ok(mcp_error(ErrorCode::InternalError, format!("Workflow execution failed: {}", e))),
         }
     }
 
@@ -693,16 +770,14 @@ impl R8rService {
         let stored = match self.storage.get_workflow(&params.workflow).await {
             Ok(Some(wf)) => wf,
             Ok(None) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Workflow not found: {}",
-                    params.workflow
-                ))]));
+                return Ok(mcp_error_with_details(
+                    ErrorCode::WorkflowNotFound,
+                    format!("Workflow not found: {}", params.workflow),
+                    json!({ "workflow": params.workflow }),
+                ));
             }
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Storage error: {}",
-                    e
-                ))]));
+                return Ok(mcp_error(ErrorCode::InternalError, format!("Storage error: {}", e)));
             }
         };
 
@@ -710,10 +785,7 @@ impl R8rService {
         let workflow = match parse_workflow(&stored.definition) {
             Ok(wf) => wf,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Invalid workflow definition: {}",
-                    e
-                ))]));
+                return Ok(mcp_error(ErrorCode::YamlParseError, format!("Invalid workflow definition: {}", e)));
             }
         };
 
@@ -723,16 +795,30 @@ impl R8rService {
             .execute(&workflow, &stored.id, "mcp", input)
             .await
         {
-            Ok(execution) => match execution.output {
-                Some(output) => Ok(CallToolResult::success(vec![Content::text(
-                    serde_json::to_string_pretty(&output).unwrap_or_default(),
-                )])),
-                None => Ok(CallToolResult::success(vec![Content::text("null")])),
-            },
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Workflow execution failed: {}",
-                e
-            ))])),
+            Ok(execution) => {
+                let status_str = execution.status.to_string();
+                if status_str == "failed" {
+                    return Ok(mcp_error_with_details(
+                        ErrorCode::ExecutionFailed,
+                        execution.error.as_deref().unwrap_or("Workflow execution failed"),
+                        json!({ "execution_id": execution.id }),
+                    ));
+                }
+                if status_str == "waiting_for_approval" {
+                    return Ok(mcp_error_with_details(
+                        ErrorCode::ApprovalRequired,
+                        "Workflow is paused waiting for human approval",
+                        json!({ "execution_id": execution.id }),
+                    ));
+                }
+                match execution.output {
+                    Some(output) => Ok(CallToolResult::success(vec![Content::text(
+                        serde_json::to_string_pretty(&output).unwrap_or_default(),
+                    )])),
+                    None => Ok(CallToolResult::success(vec![Content::text("null")])),
+                }
+            }
+            Err(e) => Ok(mcp_error(ErrorCode::InternalError, format!("Workflow execution failed: {}", e))),
         }
     }
 
@@ -748,26 +834,21 @@ impl R8rService {
         let stored = match self.storage.get_workflow(&params.workflow).await {
             Ok(Some(wf)) => wf,
             Ok(None) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Workflow not found: {}",
-                    params.workflow
-                ))]));
+                return Ok(mcp_error_with_details(
+                    ErrorCode::WorkflowNotFound,
+                    format!("Workflow not found: {}", params.workflow),
+                    json!({ "workflow": params.workflow }),
+                ));
             }
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Storage error: {}",
-                    e
-                ))]));
+                return Ok(mcp_error(ErrorCode::InternalError, format!("Storage error: {}", e)));
             }
         };
 
         let workflow = match parse_workflow(&stored.definition) {
             Ok(wf) => wf,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Invalid workflow definition: {}",
-                    e
-                ))]));
+                return Ok(mcp_error(ErrorCode::YamlParseError, format!("Invalid workflow definition: {}", e)));
             }
         };
 
@@ -931,25 +1012,19 @@ impl R8rService {
         let workflow = match parse_workflow(&params.workflow_yaml) {
             Ok(w) => w,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Failed to parse workflow YAML: {}",
-                    e
-                ))]));
+                return Ok(mcp_error(ErrorCode::YamlParseError, format!("Failed to parse workflow YAML: {}", e)));
             }
         };
 
         // Create isolated test executor
-        let test_storage = match SqliteStorage::open_in_memory() {
-            Ok(s) => s,
+        let test_storage: Arc<dyn Storage> = match SqliteStorage::open_in_memory() {
+            Ok(s) => Arc::new(s),
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Failed to create test storage: {}",
-                    e
-                ))]));
+                return Ok(mcp_error(ErrorCode::InternalError, format!("Failed to create test storage: {}", e)));
             }
         };
         let test_registry = crate::nodes::NodeRegistry::new();
-        let test_executor = Executor::new(test_registry, test_storage.clone());
+        let test_executor = Executor::new(test_registry, Arc::clone(&test_storage));
 
         // Save workflow to test storage
         let workflow_id = uuid::Uuid::new_v4().to_string();
@@ -1058,7 +1133,17 @@ impl R8rService {
         #[tool(aggr)] params: ListApprovalsParams,
     ) -> Result<CallToolResult, McpError> {
         let status = params.status.as_deref().unwrap_or("pending");
-        let approvals = match self.storage.list_approval_requests(Some(status), 100, 0).await {
+        let approvals = match self
+            .storage
+            .list_approval_requests_filtered(
+                Some(status),
+                params.assignee.as_deref(),
+                params.group.as_deref(),
+                100,
+                0,
+            )
+            .await
+        {
             Ok(list) => list,
             Err(e) => {
                 return Ok(CallToolResult::error(vec![Content::text(format!(
@@ -1081,6 +1166,8 @@ impl R8rService {
                     "created_at": a.created_at.to_rfc3339(),
                     "expires_at": a.expires_at.map(|t| t.to_rfc3339()),
                     "execution_id": a.execution_id,
+                    "assignee": a.assignee,
+                    "groups": a.groups,
                 })
             })
             .collect();
@@ -1103,33 +1190,33 @@ impl R8rService {
         #[tool(aggr)] params: ApproveParams,
     ) -> Result<CallToolResult, McpError> {
         if params.decision != "approve" && params.decision != "reject" {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Decision must be \"approve\" or \"reject\", got \"{}\"",
-                params.decision
-            ))]));
+            return Ok(mcp_error_with_details(
+                ErrorCode::InvalidInput,
+                format!("Decision must be \"approve\" or \"reject\", got \"{}\"", params.decision),
+                json!({ "valid_values": ["approve", "reject"] }),
+            ));
         }
 
         let mut approval = match self.storage.get_approval_request(&params.approval_id).await {
             Ok(Some(approval)) => approval,
             Ok(None) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Approval request not found: {}",
-                    params.approval_id
-                ))]));
+                return Ok(mcp_error_with_details(
+                    ErrorCode::ResourceNotFound,
+                    format!("Approval request not found: {}", params.approval_id),
+                    json!({ "approval_id": params.approval_id }),
+                ));
             }
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Failed to load approval request: {}",
-                    e
-                ))]));
+                return Ok(mcp_error(ErrorCode::InternalError, format!("Failed to load approval request: {}", e)));
             }
         };
 
         if approval.status != "pending" {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Approval {} is already {}, cannot change",
-                params.approval_id, approval.status
-            ))]));
+            return Ok(mcp_error_with_details(
+                ErrorCode::InvalidInput,
+                format!("Approval {} is already {}, cannot change", params.approval_id, approval.status),
+                json!({ "approval_id": params.approval_id, "current_status": approval.status }),
+            ));
         }
 
         let mut checkpoint = match self
@@ -1139,16 +1226,14 @@ impl R8rService {
         {
             Ok(Some(checkpoint)) => checkpoint,
             Ok(None) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "No checkpoint found for execution {}",
-                    approval.execution_id
-                ))]));
+                return Ok(mcp_error_with_details(
+                    ErrorCode::ResourceNotFound,
+                    format!("No checkpoint found for execution {}", approval.execution_id),
+                    json!({ "execution_id": approval.execution_id }),
+                ));
             }
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Failed to load checkpoint: {}",
-                    e
-                ))]));
+                return Ok(mcp_error(ErrorCode::InternalError, format!("Failed to load checkpoint: {}", e)));
             }
         };
 
@@ -1337,13 +1422,13 @@ mod tests {
     use super::*;
     use crate::engine::Executor;
     use crate::nodes::NodeRegistry;
-    use crate::storage::{SqliteStorage, StoredWorkflow};
+    use crate::storage::{SqliteStorage, Storage, StoredWorkflow};
     use std::sync::Arc;
 
     fn test_service() -> R8rService {
-        let storage = SqliteStorage::open_in_memory().unwrap();
+        let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open_in_memory().unwrap());
         let registry = NodeRegistry::new();
-        let executor = Arc::new(Executor::new(registry, storage.clone()));
+        let executor = Arc::new(Executor::new(registry, Arc::clone(&storage)));
         R8rService { storage, executor }
     }
 
@@ -1419,7 +1504,7 @@ nodes:
     #[tokio::test]
     async fn test_r8r_list_approvals_empty() {
         let service = test_service();
-        let params = ListApprovalsParams { status: None };
+        let params = ListApprovalsParams { status: None, assignee: None, group: None };
         let result = service.r8r_list_approvals(params).await.unwrap();
         assert!(!result.is_error.unwrap_or(false));
         let text = extract_text(&result);
@@ -1498,7 +1583,7 @@ nodes:
         assert_eq!(execute_data["status"], "paused");
 
         let listed = service
-            .r8r_list_approvals(ListApprovalsParams { status: None })
+            .r8r_list_approvals(ListApprovalsParams { status: None, assignee: None, group: None })
             .await
             .unwrap();
         assert!(!listed.is_error.unwrap_or(false));

@@ -11,7 +11,7 @@ use tracing::info;
 
 use crate::engine::Executor;
 use crate::nodes::NodeRegistry;
-use crate::storage::SqliteStorage;
+use crate::storage::{SqliteStorage, Storage};
 
 use super::tools::R8rService;
 
@@ -26,9 +26,9 @@ pub struct R8rMcpServer {
 impl R8rMcpServer {
     /// Create a new MCP server with the given database path.
     pub fn new(db_path: &Path) -> crate::error::Result<Self> {
-        let storage = SqliteStorage::open(db_path)?;
+        let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open(db_path)?);
         let registry = NodeRegistry::new();
-        let executor = Arc::new(Executor::new(registry, storage.clone()));
+        let executor = Arc::new(Executor::new(registry, Arc::clone(&storage)));
 
         Ok(Self {
             service: R8rService { storage, executor },
@@ -39,9 +39,9 @@ impl R8rMcpServer {
     ///
     /// Useful for testing and development.
     pub fn in_memory() -> crate::error::Result<Self> {
-        let storage = SqliteStorage::open_in_memory()?;
+        let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open_in_memory()?);
         let registry = NodeRegistry::new();
-        let executor = Arc::new(Executor::new(registry, storage.clone()));
+        let executor = Arc::new(Executor::new(registry, Arc::clone(&storage)));
 
         Ok(Self {
             service: R8rService { storage, executor },

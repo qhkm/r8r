@@ -3,7 +3,7 @@ use r8r::storage::SqliteStorage;
 
 #[tokio::test]
 async fn test_create_and_get_repl_session() {
-    let storage = SqliteStorage::open_in_memory().unwrap();
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
 
     let session_id = storage.create_repl_session("gpt-4o").await.unwrap();
     assert!(!session_id.is_empty());
@@ -17,7 +17,7 @@ async fn test_create_and_get_repl_session() {
 
 #[tokio::test]
 async fn test_save_and_list_repl_messages() {
-    let storage = SqliteStorage::open_in_memory().unwrap();
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
     let session_id = storage.create_repl_session("gpt-4o").await.unwrap();
 
     storage
@@ -37,7 +37,7 @@ async fn test_save_and_list_repl_messages() {
 
 #[tokio::test]
 async fn test_list_repl_sessions() {
-    let storage = SqliteStorage::open_in_memory().unwrap();
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
     storage.create_repl_session("gpt-4o").await.unwrap();
     storage
         .create_repl_session("claude-sonnet-4-20250514")
@@ -50,7 +50,7 @@ async fn test_list_repl_sessions() {
 
 #[tokio::test]
 async fn test_update_repl_session_summary() {
-    let storage = SqliteStorage::open_in_memory().unwrap();
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
     let session_id = storage.create_repl_session("gpt-4o").await.unwrap();
 
     storage
@@ -68,7 +68,7 @@ async fn test_update_repl_session_summary() {
 
 #[tokio::test]
 async fn test_save_and_get_repl_llm_config() {
-    let storage = SqliteStorage::open_in_memory().unwrap();
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
     let cfg = LlmConfig {
         provider: LlmProvider::Anthropic,
         model: Some("claude-sonnet-4-20250514".to_string()),
