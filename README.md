@@ -157,7 +157,7 @@ r8r-mcp
 | **Binary Size** | 24 MB | ~200 MB+ |
 | **Memory (idle)** | ~15 MB | ~500 MB+ |
 | **Startup** | ~50ms | Seconds |
-| **Storage** | SQLite (embedded) | PostgreSQL/MySQL |
+| **Storage** | SQLite (default) or PostgreSQL (`--features storage-postgres`) | PostgreSQL/MySQL |
 | **Workflows** | YAML files (git-friendly) | Database blobs |
 | **AI Agent Nodes** | ✅ Multi-provider (OpenAI, Anthropic, Ollama) | ❌ None |
 | **Code Sandbox** | ✅ Pluggable (subprocess, Docker, Firecracker) | ❌ None |

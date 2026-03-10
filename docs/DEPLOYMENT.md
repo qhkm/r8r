@@ -153,6 +153,31 @@ What it does:
 4. Pull and restart the `r8r` container.
 5. Verify `/api/health` and `/` on the remote host (unless `--skip-health-check`).
 
+## PostgreSQL Storage (Optional)
+
+By default r8r uses an embedded SQLite database — no setup required.
+
+To switch to PostgreSQL, build with the `storage-postgres` feature and set `DATABASE_URL`:
+
+```bash
+# Build with PostgreSQL support
+cargo build --release --features storage-postgres
+
+# Point at your database
+export DATABASE_URL=postgres://user:password@localhost:5432/r8r
+./r8r serve
+```
+
+The schema is created automatically on first connection. SQLite is used as the fallback whenever `DATABASE_URL` is unset or does not start with `postgres://`.
+
+When deploying via Docker, add `DATABASE_URL` to your `.env` and build the image with:
+
+```dockerfile
+RUN cargo build --release --features storage-postgres
+```
+
+Or pass it as a build arg if your `Dockerfile` supports it.
+
 ## Security Notes
 
 - Set `R8R_MONITOR_TOKEN` in production.
