@@ -178,7 +178,6 @@ impl SqliteStorage {
                 FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
-            CREATE INDEX IF NOT EXISTS idx_approval_requests_assignee ON approval_requests(assignee);
 
             CREATE TABLE IF NOT EXISTS repl_sessions (
                 id TEXT PRIMARY KEY,
@@ -308,11 +307,13 @@ impl SqliteStorage {
     fn ensure_approval_delegation_columns(conn: &Connection) -> Result<()> {
         if !Self::has_column(conn, "approval_requests", "assignee")? {
             conn.execute("ALTER TABLE approval_requests ADD COLUMN assignee TEXT", [])?;
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_approval_requests_assignee ON approval_requests(assignee)",
-                [],
-            )?;
         }
+        // Always create idempotently — handles both fresh DBs (column in CREATE TABLE)
+        // and upgraded DBs (column added via ALTER TABLE above).
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_approval_requests_assignee ON approval_requests(assignee)",
+            [],
+        )?;
         if !Self::has_column(conn, "approval_requests", "groups")? {
             conn.execute(
                 "ALTER TABLE approval_requests ADD COLUMN groups TEXT NOT NULL DEFAULT '[]'",
