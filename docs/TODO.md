@@ -186,7 +186,7 @@ Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style
 - [x] Add `/arm` with session TTL (default disarmed — safe mode)
 - [x] Add type-to-confirm (yes/no) approval for write-intent inputs when disarmed
 - [x] Persist transcript-to-run correlation (`session_id`, `run_id`, tool calls redacted)
-- [ ] Add fail-closed non-interactive behavior parity for approval-required runs (exit `42`)
+- [x] Add fail-closed non-interactive behavior parity for approval-required runs (exit `42`)
 
 **Operator mode (optional/escalated)**
 - [x] Add `/operator [on|off]` toggle command — shows arm state in status bar
