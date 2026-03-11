@@ -66,8 +66,13 @@ pub mod workflow;
 pub use error::{Error, Result};
 pub use mcp::R8rMcpServer;
 
-/// Returns true if the process should exit with code 42.
-/// Exported for testing.
+/// Returns true if the process should exit with code 42 (non-interactive approval guard).
+///
+/// # Known Issue
+/// `ExecutionStatus` has no `WaitingForApproval` variant; executions pending approval
+/// are currently paused with `ExecutionStatus::Paused` instead. This means this function
+/// always returns `false` in practice. A future fix should add the variant, update the
+/// executor, and change the comparison here accordingly.
 pub fn should_exit_42(status: &str, is_interactive: bool) -> bool {
     status == "waiting_for_approval" && !is_interactive
 }
