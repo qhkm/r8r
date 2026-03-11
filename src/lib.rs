@@ -65,3 +65,9 @@ pub mod workflow;
 
 pub use error::{Error, Result};
 pub use mcp::R8rMcpServer;
+
+/// Returns true if the process should exit with code 42.
+/// Exported for testing.
+pub fn should_exit_42(status: &str, is_interactive: bool) -> bool {
+    status == "waiting_for_approval" && !is_interactive
+}
