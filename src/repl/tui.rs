@@ -35,7 +35,7 @@ const CTRL_C_EXIT_WINDOW: Duration = Duration::from_millis(1500);
 pub fn redact_credentials(v: &serde_json::Value) -> serde_json::Value {
     const SENSITIVE: &[&str] = &[
         "password", "token", "secret", "api_key", "apikey",
-        "authorization", "auth", "key", "credential", "private_key",
+        "authorization", "credential", "private_key", "access_key", "secret_key",
     ];
 
     match v {
@@ -2465,6 +2465,7 @@ pub async fn run_repl_tui(
                     // Show contextual quick-actions based on turn outcome
                     app.quick_actions = build_quick_actions(&app.turn_outcome);
                     app.turn_outcome = TurnOutcome::default();
+                    app.last_run_id = None;
                     app.tool_start_times.clear();
                     current_turn = None;
                 }
@@ -2487,6 +2488,7 @@ pub async fn run_repl_tui(
                             app.push_message(MessageKind::System, "(cancelled)");
                             app.push_log("Cancelled current request.");
                             app.turn_outcome = TurnOutcome::default();
+                            app.last_run_id = None;
                             app.tool_start_times.clear();
                         } else {
                             let now = Instant::now();
@@ -2623,6 +2625,7 @@ pub async fn run_repl_tui(
                                 // The next iteration will pick it up. For now, manually reprocess:
                                 let original = confirm.original_input.clone();
                                 app.turn_outcome = TurnOutcome::default();
+                                app.last_run_id = None;
                                 app.tool_start_times.clear();
                                 app.push_message(MessageKind::User, original.clone());
                                 let _ = storage.save_repl_message(&app.session_id, "user", &original, None, None).await;
@@ -2670,6 +2673,7 @@ pub async fn run_repl_tui(
                         match parse_input(&submitted) {
                             InputCommand::NaturalLanguage(text) => {
                                 app.turn_outcome = TurnOutcome::default();
+                                app.last_run_id = None;
                                 app.tool_start_times.clear();
                                 app.push_message(MessageKind::User, text.clone());
                                 storage

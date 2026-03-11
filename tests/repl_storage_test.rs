@@ -144,4 +144,10 @@ fn redact_credentials_replaces_sensitive_keys() {
     assert_eq!(output["password"], "[REDACTED]");
     assert_eq!(output["nested"]["secret"], "[REDACTED]");
     assert_eq!(output["nested"]["data"], "safe");
+
+    // Verify S3-style "key" field is NOT redacted (bare "key" was removed from sensitive list)
+    let s3_input = serde_json::json!({"key": "path/to/object.txt", "bucket": "my-bucket"});
+    let s3_output = redact_credentials(&s3_input);
+    assert_eq!(s3_output["key"], "path/to/object.txt", "bare 'key' field should not be redacted");
+    assert_eq!(s3_output["bucket"], "my-bucket");
 }
