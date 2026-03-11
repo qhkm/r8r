@@ -117,3 +117,31 @@ async fn repl_message_run_id_defaults_to_none() {
     let msgs = db.list_repl_messages(&sess_id, 10).await.unwrap();
     assert_eq!(msgs[0].run_id, None);
 }
+
+#[test]
+fn redact_credentials_replaces_sensitive_keys() {
+    use r8r::repl::tui::redact_credentials;
+    use serde_json::json;
+
+    let input = json!({
+        "url": "https://api.example.com",
+        "api_key": "sk-super-secret",
+        "token": "bearer-abc123",
+        "password": "hunter2",
+        "username": "alice",
+        "nested": {
+            "secret": "shh",
+            "data": "safe"
+        }
+    });
+
+    let output = redact_credentials(&input);
+
+    assert_eq!(output["url"], "https://api.example.com");
+    assert_eq!(output["username"], "alice");
+    assert_eq!(output["api_key"], "[REDACTED]");
+    assert_eq!(output["token"], "[REDACTED]");
+    assert_eq!(output["password"], "[REDACTED]");
+    assert_eq!(output["nested"]["secret"], "[REDACTED]");
+    assert_eq!(output["nested"]["data"], "safe");
+}

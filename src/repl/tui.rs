@@ -30,6 +30,36 @@ use tokio::task::JoinHandle;
 const MAX_CONTEXT_MESSAGES: usize = 80;
 const CTRL_C_EXIT_WINDOW: Duration = Duration::from_millis(1500);
 
+/// Walks a JSON value and replaces values whose keys match common credential
+/// patterns with `"[REDACTED]"`. Works recursively for nested objects.
+pub fn redact_credentials(v: &serde_json::Value) -> serde_json::Value {
+    const SENSITIVE: &[&str] = &[
+        "password", "token", "secret", "api_key", "apikey",
+        "authorization", "auth", "key", "credential", "private_key",
+    ];
+
+    match v {
+        serde_json::Value::Object(map) => {
+            let redacted: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, val)| {
+                    let lower = k.to_lowercase();
+                    if SENSITIVE.iter().any(|s| lower.contains(s)) {
+                        (k.clone(), serde_json::Value::String("[REDACTED]".to_string()))
+                    } else {
+                        (k.clone(), redact_credentials(val))
+                    }
+                })
+                .collect();
+            serde_json::Value::Object(redacted)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(redact_credentials).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 /// A single quick-action option in the contextual action bar.
 #[derive(Clone)]
 struct QuickAction {
@@ -257,6 +287,8 @@ struct PendingWriteConfirm {
 /// REPL UI state.
 pub struct ReplApp {
     pub session_id: String,
+    /// Most recent execution_id returned by a tool call in this session.
+    pub last_run_id: Option<String>,
     pub model: String,
     pub workflow_count: usize,
     pub input: String,
@@ -331,6 +363,7 @@ impl ReplApp {
             writes_armed: false,
             operator_mode: false,
             pending_write_confirm: None,
+            last_run_id: None,
         }
     }
 
@@ -2368,24 +2401,31 @@ pub async fn run_repl_tui(
             match event {
                 ReplEvent::Stream(update) => {
                     if let StreamUpdate::ToolCallStart { name, args } = &update {
+                        let redacted_args = redact_credentials(args);
                         storage
                             .save_repl_message(
                                 &app.session_id,
                                 "tool_call",
-                                &json!({"name": name, "args": args}).to_string(),
+                                &json!({"name": name, "args": redacted_args}).to_string(),
                                 None,
-                                None,
+                                None, // run_id not yet known at call-start time
                             )
                             .await?;
                     }
                     if let StreamUpdate::ToolCallResult { name, result } = &update {
+                        // Extract execution_id from tool result if present, store for correlation.
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(result) {
+                            if let Some(exec_id) = parsed.get("execution_id").and_then(|v| v.as_str()) {
+                                app.last_run_id = Some(exec_id.to_string());
+                            }
+                        }
                         storage
                             .save_repl_message(
                                 &app.session_id,
                                 "tool_result",
                                 &json!({"name": name, "result": result}).to_string(),
                                 None,
-                                None,
+                                app.last_run_id.as_deref(),
                             )
                             .await?;
                     }
@@ -2416,7 +2456,7 @@ pub async fn run_repl_tui(
                             msg.text = compact.clone();
                         }
                         storage
-                            .save_repl_message(&app.session_id, "assistant", &compact, None, None)
+                            .save_repl_message(&app.session_id, "assistant", &compact, None, app.last_run_id.as_deref())
                             .await?;
                     }
                     if let Some(card) = build_result_card(&app) {
