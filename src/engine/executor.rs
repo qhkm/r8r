@@ -1207,7 +1207,7 @@ impl Executor {
                                 "Approval node '{}' requires approval, pausing execution {}",
                                 node_id, execution_id
                             );
-                            execution.status = ExecutionStatus::Paused;
+                            execution.status = ExecutionStatus::WaitingForApproval;
                             execution.output = Some(last_output.clone());
                             execution.finished_at = Some(Utc::now());
                             self.storage.save_execution(&execution).await?;
@@ -2059,7 +2059,7 @@ impl Executor {
                                 "Approval node '{}' requires approval, pausing resumed execution {}",
                                 node_id, execution_id
                             );
-                            execution.status = ExecutionStatus::Paused;
+                            execution.status = ExecutionStatus::WaitingForApproval;
                             execution.output = Some(last_output.clone());
                             execution.finished_at = Some(Utc::now());
                             self.storage.save_execution(&execution).await?;
@@ -2463,9 +2463,12 @@ impl Executor {
             .await?
             .ok_or_else(|| Error::Execution(format!("Execution not found: {}", execution_id)))?;
 
-        if original.status != ExecutionStatus::Paused {
+        if !matches!(
+            original.status,
+            ExecutionStatus::Paused | ExecutionStatus::WaitingForApproval
+        ) {
             return Err(Error::Execution(format!(
-                "Cannot resume execution '{}': status is '{}', expected 'paused'",
+                "Cannot resume execution '{}': status is '{}', expected 'paused' or 'waiting_for_approval'",
                 execution_id, original.status
             )));
         }

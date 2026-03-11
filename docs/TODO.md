@@ -211,8 +211,6 @@ Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style
 - [ ] Warm pools — pre-started containers/VMs for sub-100ms cold starts (backlogged)
 - [ ] Firecracker guest agent reference implementation
 - [ ] WASM backend (`sandbox-wasm`) — for trusted, high-frequency tool execution
-- [ ] Firecracker guest agent reference implementation
-- [ ] WASM backend (`sandbox-wasm`) — for trusted, high-frequency tool execution
 
 ### Scalability
 - [ ] Distributed execution (multiple workers)
@@ -253,7 +251,7 @@ The following features are intentionally **not** on the roadmap to maintain r8r'
 We welcome contributions! Pick an item from "Planned" or "Backlog" and open an issue to discuss before starting work.
 
 Priority areas (next):
-1. Approval delegation — route to specific users/groups
-2. Sandbox v2 — file artifacts, warm pools, streaming output
-3. Scalability — PostgreSQL backend, distributed workers, Redis job queue
+1. New node types — discord, telegram, google-sheets
+2. New triggers — Kafka, SQS/SNS
+3. Scalability — distributed workers, Redis job queue
 4. Enterprise — multi-tenancy, RBAC, SSO
