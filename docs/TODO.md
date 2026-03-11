@@ -148,7 +148,7 @@ Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style
 - [x] `r8r prompt` wrapper over create/refine with `--patch`, `--emit`, `--dry-run`, `--yes`, `--json`
 - [x] `r8r run` review screen on TTY with side-effect node summary before execution
 - [x] Fail-closed non-interactive behavior when `waiting_for_approval` — exits with code `42`
-- [ ] Add tests + docs for new prompt/run flags and non-interactive exit semantics
+- [x] Add tests + docs for new prompt/run flags and non-interactive exit semantics
 
 **Sprint 2 ✅ Complete**
 - [x] Add `r8r runs pending`, `r8r runs show <run_id>`, `r8r runs export <run_id> --format jsonl`
