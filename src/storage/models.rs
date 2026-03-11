@@ -215,5 +215,7 @@ pub struct ReplMessage {
     pub role: String,
     pub content: String,
     pub token_count: Option<i64>,
+    pub run_id: Option<String>,   // which execution triggered this message
+    pub redacted: bool,           // true if credential fields were redacted
     pub created_at: DateTime<Utc>,
 }

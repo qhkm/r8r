@@ -1058,17 +1058,20 @@ impl Storage for PostgresStorage {
         role: &str,
         content: &str,
         token_count: Option<i64>,
+        run_id: Option<&str>,
     ) -> Result<()> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
         sqlx::query(
-            "INSERT INTO repl_messages (id, session_id, role, content, token_count, created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+            "INSERT INTO repl_messages (id, session_id, role, content, token_count, run_id, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)",
         )
         .bind(&id)
         .bind(session_id)
         .bind(role)
         .bind(content)
         .bind(token_count)
+        .bind(run_id)
         .bind(now)
         .execute(&self.pool)
         .await

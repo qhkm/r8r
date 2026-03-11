@@ -2374,6 +2374,7 @@ pub async fn run_repl_tui(
                                 "tool_call",
                                 &json!({"name": name, "args": args}).to_string(),
                                 None,
+                                None,
                             )
                             .await?;
                     }
@@ -2383,6 +2384,7 @@ pub async fn run_repl_tui(
                                 &app.session_id,
                                 "tool_result",
                                 &json!({"name": name, "result": result}).to_string(),
+                                None,
                                 None,
                             )
                             .await?;
@@ -2414,7 +2416,7 @@ pub async fn run_repl_tui(
                             msg.text = compact.clone();
                         }
                         storage
-                            .save_repl_message(&app.session_id, "assistant", &compact, None)
+                            .save_repl_message(&app.session_id, "assistant", &compact, None, None)
                             .await?;
                     }
                     if let Some(card) = build_result_card(&app) {
@@ -2583,7 +2585,7 @@ pub async fn run_repl_tui(
                                 app.turn_outcome = TurnOutcome::default();
                                 app.tool_start_times.clear();
                                 app.push_message(MessageKind::User, original.clone());
-                                let _ = storage.save_repl_message(&app.session_id, "user", &original, None).await;
+                                let _ = storage.save_repl_message(&app.session_id, "user", &original, None, None).await;
                                 let Some(config) = active_llm_config.clone() else {
                                     app.push_message(MessageKind::Error, "LLM is not configured.");
                                     continue;
@@ -2631,7 +2633,7 @@ pub async fn run_repl_tui(
                                 app.tool_start_times.clear();
                                 app.push_message(MessageKind::User, text.clone());
                                 storage
-                                    .save_repl_message(&app.session_id, "user", &text, None)
+                                    .save_repl_message(&app.session_id, "user", &text, None, None)
                                     .await?;
 
                                 if app

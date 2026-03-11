@@ -135,6 +135,7 @@ pub trait Storage: Send + Sync + 'static {
         role: &str,
         content: &str,
         token_count: Option<i64>,
+        run_id: Option<&str>,
     ) -> Result<()>;
     async fn list_repl_messages(&self, session_id: &str, limit: usize) -> Result<Vec<ReplMessage>>;
     async fn save_repl_llm_config(&self, config: &LlmConfig) -> Result<()>;
@@ -328,8 +329,9 @@ impl<S: Storage + ?Sized> Storage for std::sync::Arc<S> {
         role: &str,
         content: &str,
         token_count: Option<i64>,
+        run_id: Option<&str>,
     ) -> Result<()> {
-        (**self).save_repl_message(session_id, role, content, token_count).await
+        (**self).save_repl_message(session_id, role, content, token_count, run_id).await
     }
     async fn list_repl_messages(&self, session_id: &str, limit: usize) -> Result<Vec<ReplMessage>> {
         (**self).list_repl_messages(session_id, limit).await
