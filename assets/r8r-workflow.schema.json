@@ -1,0 +1,450 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://r8r.dev/schemas/workflow.json",
+  "title": "r8r Workflow",
+  "description": "Schema for r8r workflow YAML files. Reference: https://r8r.dev/docs/workflows",
+  "type": "object",
+  "required": ["name", "nodes"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Unique workflow identifier used in CLI and API calls.",
+      "pattern": "^[a-z0-9][a-z0-9\\-_]*$",
+      "examples": ["send-welcome-email", "nightly-report"]
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what this workflow does.",
+      "default": ""
+    },
+    "version": {
+      "type": "integer",
+      "description": "Version number incremented on each save. Managed automatically.",
+      "default": 1,
+      "minimum": 1
+    },
+    "triggers": {
+      "type": "array",
+      "description": "Events that start this workflow automatically.",
+      "items": { "$ref": "#/$defs/Trigger" },
+      "default": []
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Named input parameters for the workflow. Access in nodes via {{ input.param_name }}.",
+      "additionalProperties": { "$ref": "#/$defs/InputDefinition" },
+      "default": {}
+    },
+    "input_schema": {
+      "type": "object",
+      "description": "Full JSON Schema for validating workflow input. Use instead of (or alongside) 'inputs' for complex validation.",
+      "$comment": "Validates the input object passed when running the workflow."
+    },
+    "variables": {
+      "type": "object",
+      "description": "Workflow-level constants. Access in nodes via {{ variables.name }}.",
+      "default": {}
+    },
+    "depends_on_workflows": {
+      "type": "array",
+      "description": "Other workflows that must succeed before this one can run.",
+      "items": { "$ref": "#/$defs/WorkflowDependency" },
+      "default": []
+    },
+    "nodes": {
+      "type": "array",
+      "description": "Ordered list of steps (nodes) in the workflow.",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Node" }
+    },
+    "settings": {
+      "$ref": "#/$defs/WorkflowSettings",
+      "description": "Global execution settings for this workflow.",
+      "default": {}
+    }
+  },
+
+  "$defs": {
+    "InputDefinition": {
+      "type": "object",
+      "description": "A typed input parameter declaration.",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["string", "number", "integer", "boolean", "object", "array"],
+          "description": "JSON type of the parameter."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description shown in discovery.",
+          "default": ""
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether this input must be provided.",
+          "default": false
+        },
+        "default": {
+          "description": "Default value used when not provided."
+        }
+      }
+    },
+
+    "WorkflowDependency": {
+      "type": "object",
+      "description": "Declares that another workflow must complete before this one starts.",
+      "required": ["workflow"],
+      "additionalProperties": false,
+      "properties": {
+        "workflow": {
+          "type": "string",
+          "description": "Name of the workflow this one depends on."
+        },
+        "require_success": {
+          "type": "boolean",
+          "description": "If true, this workflow only runs if the dependency succeeded.",
+          "default": true
+        }
+      }
+    },
+
+    "Trigger": {
+      "type": "object",
+      "description": "An event source that starts the workflow.",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["cron", "manual", "webhook", "event"],
+          "description": "Trigger type."
+        }
+      },
+      "oneOf": [
+        { "$ref": "#/$defs/CronTrigger" },
+        { "$ref": "#/$defs/ManualTrigger" },
+        { "$ref": "#/$defs/WebhookTrigger" },
+        { "$ref": "#/$defs/EventTrigger" }
+      ]
+    },
+
+    "CronTrigger": {
+      "type": "object",
+      "required": ["type", "schedule"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "const": "cron" },
+        "schedule": {
+          "type": "string",
+          "description": "Cron expression (UTC). Example: '*/5 * * * *' runs every 5 minutes.",
+          "examples": ["0 9 * * 1-5", "*/15 * * * *", "0 0 * * *"]
+        },
+        "timezone": {
+          "type": "string",
+          "description": "IANA timezone override. Default: UTC.",
+          "examples": ["America/New_York", "Europe/London"]
+        }
+      }
+    },
+
+    "ManualTrigger": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "const": "manual" }
+      }
+    },
+
+    "WebhookTrigger": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "const": "webhook" },
+        "path": {
+          "type": "string",
+          "description": "Custom URL path. Default: /webhooks/{workflow_name}.",
+          "examples": ["/hooks/github", "/webhooks/stripe"]
+        },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+          "description": "Expected HTTP method. Default: POST.",
+          "default": "POST"
+        },
+        "response_mode": {
+          "type": "string",
+          "enum": ["full", "output", "wait_for_result"],
+          "description": "'full' returns execution metadata (default). 'output'/'wait_for_result' returns the workflow output synchronously.",
+          "default": "full"
+        },
+        "debounce": {
+          "$ref": "#/$defs/DebounceConfig",
+          "description": "Deduplicate rapid incoming events."
+        },
+        "header_filter": {
+          "type": "array",
+          "description": "Only trigger if incoming headers match these rules.",
+          "items": { "$ref": "#/$defs/HeaderFilter" }
+        }
+      }
+    },
+
+    "EventTrigger": {
+      "type": "object",
+      "required": ["type", "event"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "const": "event" },
+        "event": {
+          "type": "string",
+          "description": "Event name to subscribe to (Redis pub/sub channel or internal event)."
+        },
+        "filter": {
+          "type": "string",
+          "description": "Rhai expression to filter event data. Only trigger if expression evaluates to true."
+        },
+        "json_path": {
+          "type": "string",
+          "description": "JSONPath filter expression applied to the event payload.",
+          "examples": ["$.repository.id", "$.pull_request.state"]
+        },
+        "delay": {
+          "type": "integer",
+          "description": "Seconds to wait before processing the event.",
+          "minimum": 0
+        },
+        "routing": {
+          "type": "array",
+          "description": "Conditional routing rules — trigger different workflows based on event content.",
+          "items": { "$ref": "#/$defs/EventRouting" }
+        }
+      }
+    },
+
+    "DebounceConfig": {
+      "type": "object",
+      "required": ["key"],
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Template expression for the dedup key. Example: '{{ input.repository.id }}'."
+        },
+        "wait_seconds": {
+          "type": "integer",
+          "description": "Seconds to wait after the last event before triggering. Default: 5.",
+          "default": 5,
+          "minimum": 1
+        },
+        "max_wait_seconds": {
+          "type": "integer",
+          "description": "Maximum total wait time before forcing a trigger. Default: 60.",
+          "default": 60,
+          "minimum": 1
+        }
+      }
+    },
+
+    "HeaderFilter": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "HTTP header name to inspect." },
+        "value": { "type": "string", "description": "Expected exact value." },
+        "pattern": { "type": "string", "description": "Regex pattern to match against header value." },
+        "required": {
+          "type": "boolean",
+          "description": "Reject the request if this header is missing.",
+          "default": false
+        }
+      }
+    },
+
+    "EventRouting": {
+      "type": "object",
+      "required": ["condition", "target_workflow"],
+      "additionalProperties": false,
+      "properties": {
+        "condition": { "type": "string", "description": "Rhai expression. If true, target_workflow is triggered." },
+        "target_workflow": { "type": "string", "description": "Workflow name to trigger." }
+      }
+    },
+
+    "Node": {
+      "type": "object",
+      "description": "A single step in the workflow.",
+      "required": ["id", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique node identifier within this workflow. Referenced in depends_on.",
+          "pattern": "^[a-z0-9][a-z0-9\\-_]*$"
+        },
+        "type": {
+          "type": "string",
+          "description": "Node type — determines what this step does.",
+          "enum": [
+            "http", "transform", "agent", "approval", "debug", "variables",
+            "template", "circuit_breaker", "wait", "switch", "filter", "sort",
+            "limit", "set", "aggregate", "split", "crypto", "datetime", "dedupe",
+            "summarize", "if", "subworkflow", "sandbox"
+          ]
+        },
+        "config": {
+          "type": "object",
+          "description": "Node-specific configuration. Shape depends on 'type'.",
+          "default": {}
+        },
+        "depends_on": {
+          "type": "array",
+          "description": "Node IDs that must complete before this node runs.",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "for_each": {
+          "type": "boolean",
+          "description": "Run this node once per item in the input array.",
+          "default": false
+        },
+        "condition": {
+          "type": "string",
+          "description": "Rhai expression. Node is skipped if this evaluates to false.",
+          "examples": ["input.status == 'active'", "nodes.fetch.output.count > 0"]
+        },
+        "retry": {
+          "$ref": "#/$defs/RetryConfig",
+          "description": "Retry policy on node failure."
+        },
+        "on_error": {
+          "$ref": "#/$defs/ErrorConfig",
+          "description": "How to handle node failures."
+        },
+        "pinned_data": {
+          "description": "Testing: when set, this value is used as node output instead of executing the node.",
+          "examples": [{"status": 200, "body": {"id": 42}}]
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "description": "Per-node timeout override in seconds.",
+          "minimum": 1
+        }
+      }
+    },
+
+    "RetryConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "description": "Maximum number of retry attempts (not counting the initial attempt).",
+          "default": 3,
+          "minimum": 1
+        },
+        "delay_seconds": {
+          "type": "integer",
+          "description": "Base delay between retries in seconds.",
+          "default": 1,
+          "minimum": 0
+        },
+        "backoff": {
+          "type": "string",
+          "enum": ["fixed", "linear", "exponential"],
+          "description": "Delay growth strategy. 'fixed' = same delay each time, 'linear' = delay * attempt, 'exponential' = delay^attempt.",
+          "default": "fixed"
+        },
+        "max_delay_seconds": {
+          "type": "integer",
+          "description": "Cap on retry delay to prevent unbounded waits.",
+          "minimum": 1
+        },
+        "jitter": {
+          "type": "boolean",
+          "description": "Add ±25% random jitter to delay to prevent thundering herd.",
+          "default": false
+        }
+      }
+    },
+
+    "ErrorConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "continue": {
+          "type": "boolean",
+          "description": "Continue workflow even if this node fails. Equivalent to action: continue.",
+          "default": false
+        },
+        "action": {
+          "type": "string",
+          "enum": ["fail", "continue", "skip", "fallback"],
+          "description": "'fail' = abort workflow. 'continue' = proceed with null output. 'skip' = same as continue. 'fallback' = use fallback_value or fallback_node."
+        },
+        "fallback_value": {
+          "description": "Static value to use as this node's output when action is 'fallback'."
+        },
+        "fallback_node": {
+          "type": "string",
+          "description": "Node ID to execute as a fallback when this node fails (requires action: fallback)."
+        }
+      }
+    },
+
+    "WorkflowSettings": {
+      "type": "object",
+      "description": "Global execution settings.",
+      "additionalProperties": false,
+      "properties": {
+        "timeout_seconds": {
+          "type": "integer",
+          "description": "Maximum total execution time in seconds. Default: 300 (5 minutes).",
+          "default": 300,
+          "minimum": 1
+        },
+        "max_concurrency": {
+          "type": "integer",
+          "description": "Maximum number of nodes running in parallel. Default: 10.",
+          "default": 10,
+          "minimum": 1
+        },
+        "store_traces": {
+          "type": "boolean",
+          "description": "Persist per-node execution records. Disable for high-throughput workflows to save I/O.",
+          "default": true
+        },
+        "chunk_size": {
+          "type": "integer",
+          "description": "Batch size for for_each processing. 0 = process all items at once.",
+          "default": 0,
+          "minimum": 0
+        },
+        "max_for_each_items": {
+          "type": "integer",
+          "description": "Max items in a for_each loop to prevent memory exhaustion. Default: 10000.",
+          "default": 10000,
+          "minimum": 1
+        },
+        "error_workflow": {
+          "type": "string",
+          "description": "Name of workflow to run when this workflow fails. Receives error context as input."
+        },
+        "debug": {
+          "type": "boolean",
+          "description": "Capture full input/output for every node. Useful during development.",
+          "default": false
+        },
+        "enable_checkpoints": {
+          "type": "boolean",
+          "description": "Persist state after each node for crash recovery. Disable for short-lived latency-sensitive workflows.",
+          "default": true
+        }
+      }
+    }
+  }
+}
