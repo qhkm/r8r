@@ -162,8 +162,13 @@ impl PostgresStorage {
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
                 token_count BIGINT,
+                run_id TEXT,
+                redacted BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TIMESTAMPTZ NOT NULL
             );
+
+            CREATE INDEX IF NOT EXISTS idx_repl_messages_session ON repl_messages(session_id, created_at ASC);
+            CREATE INDEX IF NOT EXISTS idx_repl_messages_run_id ON repl_messages(run_id);
 
             CREATE TABLE IF NOT EXISTS repl_llm_config (
                 id INTEGER PRIMARY KEY DEFAULT 1,
