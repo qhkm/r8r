@@ -38,6 +38,7 @@ pub enum ExecutionStatus {
     Failed,
     Cancelled,
     Paused,
+    WaitingForApproval,
 }
 
 impl std::fmt::Display for ExecutionStatus {
@@ -49,6 +50,7 @@ impl std::fmt::Display for ExecutionStatus {
             Self::Failed => write!(f, "failed"),
             Self::Cancelled => write!(f, "cancelled"),
             Self::Paused => write!(f, "paused"),
+            Self::WaitingForApproval => write!(f, "waiting_for_approval"),
         }
     }
 }
@@ -64,6 +66,7 @@ impl std::str::FromStr for ExecutionStatus {
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
             "paused" => Ok(Self::Paused),
+            "waiting_for_approval" => Ok(Self::WaitingForApproval),
             _ => Err(format!("Unknown status: {}", s)),
         }
     }
