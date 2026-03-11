@@ -1052,6 +1052,10 @@ impl Storage for PostgresStorage {
         Ok(())
     }
 
+    // NOTE: run_id and redacted columns require a manual migration:
+    // ALTER TABLE repl_messages ADD COLUMN IF NOT EXISTS run_id TEXT;
+    // ALTER TABLE repl_messages ADD COLUMN IF NOT EXISTS redacted BOOLEAN NOT NULL DEFAULT FALSE;
+    // CREATE INDEX IF NOT EXISTS idx_repl_messages_run_id ON repl_messages(run_id);
     async fn save_repl_message(
         &self,
         session_id: &str,
@@ -1087,7 +1091,7 @@ impl Storage for PostgresStorage {
 
     async fn list_repl_messages(&self, session_id: &str, limit: usize) -> Result<Vec<ReplMessage>> {
         let rows = sqlx::query(
-            "SELECT id, session_id, role, content, token_count, created_at
+            "SELECT id, session_id, role, content, token_count, run_id, redacted, created_at
              FROM repl_messages WHERE session_id = $1 ORDER BY created_at ASC LIMIT $2",
         )
         .bind(session_id)
@@ -1103,6 +1107,8 @@ impl Storage for PostgresStorage {
                     role: r.try_get("role").map_err(sqlx_err)?,
                     content: r.try_get("content").map_err(sqlx_err)?,
                     token_count: r.try_get("token_count").ok().flatten(),
+                    run_id: r.try_get("run_id").ok(),
+                    redacted: r.try_get::<bool, _>("redacted").unwrap_or(false),
                     created_at: r.try_get("created_at").map_err(sqlx_err)?,
                 })
             })
