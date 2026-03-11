@@ -2483,7 +2483,7 @@ async fn cmd_run(
         .await?;
 
     // Fail-closed: non-interactive + waiting_for_approval → exit 42
-    if execution.status.to_string() == "waiting_for_approval" && !is_interactive() {
+    if r8r::should_exit_42(&execution.status.to_string(), is_interactive()) {
         eprintln!(
             "Execution {} requires human approval. Exiting with code 42 (non-interactive).",
             execution.id

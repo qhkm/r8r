@@ -265,6 +265,19 @@ impl SqliteStorage {
         Self::ensure_execution_trace_columns(conn)?;
         Self::ensure_approval_delegation_columns(conn)?;
         Self::repair_orphans(conn)?;
+        // Migration: add run_id and redacted to repl_messages (idempotent)
+        let _ = conn.execute(
+            "ALTER TABLE repl_messages ADD COLUMN run_id TEXT",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE repl_messages ADD COLUMN redacted INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repl_messages_run_id ON repl_messages(run_id)",
+            [],
+        );
         Ok(())
     }
 
@@ -1436,14 +1449,15 @@ impl SqliteStorage {
         role: &str,
         content: &str,
         token_count: Option<i64>,
+        run_id: Option<&str>,
     ) -> Result<()> {
         let conn = self.conn.lock().await;
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO repl_messages (id, session_id, role, content, token_count, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, session_id, role, content, token_count, now],
+            "INSERT INTO repl_messages (id, session_id, role, content, token_count, run_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, session_id, role, content, token_count, run_id, now],
         )?;
         conn.execute(
             "UPDATE repl_sessions SET updated_at = ?1 WHERE id = ?2",
@@ -1460,7 +1474,7 @@ impl SqliteStorage {
     ) -> Result<Vec<ReplMessage>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, content, token_count, created_at
+            "SELECT id, session_id, role, content, token_count, run_id, redacted, created_at
              FROM repl_messages
              WHERE session_id = ?1
              ORDER BY created_at ASC
@@ -1632,7 +1646,12 @@ impl SqliteStorage {
             role: row.get(2)?,
             content: row.get(3)?,
             token_count: row.get(4)?,
-            created_at: parse_datetime_utc(&row.get::<_, String>(5)?)?,
+            run_id: row.get(5)?,
+            redacted: row.get::<_, i64>(6).unwrap_or(0) != 0,
+            created_at: {
+                let s: String = row.get(7)?;
+                s.parse().unwrap_or_else(|_| Utc::now())
+            },
         })
     }
 
@@ -1913,8 +1932,9 @@ impl super::Storage for SqliteStorage {
         role: &str,
         content: &str,
         token_count: Option<i64>,
+        run_id: Option<&str>,
     ) -> crate::error::Result<()> {
-        SqliteStorage::save_repl_message(self, session_id, role, content, token_count).await
+        SqliteStorage::save_repl_message(self, session_id, role, content, token_count, run_id).await
     }
     async fn list_repl_messages(&self, session_id: &str, limit: usize) -> crate::error::Result<Vec<super::models::ReplMessage>> {
         SqliteStorage::list_repl_messages(self, session_id, limit).await

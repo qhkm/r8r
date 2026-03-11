@@ -21,11 +21,11 @@ async fn test_save_and_list_repl_messages() {
     let session_id = storage.create_repl_session("gpt-4o").await.unwrap();
 
     storage
-        .save_repl_message(&session_id, "user", "hello", None)
+        .save_repl_message(&session_id, "user", "hello", None, None)
         .await
         .unwrap();
     storage
-        .save_repl_message(&session_id, "assistant", "hi there!", None)
+        .save_repl_message(&session_id, "assistant", "hi there!", None, None)
         .await
         .unwrap();
 
@@ -91,4 +91,63 @@ async fn test_save_and_get_repl_llm_config() {
     assert_eq!(loaded.temperature, Some(0.2));
     assert_eq!(loaded.max_tokens, Some(2048));
     assert_eq!(loaded.timeout_seconds, 90);
+}
+
+#[tokio::test]
+async fn repl_message_stores_run_id() {
+    use r8r::storage::SqliteStorage;
+    let db = SqliteStorage::open_in_memory().unwrap();
+    let sess_id = db.create_repl_session("test-model").await.unwrap();
+    db.save_repl_message(&sess_id, "user", "hello", None, Some("exec-abc"))
+        .await
+        .unwrap();
+    let msgs = db.list_repl_messages(&sess_id, 10).await.unwrap();
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].run_id.as_deref(), Some("exec-abc"));
+}
+
+#[tokio::test]
+async fn repl_message_run_id_defaults_to_none() {
+    use r8r::storage::SqliteStorage;
+    let db = SqliteStorage::open_in_memory().unwrap();
+    let sess_id = db.create_repl_session("test-model").await.unwrap();
+    db.save_repl_message(&sess_id, "user", "hello", None, None)
+        .await
+        .unwrap();
+    let msgs = db.list_repl_messages(&sess_id, 10).await.unwrap();
+    assert_eq!(msgs[0].run_id, None);
+}
+
+#[test]
+fn redact_credentials_replaces_sensitive_keys() {
+    use r8r::repl::tui::redact_credentials;
+    use serde_json::json;
+
+    let input = json!({
+        "url": "https://api.example.com",
+        "api_key": "sk-super-secret",
+        "token": "bearer-abc123",
+        "password": "hunter2",
+        "username": "alice",
+        "nested": {
+            "secret": "shh",
+            "data": "safe"
+        }
+    });
+
+    let output = redact_credentials(&input);
+
+    assert_eq!(output["url"], "https://api.example.com");
+    assert_eq!(output["username"], "alice");
+    assert_eq!(output["api_key"], "[REDACTED]");
+    assert_eq!(output["token"], "[REDACTED]");
+    assert_eq!(output["password"], "[REDACTED]");
+    assert_eq!(output["nested"]["secret"], "[REDACTED]");
+    assert_eq!(output["nested"]["data"], "safe");
+
+    // Verify S3-style "key" field is NOT redacted (bare "key" was removed from sensitive list)
+    let s3_input = serde_json::json!({"key": "path/to/object.txt", "bucket": "my-bucket"});
+    let s3_output = redact_credentials(&s3_input);
+    assert_eq!(s3_output["key"], "path/to/object.txt", "bare 'key' field should not be redacted");
+    assert_eq!(s3_output["bucket"], "my-bucket");
 }

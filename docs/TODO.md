@@ -148,7 +148,7 @@ Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style
 - [x] `r8r prompt` wrapper over create/refine with `--patch`, `--emit`, `--dry-run`, `--yes`, `--json`
 - [x] `r8r run` review screen on TTY with side-effect node summary before execution
 - [x] Fail-closed non-interactive behavior when `waiting_for_approval` — exits with code `42`
-- [ ] Add tests + docs for new prompt/run flags and non-interactive exit semantics
+- [x] Add tests + docs for new prompt/run flags and non-interactive exit semantics
 
 **Sprint 2 ✅ Complete**
 - [x] Add `r8r runs pending`, `r8r runs show <run_id>`, `r8r runs export <run_id> --format jsonl`
@@ -185,13 +185,13 @@ Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style
 - [x] Add side-effect summary panel before any write-capable run (write-gate confirmation)
 - [x] Add `/arm` with session TTL (default disarmed — safe mode)
 - [x] Add type-to-confirm (yes/no) approval for write-intent inputs when disarmed
-- [ ] Persist transcript-to-run correlation (`session_id`, `run_id`, tool calls redacted)
+- [x] Persist transcript-to-run correlation (`session_id`, `run_id`, tool calls redacted)
 - [ ] Add fail-closed non-interactive behavior parity for approval-required runs (exit `42`)
 
 **Operator mode (optional/escalated)**
 - [x] Add `/operator [on|off]` toggle command — shows arm state in status bar
 - [x] Show write arm state prominently when operator mode is on
-- [ ] Require stricter confirms only in operator mode or high-risk paths
+- [ ] Require stricter confirms only in operator mode or high-risk paths — **deferred**: arm/disarm mechanic is sufficient; revisit when destructive bulk ops exist
 
 ## Backlog
 
