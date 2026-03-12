@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">r8r</h1>
   <p align="center">
-    <em>Pronounced "rater" • The agent-native workflow automation engine</em>
+    <em>Pronounced "rater" — The agent-native workflow automation engine</em>
   </p>
 </p>
 
@@ -9,34 +9,40 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License: AGPL v3"></a>
   <a href="https://github.com/qhkm/r8r"><img src="https://img.shields.io/badge/rust-1.70+-orange.svg" alt="Rust"></a>
   <img src="https://img.shields.io/badge/status-beta-yellow.svg" alt="Status: Beta">
+  <img src="https://img.shields.io/badge/binary-~15MB-brightgreen.svg" alt="Binary: ~15MB">
 </p>
 
-> ⚠️ **Beta Software**: r8r is under active development. APIs may change between versions. Not recommended for production workloads yet. We welcome feedback and contributions!
+> **Beta Software**: r8r is under active development. APIs may change between versions. Not recommended for production workloads yet. We welcome feedback and contributions!
 
 ---
 
-**r8r** (r-eight-r → rater) is an agent-native workflow automation engine written in Rust.
+**r8r** is an agent-native workflow automation engine written in Rust. While tools like n8n and Zapier were built for humans clicking through visual editors, r8r was built for the AI age — where agents need to create, execute, and orchestrate workflows programmatically. 15MB binary. 50ms cold start. Cloud to edge.
 
-While tools like n8n and Zapier were built for humans clicking through visual editors, r8r was built for the AI age — where agents need to create, execute, and orchestrate workflows programmatically.
+## Why r8r
 
-**Why not just let AI do everything?** Tools that route every step through an LLM burn tokens on tasks that don't need intelligence — HTTP calls, JSON parsing, conditional routing. r8r uses deterministic nodes for deterministic work and only calls the LLM when you actually need reasoning. The result: same automation, a fraction of the token cost.
+**Don't burn LLM tokens on deterministic steps.** Tools that route every step through an LLM spend money on tasks that don't need intelligence — HTTP calls, JSON parsing, conditional routing. r8r uses deterministic nodes for deterministic work and only calls the LLM when you actually need reasoning.
 
 ```
 Fully agentic:  LLM token on every step  →  $$$
 r8r:            LLM only where needed    →  $
 ```
 
-## ✨ What Makes r8r Different
+**Runs on anything.** A single static binary with ~15MB RAM footprint and ~50ms cold start. No JVM, no Node.js runtime, no container orchestrator required. Deploy on a cloud VM, a Raspberry Pi, an NVIDIA Jetson, or an industrial gateway — the same binary works everywhere.
+
+**Local AI reasoning.** Call OpenAI, Anthropic, Ollama, or any OpenAI-compatible LLM from within your workflows. Run Ollama on the same edge device for fully offline intelligent automation — no cloud round-trips, no token bills.
+
+## What Makes r8r Different
 
 | Traditional Tools | r8r |
 |------------------|-----|
-| 🖱️ Visual drag-and-drop | 📝 LLM-friendly YAML |
-| 🐘 Heavy (500MB+ RAM) | 🦀 Lightweight (~15MB RAM) |
-| 🐌 Slow startup | ⚡ ~50ms cold start |
-| 🔒 Locked in database | 📂 Git-friendly files |
-| 🧑 Built for humans | 🤖 Agent-native |
+| Visual drag-and-drop | LLM-friendly YAML |
+| Heavy (500MB+ RAM) | Lightweight (~15MB RAM) |
+| Cloud-only | Cloud to edge |
+| Slow startup | ~50ms cold start |
+| Locked in database | Git-friendly files |
+| Built for humans clicking | Built for AI agents and developers |
 
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
 # Install
@@ -64,11 +70,31 @@ curl -X POST localhost:3000/api/workflows/hello-world/execute \
 # Guided workflow studio: http://localhost:3000/editor
 ```
 
-## 🤖 Agent-Native
+## Deployment Modes
 
-### Agent as a Node Type
+### Cloud / Server Mode
 
-The `agent` node lets you drop AI reasoning into any workflow — call OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint directly. Use AI where you need it, skip it where you don't.
+Run `r8r server` for the full-featured automation server — REST API, web dashboard, MCP server, webhooks, cron triggers, and credential management.
+
+```bash
+r8r server --workflows ./workflows --port 3000
+```
+
+This is the primary mode today. Supports SQLite (default) or PostgreSQL (`--features storage-postgres`) for execution history and state.
+
+### Edge / Runner Mode (Coming Soon)
+
+`r8r-runner` — a lightweight daemon designed for edge devices. Pulls workflow definitions from a central server or local directory, executes them offline, and syncs results when connectivity is available.
+
+- **Offline-safe**: SQLite-backed execution with store-and-forward
+- **Fleet management**: Central dashboard to deploy workflows to hundreds of edge nodes
+- **Minimal footprint**: Same ~15MB binary, same ~15MB RAM
+
+See [Runner Plan](docs/RUNNER_PLAN.md) for the roadmap.
+
+## AI-Powered Workflows
+
+The `agent` node drops AI reasoning into any workflow — call OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint directly. Use AI where you need it, skip it where you don't.
 
 ```yaml
 name: order-processor
@@ -86,7 +112,7 @@ nodes:
       model: gpt-4o
       prompt: "Is this order fraudulent? {{ nodes.fetch-order.output }}"
       response_format: json
-      json_schema:                         # validate AI output structure
+      json_schema:
         type: object
         required: [verdict, confidence]
         properties:
@@ -111,23 +137,24 @@ The agent node gets the same durability as every other node — retries, checkpo
 
 **Supported providers:**
 
-| Provider | Config | Credential |
-|----------|--------|------------|
-| OpenAI | `provider: openai` | `credential: openai` |
-| Anthropic | `provider: anthropic` | `credential: anthropic` |
-| Ollama | `provider: ollama` | None (local) |
-| Custom | `provider: custom` + `endpoint: ...` | `credential: ...` |
+| Provider | Config | Credential | Edge-friendly |
+|----------|--------|------------|---------------|
+| OpenAI | `provider: openai` | `credential: openai` | Cloud |
+| Anthropic | `provider: anthropic` | `credential: anthropic` | Cloud |
+| Ollama | `provider: ollama` | None (local) | Local / Edge |
+| Custom | `provider: custom` + `endpoint: ...` | `credential: ...` | Any |
 
-### MCP Server
+For edge deployments, pair r8r with a local Ollama instance for fully offline AI reasoning — no internet connection required.
 
-r8r includes an **MCP server** (Model Context Protocol) so AI agents can directly invoke workflows:
+## MCP Server
+
+r8r includes a built-in **MCP server** (Model Context Protocol) so AI agents can directly create, execute, and manage workflows.
 
 ```bash
-# Start the MCP server
 r8r-mcp
 ```
 
-**Available tools (15):**
+**15 tools available:**
 
 | Tool | Description |
 |------|-------------|
@@ -142,81 +169,36 @@ r8r-mcp
 | `r8r_list_executions` | List recent executions |
 | `r8r_validate` | Validate workflow YAML |
 | `r8r_create_workflow` | Create or update a workflow |
-| `r8r_test` | Test a workflow with input and assert expected output. Mocks via `pinned_data`. Fully isolated. |
-| `r8r_list_approvals` | List pending approval requests that need action |
-| `r8r_approve` | Approve or reject a pending approval, then resume the paused execution |
-| `r8r_generate` | Generate a workflow from a natural language prompt via LLM |
+| `r8r_test` | Test a workflow with mocks and assertions |
+| `r8r_list_approvals` | List pending approval requests |
+| `r8r_approve` | Approve or reject a pending approval |
+| `r8r_generate` | Generate a workflow from natural language |
 
-## 📊 r8r vs n8n
+## r8r vs Alternatives
 
-| Feature | r8r | n8n |
-|---------|-----|-----|
-| **Primary User** | AI agents & developers | Human operators |
-| **Interface** | CLI, API, MCP | Visual drag-and-drop |
-| **Language** | Rust | TypeScript |
-| **Binary Size** | 24 MB | ~200 MB+ |
-| **Memory (idle)** | ~15 MB | ~500 MB+ |
-| **Startup** | ~50ms | Seconds |
-| **Storage** | SQLite (default) or PostgreSQL (`--features storage-postgres`) | PostgreSQL/MySQL |
-| **Workflows** | YAML files (git-friendly) | Database blobs |
-| **AI Agent Nodes** | ✅ Multi-provider (OpenAI, Anthropic, Ollama) | ❌ None |
-| **Code Sandbox** | ✅ Pluggable (subprocess, Docker, Firecracker) | ❌ None |
-| **MCP Support** | ✅ Built-in | ❌ None |
-| **Durable Execution** | Checkpoint, resume, replay | Basic retry |
-| **Circuit Breakers** | ✅ Built-in | ❌ None |
+| Feature | r8r | n8n | Node-RED | AWS Greengrass |
+|---------|-----|-----|----------|----------------|
+| **Primary user** | AI agents & developers | Human operators | IoT developers | AWS ecosystem |
+| **Language** | Rust | TypeScript | Node.js | Java + Python |
+| **Binary size** | ~15 MB | ~200 MB+ | ~100 MB+ | ~200 MB+ |
+| **Memory (idle)** | ~15 MB | ~500 MB+ | ~80 MB+ | ~200 MB+ |
+| **Startup** | ~50ms | Seconds | Seconds | Seconds |
+| **Interface** | CLI, API, MCP, Web UI | Visual editor | Visual editor | AWS Console |
+| **Workflows as code** | YAML (git-friendly) | Database blobs | JSON (git-friendly) | JSON + AWS config |
+| **AI agent nodes** | Multi-provider | None | Community nodes | SageMaker integration |
+| **MCP support** | Built-in (15 tools) | None | None | None |
+| **Edge deployment** | Single binary | Not designed for edge | Yes (lightweight) | Yes (AWS-only) |
+| **Vendor lock-in** | None | None | None | AWS |
+| **Sandbox execution** | Docker, Firecracker | None | None | Lambda-based |
 
-### Use r8r when:
-- 🤖 AI agents trigger your workflows
-- ⚡ You need fast, lightweight automation
-- 📂 You want workflows in version control
-- 🛠️ You prefer code over clicking
-
-### Use n8n when:
-- 🖱️ You prefer visual workflow building
-- 🔌 You need 400+ pre-built integrations
-- 👥 Your team is non-technical
-
-## 📖 Workflow Anatomy
-
-```yaml
-name: order-processor
-description: Process incoming orders
-
-triggers:
-  - type: webhook
-    path: /orders
-  - type: cron
-    schedule: "0 * * * *"  # Every hour
-
-nodes:
-  - id: validate
-    type: transform
-    config:
-      expression: |
-        if input.amount > 0 { input } else { throw "Invalid amount" }
-
-  - id: notify
-    type: http
-    config:
-      url: https://slack.com/api/chat.postMessage
-      method: POST
-      body: '{"text": "New order: ${{ input.amount }}"}'
-    depends_on: [validate]
-    retry:
-      max_attempts: 3
-      backoff: exponential
-    on_error:
-      action: continue  # Don't fail the whole workflow
-```
-
-## 🧩 Node Types
+## Node Types
 
 | Node | Purpose |
 |------|---------|
 | `http` | REST API calls |
 | `transform` | Data transformation (Rhai expressions) |
-| **`agent`** | **AI reasoning — call OpenAI, Anthropic, Ollama, or any LLM with structured output validation** |
-| **`sandbox`** | **Execute Python, Node, or Bash in isolated environments (subprocess, Docker, or Firecracker)** |
+| **`agent`** | **AI reasoning — call OpenAI, Anthropic, Ollama, or any LLM** |
+| **`sandbox`** | **Execute Python, Node, or Bash in isolated environments** |
 | `subworkflow` | Nested workflow execution |
 | `email` | Send emails (SMTP, SendGrid, Resend, Mailgun) |
 | `slack` | Slack messaging |
@@ -241,7 +223,45 @@ nodes:
 
 See [Node Types](docs/NODE_TYPES.md) for full documentation.
 
-## 🔧 CLI Reference
+## Edge & IoT
+
+r8r's Rust foundation makes it uniquely suited for edge computing:
+
+- **Small footprint**: ~15MB binary, ~15MB RAM — fits on any device with an ARM or x86 processor
+- **SQLite-backed**: No external database needed, durable execution state on local disk
+- **Offline-safe**: Workflows execute without internet; results sync when connectivity returns
+- **Fast recovery**: ~50ms cold start means near-instant restart after power cycles
+
+**Target platforms:**
+
+| Platform | Status |
+|----------|--------|
+| Raspberry Pi 4/5 | Supported (ARM64) |
+| NVIDIA Jetson (Nano, Orin) | Supported (ARM64) |
+| Intel NUC / x86 gateways | Supported (x86_64) |
+| Industrial ARM gateways | Supported (ARM64) |
+
+**Planned edge capabilities:**
+
+- MQTT node — subscribe/publish to MQTT brokers (coming soon)
+- GPIO support — read sensors and control actuators (planned)
+- Fleet management — deploy and monitor workflows across device fleets (planned)
+
+## Use Cases
+
+**Cloud: Auto-triage GitHub issues with AI**
+Webhook receives a new issue, the `agent` node classifies severity and assigns labels, then `http` node posts a Slack notification. Deterministic routing handles the plumbing; LLM handles the judgment call.
+
+**Edge: Smart factory sensor monitoring**
+r8r runs on a gateway device, reads sensor data via HTTP polling, uses a local Ollama model for anomaly detection, and triggers alerts when thresholds are exceeded — all without leaving the factory floor.
+
+**Hybrid: Edge collection, cloud aggregation**
+Edge devices run lightweight r8r workflows that pre-process and filter data locally. Results sync to a cloud r8r instance that aggregates across sites and generates reports.
+
+**Robotics: Autonomous decision-making**
+r8r on an NVIDIA Jetson runs workflows that combine sensor input with local LLM reasoning for real-time navigation decisions — deterministic control loops with AI judgment where it matters.
+
+## CLI Reference
 
 ```bash
 # Server
@@ -252,8 +272,6 @@ r8r dev --workflows ./workflows       # Hot-reload mode
 r8r                                   # Open interactive REPL
 r8r chat                              # Same as above
 r8r chat --resume <session-id>        # Resume previous session
-# In REPL: /model, /apikey, /endpoint are persisted in the local r8r DB
-# In REPL: /view yaml (or Ctrl+Y) opens YAML panel, /export yaml <path> saves it
 
 # Workflows
 r8r workflows list                    # List workflows
@@ -263,7 +281,6 @@ r8r workflows validate <file>         # Lint YAML
 r8r workflows history <name>          # Version history
 r8r workflows rollback <name> <ver>   # Rollback
 r8r workflows dag <name>              # Show dependency graph
-r8r workflows dag <name> --order      # Show execution order
 
 # Executions
 r8r workflows trace <id>              # Execution trace
@@ -284,58 +301,35 @@ r8r credentials set <name>            # Store secret
 r8r credentials list                  # List (masked)
 ```
 
-### Generate Workflows from Natural Language
-
-```bash
-# Create a new workflow from a description
-r8r create fetch HN top stories every morning and send digest to Slack
-
-# Refine an existing workflow
-r8r refine hn-digest add error handling that notifies via email on failure
-```
-
-Configure your LLM provider:
-
-```bash
-# Required
-export R8R_AGENT_PROVIDER=openai    # openai, anthropic, ollama, custom
-export R8R_AGENT_API_KEY=sk-...     # Not needed for ollama
-
-# Optional overrides (use a different model/provider just for generation)
-export R8R_GENERATOR_PROVIDER=anthropic
-export R8R_GENERATOR_MODEL=claude-sonnet-4-20250514
-export R8R_GENERATOR_API_KEY=sk-ant-...
-export R8R_GENERATOR_ENDPOINT=https://custom-endpoint.example.com
-```
-
-The generator produces valid workflow YAML, validates it, and lets you review before saving.
-
-## 🔒 Security
+## Security
 
 - **SSRF Protection** — Blocks internal IP requests
 - **AES-256-GCM** — Encrypted credential storage
 - **Webhook Signatures** — GitHub, Stripe, Slack verification
 - **Rate Limiting** — Per-workflow throttling
 - **Schema Validation** — JSON Schema input validation
-- **Sandbox Isolation** — Pluggable backends: Docker containers or Firecracker microVMs with memory, network, and filesystem restrictions
+- **Sandbox Isolation** — Docker containers or Firecracker microVMs with memory, network, and filesystem restrictions
 
 See [Security Audit](SECURITY_AUDIT_REPORT.md) for details.
 
-## 📚 Documentation
+## Documentation
 
 | Doc | Description |
 |-----|-------------|
 | [API Reference](docs/API.md) | REST endpoints |
 | [Node Types](docs/NODE_TYPES.md) | Node configuration |
 | [Environment Variables](docs/ENVIRONMENT_VARIABLES.md) | Configuration |
-| [Deployment Guide](docs/DEPLOYMENT.md) | REPL-to-cloud and one-command VPS deploy (API + UI) |
-| [Client Deployment Model](docs/CLIENT_DEPLOYMENT_MODEL.md) | Per-client ECS/Fargate isolation approach |
-| [Terraform Baseline](infra/README.md) | AWS infrastructure scaffold for per-client deployment |
+| [Deployment Guide](docs/DEPLOYMENT.md) | Server deployment (API + UI) |
+| [Edge Deployment](docs/EDGE_DEPLOYMENT.md) | Raspberry Pi, Jetson, and IoT deployment |
+| [Use Cases](docs/USE_CASES.md) | 10 concrete workflows (cloud, edge, hybrid, MCP) |
+| [Competitive Positioning](docs/COMPETITIVE_POSITIONING.md) | r8r vs n8n, Node-RED, Temporal, Greengrass |
+| [Client Deployment Model](docs/CLIENT_DEPLOYMENT_MODEL.md) | Per-client isolation approach |
 | [Architecture](docs/ARCHITECTURE.md) | System design |
-| [Roadmap](docs/TODO.md) | Planned features |
+| [Sandbox Backends](docs/SANDBOX_BACKENDS.md) | Docker and Firecracker sandboxing |
 | [Runner Plan](docs/RUNNER_PLAN.md) | Edge/fleet runner roadmap |
+| [Roadmap](docs/TODO.md) | Planned features |
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and our [CLA](CLA.md) (required for first PR).
 
@@ -347,7 +341,7 @@ cargo fmt               # Format
 
 See [Roadmap](docs/TODO.md) for contribution ideas.
 
-## 📄 License
+## License
 
 AGPL-3.0 — Free to use, modify, and distribute. If you run a modified version as a network service, you must make the source available.
 
@@ -356,5 +350,5 @@ AGPL-3.0 — Free to use, modify, and distribute. If you run a modified version 
 ---
 
 <p align="center">
-  <em>r8r — Because AI agents deserve better than drag-and-drop.</em>
+  <em>r8r — Because AI agents deserve better than drag-and-drop. Cloud to edge.</em>
 </p>
