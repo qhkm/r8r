@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
-use super::audit::{AuditEntry, AuditEventType};
+use super::audit::AuditEntry;
 use super::dlq::{DeadLetterEntry, DlqStats, DlqStatus, NewDlqEntry};
 use super::models::*;
 use crate::error::Result;
@@ -217,7 +217,11 @@ impl<S: Storage + ?Sized> Storage for std::sync::Arc<S> {
     async fn get_workflow_version(&self, n: &str, v: u32) -> Result<Option<WorkflowVersion>> {
         (**self).get_workflow_version(n, v).await
     }
-    async fn get_workflow_version_by_id(&self, id: &str, v: u32) -> Result<Option<WorkflowVersion>> {
+    async fn get_workflow_version_by_id(
+        &self,
+        id: &str,
+        v: u32,
+    ) -> Result<Option<WorkflowVersion>> {
         (**self).get_workflow_version_by_id(id, v).await
     }
     async fn get_latest_workflow_version_number(&self, id: &str) -> Result<Option<u32>> {
@@ -286,7 +290,16 @@ impl<S: Storage + ?Sized> Storage for std::sync::Arc<S> {
         decided_at: chrono::DateTime<chrono::Utc>,
         node_id: &str,
     ) -> Result<bool> {
-        (**self).decide_approval_request(id, new_status, decided_by, decision_comment, decided_at, node_id).await
+        (**self)
+            .decide_approval_request(
+                id,
+                new_status,
+                decided_by,
+                decision_comment,
+                decided_at,
+                node_id,
+            )
+            .await
     }
     async fn list_approval_requests(
         &self,
@@ -331,7 +344,9 @@ impl<S: Storage + ?Sized> Storage for std::sync::Arc<S> {
         token_count: Option<i64>,
         run_id: Option<&str>,
     ) -> Result<()> {
-        (**self).save_repl_message(session_id, role, content, token_count, run_id).await
+        (**self)
+            .save_repl_message(session_id, role, content, token_count, run_id)
+            .await
     }
     async fn list_repl_messages(&self, session_id: &str, limit: usize) -> Result<Vec<ReplMessage>> {
         (**self).list_repl_messages(session_id, limit).await
@@ -372,7 +387,14 @@ impl<S: Storage + ?Sized> Storage for std::sync::Arc<S> {
         offset: u32,
     ) -> Result<Vec<AuditEntry>> {
         (**self)
-            .list_audit_entries(execution_id, workflow_name, event_type, since, limit, offset)
+            .list_audit_entries(
+                execution_id,
+                workflow_name,
+                event_type,
+                since,
+                limit,
+                offset,
+            )
             .await
     }
     async fn add_to_dlq(&self, entry: NewDlqEntry<'_>) -> Result<String> {

@@ -588,9 +588,7 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
             yes,
             json,
-        }) => {
-            cmd_prompt(&description, patch.as_deref(), emit, dry_run, yes, json).await?
-        }
+        }) => cmd_prompt(&description, patch.as_deref(), emit, dry_run, yes, json).await?,
         Some(Commands::Run {
             name,
             input,
@@ -606,9 +604,11 @@ async fn main() -> anyhow::Result<()> {
         }) => match action {
             Some(RunsActions::Pending { limit }) => cmd_runs_pending(limit).await?,
             Some(RunsActions::Show { run_id, trace }) => cmd_runs_show(&run_id, trace).await?,
-            Some(RunsActions::Export { run_id, format, output }) => {
-                cmd_runs_export(&run_id, &format, output.as_deref()).await?
-            }
+            Some(RunsActions::Export {
+                run_id,
+                format,
+                output,
+            }) => cmd_runs_export(&run_id, &format, output.as_deref()).await?,
             None => cmd_runs(workflow.as_deref(), limit, status.as_deref()).await?,
         },
         Some(Commands::Secrets { action }) => match action {
@@ -638,7 +638,15 @@ async fn main() -> anyhow::Result<()> {
             filter,
             junit_xml,
             update_snapshots,
-        }) => cmd_test(&file, filter.as_deref(), junit_xml.as_deref(), update_snapshots).await?,
+        }) => {
+            cmd_test(
+                &file,
+                filter.as_deref(),
+                junit_xml.as_deref(),
+                update_snapshots,
+            )
+            .await?
+        }
         Some(Commands::Lint {
             files,
             errors_only,
@@ -2374,7 +2382,10 @@ async fn cmd_prompt(
                 };
                 storage.save_workflow(&stored).await?;
                 if json_output {
-                    println!("{}", serde_json::json!({ "saved": true, "name": workflow.name }));
+                    println!(
+                        "{}",
+                        serde_json::json!({ "saved": true, "name": workflow.name })
+                    );
                 } else {
                     eprintln!("\n✓ Workflow '{}' saved", workflow.name);
                     eprintln!("Run with: r8r run {}", workflow.name);
@@ -2416,9 +2427,20 @@ async fn cmd_run(
         if !required.is_empty() {
             eprintln!("Workflow '{}' requires parameters:", name);
             for p in &param_info {
-                let req = if p.required && p.default.is_none() { " (required)" } else { "" };
-                let def = p.default.as_ref().map(|d| format!(" [default: {}]", d)).unwrap_or_default();
-                eprintln!("  --param {}=<{}>{}{}  {}", p.name, p.input_type, req, def, p.description);
+                let req = if p.required && p.default.is_none() {
+                    " (required)"
+                } else {
+                    ""
+                };
+                let def = p
+                    .default
+                    .as_ref()
+                    .map(|d| format!(" [default: {}]", d))
+                    .unwrap_or_default();
+                eprintln!(
+                    "  --param {}=<{}>{}{}  {}",
+                    p.name, p.input_type, req, def, p.description
+                );
             }
             anyhow::bail!("Missing required parameters");
         }
@@ -2508,7 +2530,10 @@ async fn cmd_run(
             println!("Error        : {}", err);
         }
         if let Some(finished) = execution.finished_at {
-            println!("Duration     : {}ms", (finished - execution.started_at).num_milliseconds());
+            println!(
+                "Duration     : {}ms",
+                (finished - execution.started_at).num_milliseconds()
+            );
         }
         if execution.status.to_string() == "waiting_for_approval" {
             println!();
@@ -2531,8 +2556,7 @@ async fn cmd_runs(
 
     let storage = get_storage()?;
 
-    let status = status_filter
-        .and_then(|s| s.parse().ok());
+    let status = status_filter.and_then(|s| s.parse().ok());
 
     let query = ExecutionQuery {
         workflow_name: workflow.map(String::from),
@@ -2606,7 +2630,8 @@ async fn cmd_doctor() -> anyhow::Result<()> {
         let storage = get_storage().map_err(|e| e.to_string())?;
         let workflows = storage.list_workflows().await.map_err(|e| e.to_string())?;
         Ok::<String, String>(format!("{} workflow(s) stored", workflows.len()))
-    }.await;
+    }
+    .await;
     report("Database", db_result);
 
     // 2. LLM config
@@ -2614,8 +2639,7 @@ async fn cmd_doctor() -> anyhow::Result<()> {
         let base_url = std::env::var("R8R_LLM_BASE_URL")
             .or_else(|_| std::env::var("OPENAI_BASE_URL"))
             .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
-        let model = std::env::var("R8R_LLM_MODEL")
-            .unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        let model = std::env::var("R8R_LLM_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
         let api_key = std::env::var("R8R_LLM_API_KEY")
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .unwrap_or_default();
@@ -2633,17 +2657,38 @@ async fn cmd_doctor() -> anyhow::Result<()> {
         let store = CredentialStore::load().await.map_err(|e| e.to_string())?;
         let creds = store.list();
         Ok::<String, String>(format!("{} configured", creds.len()))
-    }.await;
+    }
+    .await;
     report("Credentials", cred_result);
 
     // 4. Node registry
     let reg_result = {
         let registry = build_registry();
         // Count registered node types by probing known types
-        let known = ["http", "transform", "agent", "debug", "wait", "switch",
-                     "filter", "sort", "limit", "set", "aggregate", "split",
-                     "crypto", "datetime", "dedupe", "summarize", "if",
-                     "subworkflow", "variables", "template", "approval", "sandbox"];
+        let known = [
+            "http",
+            "transform",
+            "agent",
+            "debug",
+            "wait",
+            "switch",
+            "filter",
+            "sort",
+            "limit",
+            "set",
+            "aggregate",
+            "split",
+            "crypto",
+            "datetime",
+            "dedupe",
+            "summarize",
+            "if",
+            "subworkflow",
+            "variables",
+            "template",
+            "approval",
+            "sandbox",
+        ];
         let count = known.iter().filter(|t| registry.has(t)).count();
         Ok::<String, String>(format!("{} node type(s) registered", count))
     };
@@ -2724,13 +2769,15 @@ async fn cmd_test(
     let fixture: TestFixture = serde_yaml::from_str(&raw)
         .map_err(|e| anyhow::anyhow!("Failed to parse test fixture: {}", e))?;
 
-    let cases: Vec<&TestCase> = fixture.tests.iter()
+    let cases: Vec<&TestCase> = fixture
+        .tests
+        .iter()
         .filter(|t| filter.map(|f| t.name.contains(f)).unwrap_or(true))
         .collect();
 
     if cases.is_empty() {
-        if filter.is_some() {
-            println!("No tests matched filter '{}'", filter.unwrap());
+        if let Some(f) = filter {
+            println!("No tests matched filter '{}'", f);
         } else {
             println!("No tests found in {}", file);
         }
@@ -2745,19 +2792,25 @@ async fn cmd_test(
         let start = std::time::Instant::now();
 
         // Resolve workflow YAML
-        let yaml = match (case.workflow_yaml.as_ref(), case.workflow.as_ref(),
-                          fixture.workflow_yaml.as_ref(), fixture.workflow.as_ref()) {
+        let yaml = match (
+            case.workflow_yaml.as_ref(),
+            case.workflow.as_ref(),
+            fixture.workflow_yaml.as_ref(),
+            fixture.workflow.as_ref(),
+        ) {
             (Some(y), _, _, _) => y.clone(),
             (_, Some(p), _, _) => {
                 let path = fixture_dir.join(p);
-                std::fs::read_to_string(&path)
-                    .map_err(|e| anyhow::anyhow!("Cannot read workflow '{}': {}", path.display(), e))?
+                std::fs::read_to_string(&path).map_err(|e| {
+                    anyhow::anyhow!("Cannot read workflow '{}': {}", path.display(), e)
+                })?
             }
             (_, _, Some(y), _) => y.clone(),
             (_, _, _, Some(p)) => {
                 let path = fixture_dir.join(p);
-                std::fs::read_to_string(&path)
-                    .map_err(|e| anyhow::anyhow!("Cannot read workflow '{}': {}", path.display(), e))?
+                std::fs::read_to_string(&path).map_err(|e| {
+                    anyhow::anyhow!("Cannot read workflow '{}': {}", path.display(), e)
+                })?
             }
             _ => anyhow::bail!("Test '{}' has no workflow source", case.name),
         };
@@ -2785,25 +2838,31 @@ async fn cmd_test(
         }
 
         // Run in isolated in-memory storage
-        let test_storage: std::sync::Arc<dyn r8r::storage::Storage> = match SqliteStorage::open_in_memory() {
-            Ok(s) => std::sync::Arc::new(s),
-            Err(e) => anyhow::bail!("Cannot create test storage: {}", e),
-        };
+        let test_storage: std::sync::Arc<dyn r8r::storage::Storage> =
+            match SqliteStorage::open_in_memory() {
+                Ok(s) => std::sync::Arc::new(s),
+                Err(e) => anyhow::bail!("Cannot create test storage: {}", e),
+            };
         let registry = build_registry();
         let executor = Executor::new(registry, std::sync::Arc::clone(&test_storage));
 
         let stored_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
-        test_storage.save_workflow(&r8r::storage::StoredWorkflow {
-            id: stored_id.clone(),
-            name: workflow.name.clone(),
-            definition: yaml.clone(),
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-        }).await?;
+        test_storage
+            .save_workflow(&r8r::storage::StoredWorkflow {
+                id: stored_id.clone(),
+                name: workflow.name.clone(),
+                definition: yaml.clone(),
+                enabled: true,
+                created_at: now,
+                updated_at: now,
+            })
+            .await?;
 
-        let execution = match executor.execute(&workflow, &stored_id, "test", case.input.clone()).await {
+        let execution = match executor
+            .execute(&workflow, &stored_id, "test", case.input.clone())
+            .await
+        {
             Ok(e) => e,
             Err(e) => {
                 results.push(TestResult {
@@ -2825,16 +2884,34 @@ async fn cmd_test(
         if let Some(expected_err) = &case.expected_error {
             let actual_err = execution.error.as_deref().unwrap_or("");
             if failed && actual_err.contains(expected_err.as_str()) {
-                results.push(TestResult { name: case.name.clone(), passed: true, duration_ms, message: None });
+                results.push(TestResult {
+                    name: case.name.clone(),
+                    passed: true,
+                    duration_ms,
+                    message: None,
+                });
                 println!("  PASS {} ({}ms)", case.name, duration_ms);
             } else if failed {
                 let msg = format!("Expected error '{}', got '{}'", expected_err, actual_err);
-                results.push(TestResult { name: case.name.clone(), passed: false, duration_ms, message: Some(msg.clone()) });
+                results.push(TestResult {
+                    name: case.name.clone(),
+                    passed: false,
+                    duration_ms,
+                    message: Some(msg.clone()),
+                });
                 println!("  FAIL {} ({}ms)", case.name, duration_ms);
                 println!("       {}", msg);
             } else {
-                let msg = format!("Expected workflow to fail with '{}', but it succeeded", expected_err);
-                results.push(TestResult { name: case.name.clone(), passed: false, duration_ms, message: Some(msg.clone()) });
+                let msg = format!(
+                    "Expected workflow to fail with '{}', but it succeeded",
+                    expected_err
+                );
+                results.push(TestResult {
+                    name: case.name.clone(),
+                    passed: false,
+                    duration_ms,
+                    message: Some(msg.clone()),
+                });
                 println!("  FAIL {} ({}ms)", case.name, duration_ms);
                 println!("       {}", msg);
             }
@@ -2843,8 +2920,16 @@ async fn cmd_test(
 
         // Handle normal failure
         if failed {
-            let msg = format!("Workflow failed: {}", execution.error.as_deref().unwrap_or("unknown"));
-            results.push(TestResult { name: case.name.clone(), passed: false, duration_ms, message: Some(msg.clone()) });
+            let msg = format!(
+                "Workflow failed: {}",
+                execution.error.as_deref().unwrap_or("unknown")
+            );
+            results.push(TestResult {
+                name: case.name.clone(),
+                passed: false,
+                duration_ms,
+                message: Some(msg.clone()),
+            });
             println!("  FAIL {} ({}ms)", case.name, duration_ms);
             println!("       {}", msg);
             continue;
@@ -2854,8 +2939,17 @@ async fn cmd_test(
 
         // --update-snapshots: write expected to fixture (in-memory update only, inform user)
         if update_snapshots {
-            println!("  SNAP {} — output: {}", case.name, serde_json::to_string_pretty(&actual).unwrap_or_default());
-            results.push(TestResult { name: case.name.clone(), passed: true, duration_ms, message: Some("snapshot updated (add to fixture manually)".to_string()) });
+            println!(
+                "  SNAP {} — output: {}",
+                case.name,
+                serde_json::to_string_pretty(&actual).unwrap_or_default()
+            );
+            results.push(TestResult {
+                name: case.name.clone(),
+                passed: true,
+                duration_ms,
+                message: Some("snapshot updated (add to fixture manually)".to_string()),
+            });
             continue;
         }
 
@@ -2864,17 +2958,32 @@ async fn cmd_test(
             let mode = case.mode.as_deref().unwrap_or("exact");
             let diffs = cli_json_diff(&actual, expected, mode);
             if diffs.is_empty() {
-                results.push(TestResult { name: case.name.clone(), passed: true, duration_ms, message: None });
+                results.push(TestResult {
+                    name: case.name.clone(),
+                    passed: true,
+                    duration_ms,
+                    message: None,
+                });
                 println!("  PASS {} ({}ms)", case.name, duration_ms);
             } else {
                 let msg = diffs.join("\n       ");
-                results.push(TestResult { name: case.name.clone(), passed: false, duration_ms, message: Some(diffs.join("; ")) });
+                results.push(TestResult {
+                    name: case.name.clone(),
+                    passed: false,
+                    duration_ms,
+                    message: Some(diffs.join("; ")),
+                });
                 println!("  FAIL {} ({}ms)", case.name, duration_ms);
                 println!("       {}", msg);
             }
         } else {
             // No expected — just check no failure
-            results.push(TestResult { name: case.name.clone(), passed: true, duration_ms, message: None });
+            results.push(TestResult {
+                name: case.name.clone(),
+                passed: true,
+                duration_ms,
+                message: None,
+            });
             println!("  PASS {} ({}ms)", case.name, duration_ms);
         }
     }
@@ -2884,7 +2993,13 @@ async fn cmd_test(
     let total_ms: u64 = results.iter().map(|r| r.duration_ms).sum();
 
     println!();
-    println!("{} passed, {} failed, {} total ({:.2}s)", passed, failed_count, results.len(), total_ms as f64 / 1000.0);
+    println!(
+        "{} passed, {} failed, {} total ({:.2}s)",
+        passed,
+        failed_count,
+        results.len(),
+        total_ms as f64 / 1000.0
+    );
 
     // JUnit XML output
     if let Some(xml_path) = junit_xml {
@@ -2901,7 +3016,11 @@ async fn cmd_test(
 }
 
 /// Minimal JSON diff for CLI test runner (mirrors MCP json_diff).
-fn cli_json_diff(actual: &serde_json::Value, expected: &serde_json::Value, mode: &str) -> Vec<String> {
+fn cli_json_diff(
+    actual: &serde_json::Value,
+    expected: &serde_json::Value,
+    mode: &str,
+) -> Vec<String> {
     let mut diffs = Vec::new();
     cli_json_diff_inner(actual, expected, mode, "", &mut diffs);
     diffs
@@ -2917,7 +3036,11 @@ fn cli_json_diff_inner(
     match (actual, expected) {
         (serde_json::Value::Object(a_map), serde_json::Value::Object(e_map)) => {
             for (key, e_val) in e_map {
-                let child = if path.is_empty() { key.clone() } else { format!("{}.{}", path, key) };
+                let child = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{}.{}", path, key)
+                };
                 if let Some(a_val) = a_map.get(key) {
                     cli_json_diff_inner(a_val, e_val, mode, &child, diffs);
                 } else {
@@ -2926,7 +3049,11 @@ fn cli_json_diff_inner(
             }
             if mode == "exact" {
                 for key in a_map.keys() {
-                    let child = if path.is_empty() { key.clone() } else { format!("{}.{}", path, key) };
+                    let child = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{}.{}", path, key)
+                    };
                     if !e_map.contains_key(key) {
                         diffs.push(format!("unexpected key '{}' in output", child));
                     }
@@ -2935,7 +3062,11 @@ fn cli_json_diff_inner(
         }
         (a, e) => {
             if a != e {
-                let p = if path.is_empty() { "(root)".to_string() } else { path.to_string() };
+                let p = if path.is_empty() {
+                    "(root)".to_string()
+                } else {
+                    path.to_string()
+                };
                 diffs.push(format!("at '{}': expected {} got {}", p, e, a));
             }
         }
@@ -2960,7 +3091,10 @@ fn build_junit_xml(results: &[TestResult], suite_name: &str) -> String {
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <testsuite name="{}" tests="{}" failures="{}" time="{:.3}">
 "#,
-        xml_escape(suite_name), results.len(), failed, total_ms as f64 / 1000.0
+        xml_escape(suite_name),
+        results.len(),
+        failed,
+        total_ms as f64 / 1000.0
     );
 
     for r in results {
@@ -3023,7 +3157,8 @@ async fn cmd_lint(files: &[String], errors_only: bool, json_output: bool) -> any
                 if err_str.contains("dependsOn") {
                     issue["suggestion"] = serde_json::json!("Use 'depends_on' (snake_case)");
                 } else if err_str.contains("nodeType") {
-                    issue["suggestion"] = serde_json::json!("Use 'type' for node type, not 'nodeType'");
+                    issue["suggestion"] =
+                        serde_json::json!("Use 'type' for node type, not 'nodeType'");
                 }
                 issues.push(issue);
                 let result = serde_json::json!({ "file": file, "valid": false, "issues": issues });
@@ -3081,7 +3216,9 @@ async fn cmd_lint(files: &[String], errors_only: bool, json_output: bool) -> any
         }
 
         let has_errors = issues.iter().any(|i| i["level"] == "error");
-        if has_errors { any_error = true; }
+        if has_errors {
+            any_error = true;
+        }
 
         let result = serde_json::json!({
             "file": file,
@@ -3094,8 +3231,20 @@ async fn cmd_lint(files: &[String], errors_only: bool, json_output: bool) -> any
         if json_output {
             all_results.push(result);
         } else {
-            let status = if has_errors { "✗" } else if issues.is_empty() { "✓" } else { "⚠" };
-            println!("{}: {} {} ({} nodes)", status, file, workflow.name, workflow.nodes.len());
+            let status = if has_errors {
+                "✗"
+            } else if issues.is_empty() {
+                "✓"
+            } else {
+                "⚠"
+            };
+            println!(
+                "{}: {} {} ({} nodes)",
+                status,
+                file,
+                workflow.name,
+                workflow.nodes.len()
+            );
             for iss in &issues {
                 let level = iss["level"].as_str().unwrap_or("info");
                 let msg = iss["message"].as_str().unwrap_or("");
@@ -3108,7 +3257,10 @@ async fn cmd_lint(files: &[String], errors_only: bool, json_output: bool) -> any
     }
 
     if json_output {
-        println!("{}", serde_json::to_string_pretty(&serde_json::Value::Array(all_results))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::Value::Array(all_results))?
+        );
     }
 
     if any_error {
@@ -3146,7 +3298,9 @@ async fn cmd_schema(output: Option<&str>) -> anyhow::Result<()> {
 
 async fn cmd_runs_pending(limit: usize) -> anyhow::Result<()> {
     let storage = get_storage()?;
-    let approvals = storage.list_approval_requests(Some("pending"), limit, 0).await?;
+    let approvals = storage
+        .list_approval_requests(Some("pending"), limit, 0)
+        .await?;
 
     if approvals.is_empty() {
         println!("No pending approval requests.");
@@ -3192,10 +3346,17 @@ async fn cmd_runs_show(run_id: &str, include_trace: bool) -> anyhow::Result<()> 
     println!("Workflow   : {}", exec.workflow_name);
     println!("Status     : {}", exec.status);
     println!("Trigger    : {}", exec.trigger_type);
-    println!("Started    : {}", exec.started_at.format("%Y-%m-%d %H:%M:%S UTC"));
+    println!(
+        "Started    : {}",
+        exec.started_at.format("%Y-%m-%d %H:%M:%S UTC")
+    );
     if let Some(fin) = exec.finished_at {
         let dur = (fin - exec.started_at).num_milliseconds();
-        println!("Finished   : {} ({}ms)", fin.format("%Y-%m-%d %H:%M:%S UTC"), dur);
+        println!(
+            "Finished   : {} ({}ms)",
+            fin.format("%Y-%m-%d %H:%M:%S UTC"),
+            dur
+        );
     }
     if let Some(err) = &exec.error {
         println!("Error      : {}", err);
@@ -3217,8 +3378,11 @@ async fn cmd_runs_show(run_id: &str, include_trace: bool) -> anyhow::Result<()> 
     }
 
     // Show pending approvals for this execution (filter by status at storage level)
-    let approvals = storage.list_approval_requests(Some("pending"), 20, 0).await?;
-    let pending: Vec<_> = approvals.iter()
+    let approvals = storage
+        .list_approval_requests(Some("pending"), 20, 0)
+        .await?;
+    let pending: Vec<_> = approvals
+        .iter()
         .filter(|a| a.execution_id == run_id)
         .collect();
     if !pending.is_empty() {
@@ -3231,7 +3395,7 @@ async fn cmd_runs_show(run_id: &str, include_trace: bool) -> anyhow::Result<()> 
             }
         }
         println!("  Approve:  r8r approve {}", run_id);
-        println!("  Deny:     r8r deny {}",    run_id);
+        println!("  Deny:     r8r deny {}", run_id);
     }
 
     if include_trace {
@@ -3240,14 +3404,21 @@ async fn cmd_runs_show(run_id: &str, include_trace: bool) -> anyhow::Result<()> 
             println!("\nNo node trace recorded.");
         } else {
             println!();
-            println!("{:<24} {:<12} {:<8} {}", "NODE", "STATUS", "MS", "ERROR");
+            println!("{:<24} {:<12} {:<8} ERROR", "NODE", "STATUS", "MS");
             println!("{}", "─".repeat(72));
             for n in &nodes {
-                let ms = n.finished_at
+                let ms = n
+                    .finished_at
                     .map(|f| (f - n.started_at).num_milliseconds())
                     .unwrap_or(0);
                 let err = n.error.as_deref().unwrap_or("");
-                println!("{:<24} {:<12} {:<8} {}", truncate(&n.node_id, 23), n.status.to_string(), ms, err);
+                println!(
+                    "{:<24} {:<12} {:<8} {}",
+                    truncate(&n.node_id, 23),
+                    n.status.to_string(),
+                    ms,
+                    err
+                );
             }
         }
     }
@@ -3255,7 +3426,11 @@ async fn cmd_runs_show(run_id: &str, include_trace: bool) -> anyhow::Result<()> 
     Ok(())
 }
 
-async fn cmd_runs_export(run_id: &str, format: &str, output_path: Option<&str>) -> anyhow::Result<()> {
+async fn cmd_runs_export(
+    run_id: &str,
+    format: &str,
+    output_path: Option<&str>,
+) -> anyhow::Result<()> {
     use std::io::Write;
 
     let storage = get_storage()?;
@@ -3337,19 +3512,26 @@ async fn cmd_approve_deny(
             a
         } else {
             // Try to find pending approval for this execution_id
-            let all = storage.list_approval_requests(Some("pending"), 100, 0).await?;
+            let all = storage
+                .list_approval_requests(Some("pending"), 100, 0)
+                .await?;
             all.into_iter()
                 .find(|a| a.execution_id == id)
-                .ok_or_else(|| anyhow::anyhow!(
-                    "No pending approval found for '{}'. Use `r8r runs pending` to list them.", id
-                ))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "No pending approval found for '{}'. Use `r8r runs pending` to list them.",
+                        id
+                    )
+                })?
         }
     };
 
     if approval.status != "pending" {
         anyhow::bail!(
             "Approval {} is already '{}', cannot {}",
-            approval.id, approval.status, decision
+            approval.id,
+            approval.status,
+            decision
         );
     }
 
@@ -3357,17 +3539,34 @@ async fn cmd_approve_deny(
     let mut checkpoint = storage
         .get_latest_checkpoint(&approval.execution_id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("No checkpoint found for execution {}", approval.execution_id))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No checkpoint found for execution {}",
+                approval.execution_id
+            )
+        })?;
 
-    let mut outputs = checkpoint.node_outputs
-        .as_object().cloned().unwrap_or_default();
+    let mut outputs = checkpoint
+        .node_outputs
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
 
     // Inject the approval decision into the checkpoint node output
     let node_id = {
-        let approved_status = if decision == "approve" { "approved" } else { "rejected" };
-        let hint = if approval.node_id.is_empty() { None } else { Some(approval.node_id.as_str()) };
+        let approved_status = if decision == "approve" {
+            "approved"
+        } else {
+            "rejected"
+        };
+        let hint = if approval.node_id.is_empty() {
+            None
+        } else {
+            Some(approval.node_id.as_str())
+        };
         // Find the node by hint or by scanning for matching approval_id
-        let found = hint.filter(|id| outputs.contains_key(*id))
+        let found = hint
+            .filter(|id| outputs.contains_key(*id))
             .map(ToOwned::to_owned)
             .or_else(|| {
                 outputs.iter().find_map(|(nid, out)| {
@@ -3385,7 +3584,12 @@ async fn cmd_approve_deny(
         obj.insert("approval_id".into(), serde_json::json!(approval.id));
         obj.insert("status".into(), serde_json::json!(approved_status));
         obj.insert("decision".into(), serde_json::json!(decision));
-        obj.insert("comment".into(), comment.map(serde_json::Value::from).unwrap_or(serde_json::Value::Null));
+        obj.insert(
+            "comment".into(),
+            comment
+                .map(serde_json::Value::from)
+                .unwrap_or(serde_json::Value::Null),
+        );
         outputs.insert(nid.clone(), serde_json::Value::Object(obj));
         nid
     };
@@ -3393,7 +3597,11 @@ async fn cmd_approve_deny(
     checkpoint.node_outputs = serde_json::Value::Object(outputs);
     storage.save_checkpoint(&checkpoint).await?;
 
-    let decided_status = if decision == "approve" { "approved" } else { "rejected" };
+    let decided_status = if decision == "approve" {
+        "approved"
+    } else {
+        "rejected"
+    };
     let mut updated = approval.clone();
     updated.status = decided_status.to_string();
     updated.node_id = node_id;
@@ -3402,7 +3610,16 @@ async fn cmd_approve_deny(
     updated.decided_at = Some(chrono::Utc::now());
     storage.save_approval_request(&updated).await?;
 
-    println!("{} approval {} ({})", if decision == "approve" { "✓ Approved" } else { "✗ Denied" }, updated.id, updated.workflow_name);
+    println!(
+        "{} approval {} ({})",
+        if decision == "approve" {
+            "✓ Approved"
+        } else {
+            "✗ Denied"
+        },
+        updated.id,
+        updated.workflow_name
+    );
     if let Some(c) = comment {
         println!("  Comment: {}", c);
     }
@@ -3484,8 +3701,7 @@ fn policy_path() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("R8R_POLICY_FILE") {
         return std::path::PathBuf::from(p);
     }
-    let base = dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let base = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
     base.join("r8r").join("policy.toml")
 }
 
@@ -3495,7 +3711,11 @@ fn load_policy() -> PolicyConfig {
         match toml::from_str(&content) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("Warning: policy file {} is malformed ({}); falling back to lenient profile.", path.display(), e);
+                eprintln!(
+                    "Warning: policy file {} is malformed ({}); falling back to lenient profile.",
+                    path.display(),
+                    e
+                );
                 PolicyConfig::lenient()
             }
         }
@@ -3521,10 +3741,22 @@ async fn cmd_policy_show() -> anyhow::Result<()> {
     println!("Active policy: {}", policy.profile.to_uppercase());
     println!("Config file  : {}", path.display());
     println!();
-    println!("  {:<40} {}", "require_review_on_patch", policy.require_review_on_patch);
-    println!("  {:<40} {}", "require_idempotency_key_for_run", policy.require_idempotency_key_for_run);
-    println!("  {:<40} {}", "max_runtime_seconds (0=unlimited)", policy.max_runtime_seconds);
-    println!("  {:<40} {}", "deny_unknown_node_types", policy.deny_unknown_node_types);
+    println!(
+        "  {:<40} {}",
+        "require_review_on_patch", policy.require_review_on_patch
+    );
+    println!(
+        "  {:<40} {}",
+        "require_idempotency_key_for_run", policy.require_idempotency_key_for_run
+    );
+    println!(
+        "  {:<40} {}",
+        "max_runtime_seconds (0=unlimited)", policy.max_runtime_seconds
+    );
+    println!(
+        "  {:<40} {}",
+        "deny_unknown_node_types", policy.deny_unknown_node_types
+    );
     println!();
     println!("Available profiles: lenient  standard  strict");
     println!("Switch with: r8r policy set <profile>");
@@ -3533,19 +3765,32 @@ async fn cmd_policy_show() -> anyhow::Result<()> {
 
 async fn cmd_policy_set(profile: &str) -> anyhow::Result<()> {
     let policy = match profile {
-        "lenient"  => PolicyConfig::lenient(),
+        "lenient" => PolicyConfig::lenient(),
         "standard" => PolicyConfig::standard(),
-        "strict"   => PolicyConfig::strict(),
+        "strict" => PolicyConfig::strict(),
         other => anyhow::bail!(
-            "Unknown profile '{}'. Valid options: lenient, standard, strict", other
+            "Unknown profile '{}'. Valid options: lenient, standard, strict",
+            other
         ),
     };
     save_policy(&policy)?;
     println!("✓ Policy set to '{}'", profile);
-    println!("  require_review_on_patch          = {}", policy.require_review_on_patch);
-    println!("  require_idempotency_key_for_run  = {}", policy.require_idempotency_key_for_run);
-    println!("  max_runtime_seconds              = {}", policy.max_runtime_seconds);
-    println!("  deny_unknown_node_types          = {}", policy.deny_unknown_node_types);
+    println!(
+        "  require_review_on_patch          = {}",
+        policy.require_review_on_patch
+    );
+    println!(
+        "  require_idempotency_key_for_run  = {}",
+        policy.require_idempotency_key_for_run
+    );
+    println!(
+        "  max_runtime_seconds              = {}",
+        policy.max_runtime_seconds
+    );
+    println!(
+        "  deny_unknown_node_types          = {}",
+        policy.deny_unknown_node_types
+    );
     Ok(())
 }
 
@@ -3560,8 +3805,7 @@ async fn cmd_policy_validate(file: &str) -> anyhow::Result<()> {
     }
 
     let yaml = std::fs::read_to_string(path)?;
-    let workflow = parse_workflow(&yaml)
-        .map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let workflow = parse_workflow(&yaml).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
 
     let registry = build_registry();
     let mut violations: Vec<String> = Vec::new();
@@ -3582,7 +3826,8 @@ async fn cmd_policy_validate(file: &str) -> anyhow::Result<()> {
         for node in &workflow.nodes {
             if !registry.has(&node.node_type) {
                 violations.push(format!(
-                    "node '{}' has unknown type '{}'", node.id, node.node_type
+                    "node '{}' has unknown type '{}'",
+                    node.id, node.node_type
                 ));
             }
         }

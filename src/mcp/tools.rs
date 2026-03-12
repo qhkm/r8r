@@ -15,6 +15,7 @@ use std::sync::Arc;
 /// Machine-readable error codes for MCP tools.
 /// Agents can branch on `error_code` to decide how to recover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ErrorCode {
     /// Workflow name does not exist in the registry.
     WorkflowNotFound,
@@ -39,15 +40,15 @@ pub enum ErrorCode {
 impl ErrorCode {
     fn as_str(self) -> &'static str {
         match self {
-            ErrorCode::WorkflowNotFound  => "workflow_not_found",
-            ErrorCode::YamlParseError    => "yaml_parse_error",
-            ErrorCode::ValidationError   => "validation_error",
-            ErrorCode::ExecutionFailed   => "execution_failed",
-            ErrorCode::ExecutionTimeout  => "execution_timeout",
-            ErrorCode::ApprovalRequired  => "approval_required",
-            ErrorCode::ResourceNotFound  => "resource_not_found",
-            ErrorCode::InvalidInput      => "invalid_input",
-            ErrorCode::InternalError     => "internal_error",
+            ErrorCode::WorkflowNotFound => "workflow_not_found",
+            ErrorCode::YamlParseError => "yaml_parse_error",
+            ErrorCode::ValidationError => "validation_error",
+            ErrorCode::ExecutionFailed => "execution_failed",
+            ErrorCode::ExecutionTimeout => "execution_timeout",
+            ErrorCode::ApprovalRequired => "approval_required",
+            ErrorCode::ResourceNotFound => "resource_not_found",
+            ErrorCode::InvalidInput => "invalid_input",
+            ErrorCode::InternalError => "internal_error",
         }
     }
 }
@@ -62,13 +63,19 @@ fn mcp_error(code: ErrorCode, message: impl Into<String>) -> CallToolResult {
     mcp_error_with_details(code, message, json!(null))
 }
 
-fn mcp_error_with_details(code: ErrorCode, message: impl Into<String>, details: Value) -> CallToolResult {
+fn mcp_error_with_details(
+    code: ErrorCode,
+    message: impl Into<String>,
+    details: Value,
+) -> CallToolResult {
     let body = json!({
         "error_code": code.as_str(),
         "message": message.into(),
         "details": details,
     });
-    CallToolResult::error(vec![Content::text(serde_json::to_string_pretty(&body).unwrap_or_default())])
+    CallToolResult::error(vec![Content::text(
+        serde_json::to_string_pretty(&body).unwrap_or_default(),
+    )])
 }
 
 use crate::engine::executor::emit_audit;
@@ -354,7 +361,10 @@ impl R8rService {
                 ));
             }
             Err(e) => {
-                return Ok(mcp_error(ErrorCode::InternalError, format!("Storage error: {}", e)));
+                return Ok(mcp_error(
+                    ErrorCode::InternalError,
+                    format!("Storage error: {}", e),
+                ));
             }
         };
 
@@ -362,7 +372,10 @@ impl R8rService {
         let workflow = match parse_workflow(&stored.definition) {
             Ok(wf) => wf,
             Err(e) => {
-                return Ok(mcp_error(ErrorCode::YamlParseError, format!("Invalid workflow definition: {}", e)));
+                return Ok(mcp_error(
+                    ErrorCode::YamlParseError,
+                    format!("Invalid workflow definition: {}", e),
+                ));
             }
         };
 
@@ -381,7 +394,10 @@ impl R8rService {
                 if status_str == "failed" {
                     return Ok(mcp_error_with_details(
                         ErrorCode::ExecutionFailed,
-                        execution.error.as_deref().unwrap_or("Workflow execution failed"),
+                        execution
+                            .error
+                            .as_deref()
+                            .unwrap_or("Workflow execution failed"),
                         json!({ "execution_id": execution.id, "status": status_str }),
                     ));
                 }
@@ -406,7 +422,10 @@ impl R8rService {
                     serde_json::to_string_pretty(&result).unwrap_or_default(),
                 )]))
             }
-            Err(e) => Ok(mcp_error(ErrorCode::InternalError, format!("Workflow execution failed: {}", e))),
+            Err(e) => Ok(mcp_error(
+                ErrorCode::InternalError,
+                format!("Workflow execution failed: {}", e),
+            )),
         }
     }
 
@@ -777,7 +796,10 @@ impl R8rService {
                 ));
             }
             Err(e) => {
-                return Ok(mcp_error(ErrorCode::InternalError, format!("Storage error: {}", e)));
+                return Ok(mcp_error(
+                    ErrorCode::InternalError,
+                    format!("Storage error: {}", e),
+                ));
             }
         };
 
@@ -785,7 +807,10 @@ impl R8rService {
         let workflow = match parse_workflow(&stored.definition) {
             Ok(wf) => wf,
             Err(e) => {
-                return Ok(mcp_error(ErrorCode::YamlParseError, format!("Invalid workflow definition: {}", e)));
+                return Ok(mcp_error(
+                    ErrorCode::YamlParseError,
+                    format!("Invalid workflow definition: {}", e),
+                ));
             }
         };
 
@@ -800,7 +825,10 @@ impl R8rService {
                 if status_str == "failed" {
                     return Ok(mcp_error_with_details(
                         ErrorCode::ExecutionFailed,
-                        execution.error.as_deref().unwrap_or("Workflow execution failed"),
+                        execution
+                            .error
+                            .as_deref()
+                            .unwrap_or("Workflow execution failed"),
                         json!({ "execution_id": execution.id }),
                     ));
                 }
@@ -818,7 +846,10 @@ impl R8rService {
                     None => Ok(CallToolResult::success(vec![Content::text("null")])),
                 }
             }
-            Err(e) => Ok(mcp_error(ErrorCode::InternalError, format!("Workflow execution failed: {}", e))),
+            Err(e) => Ok(mcp_error(
+                ErrorCode::InternalError,
+                format!("Workflow execution failed: {}", e),
+            )),
         }
     }
 
@@ -841,14 +872,20 @@ impl R8rService {
                 ));
             }
             Err(e) => {
-                return Ok(mcp_error(ErrorCode::InternalError, format!("Storage error: {}", e)));
+                return Ok(mcp_error(
+                    ErrorCode::InternalError,
+                    format!("Storage error: {}", e),
+                ));
             }
         };
 
         let workflow = match parse_workflow(&stored.definition) {
             Ok(wf) => wf,
             Err(e) => {
-                return Ok(mcp_error(ErrorCode::YamlParseError, format!("Invalid workflow definition: {}", e)));
+                return Ok(mcp_error(
+                    ErrorCode::YamlParseError,
+                    format!("Invalid workflow definition: {}", e),
+                ));
             }
         };
 
@@ -1012,7 +1049,10 @@ impl R8rService {
         let workflow = match parse_workflow(&params.workflow_yaml) {
             Ok(w) => w,
             Err(e) => {
-                return Ok(mcp_error(ErrorCode::YamlParseError, format!("Failed to parse workflow YAML: {}", e)));
+                return Ok(mcp_error(
+                    ErrorCode::YamlParseError,
+                    format!("Failed to parse workflow YAML: {}", e),
+                ));
             }
         };
 
@@ -1020,7 +1060,10 @@ impl R8rService {
         let test_storage: Arc<dyn Storage> = match SqliteStorage::open_in_memory() {
             Ok(s) => Arc::new(s),
             Err(e) => {
-                return Ok(mcp_error(ErrorCode::InternalError, format!("Failed to create test storage: {}", e)));
+                return Ok(mcp_error(
+                    ErrorCode::InternalError,
+                    format!("Failed to create test storage: {}", e),
+                ));
             }
         };
         let test_registry = crate::nodes::NodeRegistry::new();
@@ -1192,7 +1235,10 @@ impl R8rService {
         if params.decision != "approve" && params.decision != "reject" {
             return Ok(mcp_error_with_details(
                 ErrorCode::InvalidInput,
-                format!("Decision must be \"approve\" or \"reject\", got \"{}\"", params.decision),
+                format!(
+                    "Decision must be \"approve\" or \"reject\", got \"{}\"",
+                    params.decision
+                ),
                 json!({ "valid_values": ["approve", "reject"] }),
             ));
         }
@@ -1207,14 +1253,20 @@ impl R8rService {
                 ));
             }
             Err(e) => {
-                return Ok(mcp_error(ErrorCode::InternalError, format!("Failed to load approval request: {}", e)));
+                return Ok(mcp_error(
+                    ErrorCode::InternalError,
+                    format!("Failed to load approval request: {}", e),
+                ));
             }
         };
 
         if approval.status != "pending" {
             return Ok(mcp_error_with_details(
                 ErrorCode::InvalidInput,
-                format!("Approval {} is already {}, cannot change", params.approval_id, approval.status),
+                format!(
+                    "Approval {} is already {}, cannot change",
+                    params.approval_id, approval.status
+                ),
                 json!({ "approval_id": params.approval_id, "current_status": approval.status }),
             ));
         }
@@ -1228,12 +1280,18 @@ impl R8rService {
             Ok(None) => {
                 return Ok(mcp_error_with_details(
                     ErrorCode::ResourceNotFound,
-                    format!("No checkpoint found for execution {}", approval.execution_id),
+                    format!(
+                        "No checkpoint found for execution {}",
+                        approval.execution_id
+                    ),
                     json!({ "execution_id": approval.execution_id }),
                 ));
             }
             Err(e) => {
-                return Ok(mcp_error(ErrorCode::InternalError, format!("Failed to load checkpoint: {}", e)));
+                return Ok(mcp_error(
+                    ErrorCode::InternalError,
+                    format!("Failed to load checkpoint: {}", e),
+                ));
             }
         };
 
@@ -1296,7 +1354,8 @@ impl R8rService {
             approval.decided_by.as_deref().unwrap_or("agent"),
             &format!(
                 "Approval {}: {} by {}",
-                decided_status, approval.id,
+                decided_status,
+                approval.id,
                 approval.decided_by.as_deref().unwrap_or("agent")
             ),
             Some(json!({
@@ -1504,7 +1563,11 @@ nodes:
     #[tokio::test]
     async fn test_r8r_list_approvals_empty() {
         let service = test_service();
-        let params = ListApprovalsParams { status: None, assignee: None, group: None };
+        let params = ListApprovalsParams {
+            status: None,
+            assignee: None,
+            group: None,
+        };
         let result = service.r8r_list_approvals(params).await.unwrap();
         assert!(!result.is_error.unwrap_or(false));
         let text = extract_text(&result);
@@ -1583,7 +1646,11 @@ nodes:
         assert_eq!(execute_data["status"], "paused");
 
         let listed = service
-            .r8r_list_approvals(ListApprovalsParams { status: None, assignee: None, group: None })
+            .r8r_list_approvals(ListApprovalsParams {
+                status: None,
+                assignee: None,
+                group: None,
+            })
             .await
             .unwrap();
         assert!(!listed.is_error.unwrap_or(false));

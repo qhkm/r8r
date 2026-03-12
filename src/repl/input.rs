@@ -153,10 +153,9 @@ pub fn parse_input(input: &str) -> InputCommand {
         "/arm" => InputCommand::ArmWrites,
         "/disarm" => InputCommand::Disarm,
         "/operator" => {
-            let enable = arg.as_deref().map(|s| match s.to_lowercase().as_str() {
-                "on" | "true" | "1" => true,
-                _ => false,
-            });
+            let enable = arg
+                .as_deref()
+                .map(|s| matches!(s.to_lowercase().as_str(), "on" | "true" | "1"));
             InputCommand::Operator { enable }
         }
         _ => InputCommand::Unknown(trimmed.to_string()),
@@ -188,7 +187,10 @@ pub fn slash_commands() -> Vec<(&'static str, &'static str)> {
         ("/plan [description]", "Draft a plan before executing"),
         ("/arm", "Arm write operations for this session"),
         ("/disarm", "Disarm write operations (safe mode)"),
-        ("/operator [on|off]", "Toggle operator mode (policy/gate status visible)"),
+        (
+            "/operator [on|off]",
+            "Toggle operator mode (policy/gate status visible)",
+        ),
         ("/help", "Show this help"),
         ("/exit", "Exit the REPL"),
     ]

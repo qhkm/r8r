@@ -34,8 +34,16 @@ const CTRL_C_EXIT_WINDOW: Duration = Duration::from_millis(1500);
 /// patterns with `"[REDACTED]"`. Works recursively for nested objects.
 pub fn redact_credentials(v: &serde_json::Value) -> serde_json::Value {
     const SENSITIVE: &[&str] = &[
-        "password", "token", "secret", "api_key", "apikey",
-        "authorization", "credential", "private_key", "access_key", "secret_key",
+        "password",
+        "token",
+        "secret",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_key",
+        "secret_key",
     ];
 
     match v {
@@ -45,7 +53,10 @@ pub fn redact_credentials(v: &serde_json::Value) -> serde_json::Value {
                 .map(|(k, val)| {
                     let lower = k.to_lowercase();
                     if SENSITIVE.iter().any(|s| lower.contains(s)) {
-                        (k.clone(), serde_json::Value::String("[REDACTED]".to_string()))
+                        (
+                            k.clone(),
+                            serde_json::Value::String("[REDACTED]".to_string()),
+                        )
                     } else {
                         (k.clone(), redact_credentials(val))
                     }
@@ -75,6 +86,7 @@ enum QuickActionCommand {
 }
 
 /// Active quick-action bar state.
+#[derive(Clone)]
 struct QuickActionBar {
     actions: Vec<QuickAction>,
     selected: usize,
@@ -267,6 +279,7 @@ impl InspectorTab {
 }
 
 /// Write-capable tool names. When writes are disarmed, these trigger a confirmation.
+#[allow(dead_code)]
 const WRITE_TOOLS: &[&str] = &[
     "r8r_create_workflow",
     "r8r_save_workflow",
@@ -277,6 +290,7 @@ const WRITE_TOOLS: &[&str] = &[
 ];
 
 /// A pending write action awaiting user confirmation.
+#[allow(dead_code)]
 struct PendingWriteConfirm {
     /// Friendly description of what will happen.
     summary: String,
@@ -315,6 +329,8 @@ pub struct ReplApp {
     busy_since: Option<Instant>,
     inspector_scroll: usize,
     quick_actions: Option<QuickActionBar>,
+    /// Saved action bar to restore after view-only commands (View YAML, View DAG, etc.)
+    sticky_actions: Option<QuickActionBar>,
     /// Guardrails: whether write-capable tool calls are permitted this session.
     /// Default: false (disarmed — safe mode). Set via /arm.
     pub writes_armed: bool,
@@ -360,6 +376,7 @@ impl ReplApp {
             busy_since: None,
             inspector_scroll: 0,
             quick_actions: None,
+            sticky_actions: None,
             writes_armed: false,
             operator_mode: false,
             pending_write_confirm: None,
@@ -518,6 +535,97 @@ pub enum ReplEvent {
         conversation: Conversation,
         result: TurnResult,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BusyStage {
+    Planning,
+    RunningTools,
+    Drafting,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BusyStateView {
+    stage: BusyStage,
+    headline: String,
+    detail: String,
+    support: Option<String>,
+}
+
+fn active_busy_tools(app: &ReplApp) -> Vec<String> {
+    let mut tools: Vec<String> = app.tool_start_times.keys().cloned().collect();
+    tools.sort();
+    tools
+}
+
+fn busy_progress_text(stage: BusyStage, spinner: &str) -> String {
+    let (plan, tools, reply) = match stage {
+        BusyStage::Planning => (spinner, "○", "○"),
+        BusyStage::RunningTools => ("✓", spinner, "○"),
+        BusyStage::Drafting => ("✓", "✓", spinner),
+    };
+    format!("plan {}  ->  tools {}  ->  reply {}", plan, tools, reply)
+}
+
+fn build_busy_state_view(app: &ReplApp) -> BusyStateView {
+    let active_tools = active_busy_tools(app);
+    let completed_tools = app.turn_outcome.tool_durations.len();
+    let latest_completed = app.turn_outcome.tool_durations.last().cloned();
+
+    if app.assistant_streaming_index.is_some() {
+        return BusyStateView {
+            stage: BusyStage::Drafting,
+            headline: "Drafting reply".to_string(),
+            detail: if completed_tools > 0 {
+                format!(
+                    "Turning {} tool result{} into the final response.",
+                    completed_tools,
+                    if completed_tools == 1 { "" } else { "s" }
+                )
+            } else {
+                "Composing a direct response.".to_string()
+            },
+            support: latest_completed.map(|entry| format!("Latest finished: {}", entry)),
+        };
+    }
+
+    if !active_tools.is_empty() {
+        let headline = if active_tools.len() == 1 {
+            format!("Running {}", active_tools[0])
+        } else {
+            format!("Running {} tools", active_tools.len())
+        };
+        let detail = if active_tools.len() == 1 {
+            format!("{} is currently in flight.", active_tools[0])
+        } else {
+            format!("Active tools: {}", active_tools.join(", "))
+        };
+        return BusyStateView {
+            stage: BusyStage::RunningTools,
+            headline,
+            detail,
+            support: latest_completed.map(|entry| format!("Latest finished: {}", entry)),
+        };
+    }
+
+    let detail = if let Some(last_tool) = latest_completed
+        .as_deref()
+        .and_then(|entry| entry.split_whitespace().next())
+    {
+        format!(
+            "Reviewing {} and deciding whether to answer directly or call another tool.",
+            last_tool
+        )
+    } else {
+        "Reading your prompt and choosing the first action.".to_string()
+    };
+
+    BusyStateView {
+        stage: BusyStage::Planning,
+        headline: "Planning next step".to_string(),
+        detail,
+        support: latest_completed.map(|entry| format!("Latest finished: {}", entry)),
+    }
 }
 
 fn parse_markdown_bold_spans(text: &str) -> Vec<Span<'static>> {
@@ -1127,6 +1235,8 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
     let input_height: u16 = if suggestion_rows > 0 {
         // Borders + input row + heading + suggestion rows
         (2 + 1 + 1 + suggestion_rows) as u16
+    } else if app.busy {
+        6
     } else {
         3
     };
@@ -1152,12 +1262,18 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
         app.model.clone()
     };
     let (status_text, status_style) = if app.busy {
+        let busy_state = build_busy_state_view(app);
         let elapsed = app
             .busy_since
             .map(|t| format_duration(t.elapsed()))
             .unwrap_or_else(|| "0s".to_string());
         (
-            format!("{} thinking {}", spinner, elapsed),
+            format!(
+                "{} {} {}",
+                spinner,
+                busy_state.headline.to_lowercase(),
+                elapsed
+            ),
             Style::default().fg(Color::Yellow),
         )
     } else {
@@ -1174,14 +1290,24 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
         "  Tab:panel  Ctrl+Y:yaml  Ctrl+I:toggle  ↑↓:scroll  Ctrl+↑↓:inspector  Ctrl+C:cancel"
     };
     let (arm_text, arm_style) = if app.writes_armed {
-        (" ⚡armed", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        (
+            " ⚡armed",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
         (" 🔒safe", Style::default().fg(Color::Green))
     };
     let operator_spans: Vec<Span<'_>> = if app.operator_mode {
         vec![
             Span::styled(" · ", Style::default().fg(Color::DarkGray)),
-            Span::styled("OPERATOR", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "OPERATOR",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]
     } else {
         vec![]
@@ -1208,7 +1334,10 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
         Span::styled(arm_text, arm_style),
     ];
     status_spans.extend(operator_spans);
-    status_spans.push(Span::styled(status_help, Style::default().fg(Color::DarkGray)));
+    status_spans.push(Span::styled(
+        status_help,
+        Style::default().fg(Color::DarkGray),
+    ));
     let status = Paragraph::new(Line::from(status_spans));
     frame.render_widget(status, root[0]);
 
@@ -1466,20 +1595,80 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
     }
 
     if app.busy {
+        let busy_state = build_busy_state_view(app);
         let elapsed = app
             .busy_since
             .map(|t| format_duration(t.elapsed()))
             .unwrap_or_else(|| "0ms".to_string());
+        let title = format!("AI {} {}", spinner, elapsed);
         conversation_lines.push(Line::from(vec![
-            Span::styled(" AI ", Style::default().fg(Color::Black).bg(Color::Green)),
-            Span::styled(" ", Style::default().fg(Color::DarkGray)),
+            Span::raw("  "),
+            Span::styled(
+                build_titled_top_border(card_inner_width, &title),
+                Style::default().fg(Color::Green),
+            ),
+        ]));
+        for line in wrap_for_width(&busy_state.headline, card_text_width) {
+            let padded = format!("{:<width$}", line, width = card_text_width);
+            conversation_lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("│ ", Style::default().fg(Color::Green)),
+                Span::styled(
+                    padded,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" │", Style::default().fg(Color::Green)),
+            ]));
+        }
+        for line in wrap_for_width(&busy_state.detail, card_text_width) {
+            let padded = format!("{:<width$}", line, width = card_text_width);
+            conversation_lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("│ ", Style::default().fg(Color::Green)),
+                Span::styled(padded, Style::default().fg(Color::Gray)),
+                Span::styled(" │", Style::default().fg(Color::Green)),
+            ]));
+        }
+        if let Some(support) = &busy_state.support {
+            for line in wrap_for_width(support, card_text_width) {
+                let padded = format!("{:<width$}", line, width = card_text_width);
+                conversation_lines.push(Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled("│ ", Style::default().fg(Color::Green)),
+                    Span::styled(padded, Style::default().fg(Color::DarkGray)),
+                    Span::styled(" │", Style::default().fg(Color::Green)),
+                ]));
+            }
+        }
+        let progress = format!(
+            "{:<width$}",
+            busy_progress_text(busy_state.stage, spinner),
+            width = card_text_width
+        );
+        conversation_lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled("│ ", Style::default().fg(Color::Green)),
+            Span::styled(progress, Style::default().fg(Color::Cyan)),
+            Span::styled(" │", Style::default().fg(Color::Green)),
+        ]));
+        let hint = format!(
+            "{:<width$}",
+            "Ctrl+C cancels the current turn.",
+            width = card_text_width
+        );
+        conversation_lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled("│ ", Style::default().fg(Color::Green)),
+            Span::styled(hint, Style::default().fg(Color::DarkGray)),
+            Span::styled(" │", Style::default().fg(Color::Green)),
         ]));
         conversation_lines.push(Line::from(vec![
-            Span::styled("  ", Style::default()),
-            Span::styled("▎ ", Style::default().fg(Color::Green)),
+            Span::raw("  "),
             Span::styled(
-                format!("thinking {} ({})", spinner, elapsed),
-                Style::default().fg(Color::Gray),
+                build_bottom_border(card_inner_width),
+                Style::default().fg(Color::Green),
             ),
         ]));
         conversation_lines.push(Line::from(""));
@@ -1602,10 +1791,39 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
         (" Input (Enter to send, /help) ", Color::White)
     };
     let mut input_lines = if app.busy {
-        vec![Line::from(Span::styled(
-            "Waiting for response...",
-            Style::default().fg(Color::DarkGray),
-        ))]
+        let busy_state = build_busy_state_view(app);
+        let elapsed = app
+            .busy_since
+            .map(|t| format_duration(t.elapsed()))
+            .unwrap_or_else(|| "0ms".to_string());
+        let mut lines = vec![
+            Line::from(Span::styled(
+                format!("{} {} ({})", spinner, busy_state.headline, elapsed),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                busy_state.detail,
+                Style::default().fg(Color::Gray),
+            )),
+            Line::from(Span::styled(
+                busy_progress_text(busy_state.stage, spinner),
+                Style::default().fg(Color::Cyan),
+            )),
+        ];
+        if let Some(support) = busy_state.support {
+            lines.push(Line::from(Span::styled(
+                support,
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                "Ctrl+C cancels the current turn.",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        lines
     } else if app.input.is_empty() {
         vec![Line::from(Span::styled(
             "Type / for commands, or ask in plain English...",
@@ -2258,7 +2476,9 @@ async fn handle_slash_command(
             let header = description
                 .as_deref()
                 .map(|d| format!("Plan: {}", d))
-                .unwrap_or_else(|| "Plan (describe what you want to do before running)".to_string());
+                .unwrap_or_else(|| {
+                    "Plan (describe what you want to do before running)".to_string()
+                });
             let plan_text = format!(
                 "{}\n\nSteps:\n  1. Describe what nodes/services will be called\n  2. Review side effects below\n  3. Run with /run <workflow> or tell the AI what to do\n\nSide effects from write-capable tools:\n  • r8r_create_workflow — creates/overwrites a workflow\n  • r8r_execute / r8r_run_and_wait — triggers execution (may call HTTP, agent, etc.)\n  • r8r_approve — resolves a human-in-the-loop approval\n\nWrite gate: {}\nUse /arm to allow writes, /disarm to return to safe mode.",
                 header,
@@ -2266,7 +2486,10 @@ async fn handle_slash_command(
             );
             app.log_lines = plan_text.lines().map(|s| s.to_string()).collect();
             app.inspector_tab = InspectorTab::Log;
-            app.push_message(MessageKind::System, format!("Plan loaded in Log panel. {}", header));
+            app.push_message(
+                MessageKind::System,
+                format!("Plan loaded in Log panel. {}", header),
+            );
         }
         InputCommand::ArmWrites => {
             app.writes_armed = true;
@@ -2300,7 +2523,10 @@ async fn handle_slash_command(
                     ),
                 );
             } else {
-                app.push_message(MessageKind::System, "Operator mode OFF — builder mode active.");
+                app.push_message(
+                    MessageKind::System,
+                    "Operator mode OFF — builder mode active.",
+                );
             }
         }
         InputCommand::NaturalLanguage(_) | InputCommand::Empty => {}
@@ -2313,10 +2539,8 @@ async fn handle_slash_command(
 fn input_has_write_intent(text: &str) -> bool {
     let lower = text.to_lowercase();
     let write_keywords = [
-        "create", "generate", "make", "build", "write", "add",
-        "run", "execute", "trigger", "start", "launch", "deploy",
-        "approve", "confirm", "accept",
-        "delete", "remove", "drop",
+        "create", "generate", "make", "build", "write", "add", "run", "execute", "trigger",
+        "start", "launch", "deploy", "approve", "confirm", "accept", "delete", "remove", "drop",
         "save", "update", "modify", "change",
     ];
     write_keywords.iter().any(|kw| lower.contains(kw))
@@ -2326,10 +2550,18 @@ fn input_has_write_intent(text: &str) -> bool {
 fn build_write_summary(text: &str) -> String {
     let lower = text.to_lowercase();
     let mut effects = Vec::new();
-    if lower.contains("create") || lower.contains("generate") || lower.contains("build") || lower.contains("make") {
+    if lower.contains("create")
+        || lower.contains("generate")
+        || lower.contains("build")
+        || lower.contains("make")
+    {
         effects.push("  • Create or overwrite a workflow definition");
     }
-    if lower.contains("run") || lower.contains("execute") || lower.contains("trigger") || lower.contains("start") {
+    if lower.contains("run")
+        || lower.contains("execute")
+        || lower.contains("trigger")
+        || lower.contains("start")
+    {
         effects.push("  • Execute a workflow (may call external APIs, send messages, etc.)");
     }
     if lower.contains("approve") || lower.contains("confirm") {
@@ -2415,7 +2647,9 @@ pub async fn run_repl_tui(
                     if let StreamUpdate::ToolCallResult { name, result } = &update {
                         // Extract execution_id from tool result if present, store for correlation.
                         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(result) {
-                            if let Some(exec_id) = parsed.get("execution_id").and_then(|v| v.as_str()) {
+                            if let Some(exec_id) =
+                                parsed.get("execution_id").and_then(|v| v.as_str())
+                            {
                                 app.last_run_id = Some(exec_id.to_string());
                             }
                         }
@@ -2456,7 +2690,13 @@ pub async fn run_repl_tui(
                             msg.text = compact.clone();
                         }
                         storage
-                            .save_repl_message(&app.session_id, "assistant", &compact, None, app.last_run_id.as_deref())
+                            .save_repl_message(
+                                &app.session_id,
+                                "assistant",
+                                &compact,
+                                None,
+                                app.last_run_id.as_deref(),
+                            )
                             .await?;
                     }
                     if let Some(card) = build_result_card(&app) {
@@ -2464,6 +2704,7 @@ pub async fn run_repl_tui(
                     }
                     // Show contextual quick-actions based on turn outcome
                     app.quick_actions = build_quick_actions(&app.turn_outcome);
+                    app.sticky_actions = app.quick_actions.clone();
                     app.turn_outcome = TurnOutcome::default();
                     app.last_run_id = None;
                     app.tool_start_times.clear();
@@ -2617,9 +2858,14 @@ pub async fn run_repl_tui(
 
                         // ── Pending write confirmation ─────────────────
                         if let Some(confirm) = app.pending_write_confirm.take() {
-                            if submitted.trim().eq_ignore_ascii_case("yes") || submitted.trim() == "y" {
+                            if submitted.trim().eq_ignore_ascii_case("yes")
+                                || submitted.trim() == "y"
+                            {
                                 // User confirmed: arm for this turn, re-submit the original input
-                                app.push_message(MessageKind::System, "✓ Confirmed. Proceeding with write operations.");
+                                app.push_message(
+                                    MessageKind::System,
+                                    "✓ Confirmed. Proceeding with write operations.",
+                                );
                                 // Re-queue the original text as if it was freshly typed
                                 app.input = confirm.original_input.clone();
                                 // The next iteration will pick it up. For now, manually reprocess:
@@ -2628,7 +2874,15 @@ pub async fn run_repl_tui(
                                 app.last_run_id = None;
                                 app.tool_start_times.clear();
                                 app.push_message(MessageKind::User, original.clone());
-                                let _ = storage.save_repl_message(&app.session_id, "user", &original, None, None).await;
+                                let _ = storage
+                                    .save_repl_message(
+                                        &app.session_id,
+                                        "user",
+                                        &original,
+                                        None,
+                                        None,
+                                    )
+                                    .await;
                                 let Some(config) = active_llm_config.clone() else {
                                     app.push_message(MessageKind::Error, "LLM is not configured.");
                                     continue;
@@ -2648,9 +2902,10 @@ pub async fn run_repl_tui(
                                 let text_cloned = original;
                                 current_turn = Some(tokio::spawn(async move {
                                     let tx_stream = tx_updates.clone();
-                                    let callback: engine::StreamCallback = Box::new(move |update| {
-                                        let _ = tx_stream.send(ReplEvent::Stream(update));
-                                    });
+                                    let callback: engine::StreamCallback =
+                                        Box::new(move |update| {
+                                            let _ = tx_stream.send(ReplEvent::Stream(update));
+                                        });
                                     let result = engine::run_turn(
                                         &mut conversation,
                                         &text_cloned,
@@ -2661,11 +2916,18 @@ pub async fn run_repl_tui(
                                         &executor_cloned,
                                         &tool_defs_cloned,
                                         &callback,
-                                    ).await;
-                                    let _ = tx_updates.send(ReplEvent::TurnComplete { conversation, result });
+                                    )
+                                    .await;
+                                    let _ = tx_updates.send(ReplEvent::TurnComplete {
+                                        conversation,
+                                        result,
+                                    });
                                 }));
                             } else {
-                                app.push_message(MessageKind::System, "✗ Cancelled. No write operations performed.");
+                                app.push_message(
+                                    MessageKind::System,
+                                    "✗ Cancelled. No write operations performed.",
+                                );
                             }
                             continue;
                         }
@@ -2729,6 +2991,7 @@ pub async fn run_repl_tui(
                                 app.busy_since = Some(Instant::now());
                                 app.assistant_streaming_index = None;
                                 app.quick_actions = None;
+                                app.sticky_actions = None;
                                 app.push_log("Calling LLM...");
 
                                 let mut conversation = app.conversation.clone();
@@ -2777,6 +3040,12 @@ pub async fn run_repl_tui(
                                     &mut active_llm_config,
                                 )
                                 .await?;
+                                // Restore action bar after view-only slash commands so user
+                                // can switch between views (e.g. View YAML → View DAG).
+                                // If the command set its own bar (e.g. /run), keep that instead.
+                                if app.quick_actions.is_none() {
+                                    app.quick_actions = app.sticky_actions.clone();
+                                }
                             }
                         }
                     } else if let KeyCode::Char(ch) = key.code {
@@ -2811,3 +3080,85 @@ pub async fn run_repl_tui(
 
 /// Extra key handling placeholder for keys not explicitly consumed in loop.
 pub fn handle_key_event(_app: &mut ReplApp, _key: KeyEvent) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_app() -> ReplApp {
+        ReplApp::new(
+            "session-1".to_string(),
+            "gpt-test".to_string(),
+            Conversation::new(MAX_CONTEXT_MESSAGES),
+            0,
+        )
+    }
+
+    #[test]
+    fn busy_state_starts_in_planning() {
+        let app = test_app();
+
+        let state = build_busy_state_view(&app);
+
+        assert_eq!(state.stage, BusyStage::Planning);
+        assert_eq!(state.headline, "Planning next step");
+        assert_eq!(
+            state.detail,
+            "Reading your prompt and choosing the first action."
+        );
+        assert_eq!(
+            busy_progress_text(state.stage, "◐"),
+            "plan ◐  ->  tools ○  ->  reply ○"
+        );
+    }
+
+    #[test]
+    fn busy_state_shows_active_tool_work() {
+        let mut app = test_app();
+        app.tool_start_times
+            .insert("r8r_generate".to_string(), Instant::now());
+        app.turn_outcome
+            .tool_durations
+            .push("r8r_list_workflows 120ms".to_string());
+
+        let state = build_busy_state_view(&app);
+
+        assert_eq!(state.stage, BusyStage::RunningTools);
+        assert_eq!(state.headline, "Running r8r_generate");
+        assert_eq!(state.detail, "r8r_generate is currently in flight.");
+        assert_eq!(
+            state.support.as_deref(),
+            Some("Latest finished: r8r_list_workflows 120ms")
+        );
+    }
+
+    #[test]
+    fn busy_state_switches_to_drafting_when_streaming() {
+        let mut app = test_app();
+        app.turn_outcome
+            .tool_durations
+            .push("r8r_generate 1.4s".to_string());
+        app.messages.push(DisplayMessage {
+            kind: MessageKind::Assistant,
+            text: "partial".to_string(),
+        });
+        app.assistant_streaming_index = Some(0);
+
+        let state = build_busy_state_view(&app);
+
+        assert_eq!(state.stage, BusyStage::Drafting);
+        assert_eq!(state.headline, "Drafting reply");
+        assert_eq!(
+            state.detail,
+            "Turning 1 tool result into the final response."
+        );
+        assert_eq!(
+            state.support.as_deref(),
+            Some("Latest finished: r8r_generate 1.4s")
+        );
+        assert_eq!(
+            busy_progress_text(state.stage, "◓"),
+            "plan ✓  ->  tools ✓  ->  reply ◓"
+        );
+    }
+}
