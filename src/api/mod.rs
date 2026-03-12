@@ -804,10 +804,7 @@ async fn decide_approval_handler(
     if !was_updated {
         return api_error_response(
             ApiErrorCode::ConflictError,
-            format!(
-                "Approval '{}' was already decided by another request",
-                id
-            ),
+            format!("Approval '{}' was already decided by another request", id),
             None,
         )
         .into_response();

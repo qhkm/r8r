@@ -260,7 +260,15 @@ async fn process_due_events(
         // Delete from queue first (prevents re-processing on crash/restart)
         let _ = storage.delete_delayed_event(&event_id).await;
 
-        match process_single_event(&event, Arc::clone(&storage), registry, backend, monitor.clone()).await {
+        match process_single_event(
+            &event,
+            Arc::clone(&storage),
+            registry,
+            backend,
+            monitor.clone(),
+        )
+        .await
+        {
             Ok(()) => {
                 processed += 1;
             }

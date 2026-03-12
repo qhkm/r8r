@@ -5,14 +5,13 @@
 
 use async_trait::async_trait;
 use std::time::Instant;
-use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tracing::warn;
 
 use super::{
-    collect_output_artifacts, SandboxArtifact, SandboxBackend, SandboxError, SandboxRequest,
-    SandboxResult, SandboxStreamEvent,
+    collect_output_artifacts, SandboxBackend, SandboxError, SandboxRequest, SandboxResult,
+    SandboxStreamEvent,
 };
 
 /// Subprocess-based sandbox backend.
@@ -42,6 +41,7 @@ impl Default for SubprocessBackend {
 }
 
 /// Resolve runtime name to binary path.
+#[cfg(test)]
 fn runtime_binary(runtime: &str) -> Result<&str, SandboxError> {
     match runtime {
         "python3" | "python" => Ok("python3"),
@@ -66,14 +66,12 @@ fn build_shell_cmd(
         String::new()
     } else {
         match runtime {
-            "python3" | "python" => format!(
-                "pip install -q {} 2>/dev/null && ",
-                packages.join(" ")
-            ),
-            "node" | "nodejs" | "javascript" => format!(
-                "npm install -g {} 2>/dev/null && ",
-                packages.join(" ")
-            ),
+            "python3" | "python" => {
+                format!("pip install -q {} 2>/dev/null && ", packages.join(" "))
+            }
+            "node" | "nodejs" | "javascript" => {
+                format!("npm install -g {} 2>/dev/null && ", packages.join(" "))
+            }
             _ => String::new(),
         }
     };
@@ -196,8 +194,8 @@ impl SandboxBackend for SubprocessBackend {
 
     /// Streaming variant: spawns child process and forwards stdout/stderr line-by-line.
     async fn execute_streaming(&self, req: SandboxRequest, tx: mpsc::Sender<SandboxStreamEvent>) {
-        use tokio::io::BufReader;
         use tokio::io::AsyncBufReadExt;
+        use tokio::io::BufReader;
         use tokio::process::Command;
 
         let start = Instant::now();
@@ -451,7 +449,8 @@ mod tests {
     async fn test_subprocess_env_vars() {
         let backend = SubprocessBackend;
         let mut req = make_request("bash", "echo $MY_VAR");
-        req.env.insert("MY_VAR".to_string(), "test_value".to_string());
+        req.env
+            .insert("MY_VAR".to_string(), "test_value".to_string());
         let result = backend.execute(req).await.unwrap();
         assert_eq!(result.stdout.trim(), "test_value");
     }
@@ -482,7 +481,9 @@ echo '{"key": "value"}' > "$R8R_OUTPUT_DIR/data.json"
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.artifacts.len(), 2);
         let names: Vec<&str> = result.artifacts.iter().map(|a| a.path.as_str()).collect();
-        assert!(names.contains(&"greeting.txt") || names.iter().any(|n| n.ends_with("greeting.txt")));
+        assert!(
+            names.contains(&"greeting.txt") || names.iter().any(|n| n.ends_with("greeting.txt"))
+        );
     }
 
     #[tokio::test]

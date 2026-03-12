@@ -61,7 +61,8 @@ async fn save_test_workflow(storage: &dyn Storage, id: &str, yaml: &str) {
 
 #[tokio::test]
 async fn test_failed_execution_creates_dlq_entry() {
-    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> =
+        std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
     // DLQ table is created by init_schema_sync — no separate init_dlq() call needed.
 
     let mut registry = NodeRegistry::new();
@@ -115,7 +116,8 @@ nodes:
 
 #[tokio::test]
 async fn test_dlq_entry_has_correct_fields() {
-    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> =
+        std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
 
     let mut registry = NodeRegistry::new();
     registry.register(Arc::new(AlwaysFailNode));
@@ -149,10 +151,7 @@ nodes:
     assert_eq!(entry.execution_id, execution.id, "execution_id mismatch");
 
     // workflow_id
-    assert_eq!(
-        entry.workflow_id, "wf-field-check",
-        "workflow_id mismatch"
-    );
+    assert_eq!(entry.workflow_id, "wf-field-check", "workflow_id mismatch");
 
     // workflow_name
     assert_eq!(
@@ -196,7 +195,8 @@ nodes:
 
 #[tokio::test]
 async fn test_dlq_not_created_on_success() {
-    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> =
+        std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
 
     let registry = NodeRegistry::new();
     let executor = Executor::new(registry, storage.clone());
@@ -239,7 +239,8 @@ nodes:
 
 #[tokio::test]
 async fn test_unknown_node_type_creates_dlq_entry() {
-    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> =
+        std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
 
     // Default registry does not have 'nonexistent_node_type_xyz'
     let registry = NodeRegistry::new();

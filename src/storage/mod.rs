@@ -18,8 +18,8 @@ pub use models::{
     WorkflowVersion,
 };
 pub use pool::{ConnectionPool, PoolConfig, PoolStats};
-pub use sqlite::SqliteStorage;
 pub use r#trait::Storage;
+pub use sqlite::SqliteStorage;
 
 #[cfg(feature = "storage-postgres")]
 pub use postgres::PostgresStorage;

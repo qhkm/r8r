@@ -127,6 +127,12 @@ tempfile = { version = "3", optional = true }
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "chrono", "uuid", "json"], optional = true }
 
 
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"

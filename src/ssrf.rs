@@ -25,8 +25,7 @@ pub fn check_ssrf(url: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|e| format!("Invalid URL '{}': {}", url, e))?;
+    let parsed = reqwest::Url::parse(url).map_err(|e| format!("Invalid URL '{}': {}", url, e))?;
 
     match parsed.scheme() {
         "http" | "https" => {}
@@ -64,7 +63,9 @@ pub fn check_ssrf(url: &str) -> Result<(), String> {
             || host_lower == "metadata.google.internal"
             || host_lower == "169.254.169.254"
         {
-            return Err("Access to internal hostnames is not allowed for security reasons.".to_string());
+            return Err(
+                "Access to internal hostnames is not allowed for security reasons.".to_string(),
+            );
         }
     }
 

@@ -119,11 +119,12 @@ async fn test_list_approvals_by_status() {
     assert_eq!(approved[0].id, "a3");
 
     // No filter → should return all 3
-    let all = storage
-        .list_approval_requests(None, 100, 0)
-        .await
-        .unwrap();
-    assert_eq!(all.len(), 3, "expected all 3 approvals with no status filter");
+    let all = storage.list_approval_requests(None, 100, 0).await.unwrap();
+    assert_eq!(
+        all.len(),
+        3,
+        "expected all 3 approvals with no status filter"
+    );
 }
 
 // ─── Test 2: pagination ──────────────────────────────────────────────────────
@@ -137,8 +138,7 @@ async fn test_list_approvals_pagination() {
     for i in 0..5u32 {
         let mut approval = make_approval(&format!("p{i}"), "pending");
         // Spread timestamps so newest-first ordering is deterministic
-        approval.created_at = Utc::now()
-            + chrono::Duration::seconds(i as i64);
+        approval.created_at = Utc::now() + chrono::Duration::seconds(i as i64);
         storage.save_approval_request(&approval).await.unwrap();
     }
 
@@ -172,7 +172,11 @@ async fn test_list_approvals_pagination() {
         .collect();
     all_ids.sort();
     all_ids.dedup();
-    assert_eq!(all_ids.len(), 5, "all 5 distinct items should appear across pages");
+    assert_eq!(
+        all_ids.len(),
+        5,
+        "all 5 distinct items should appear across pages"
+    );
 }
 
 // ─── Test 3: get found ───────────────────────────────────────────────────────
@@ -238,10 +242,7 @@ async fn test_get_approval_not_found() {
         .await
         .unwrap();
 
-    assert!(
-        result.is_none(),
-        "non-existent ID should return Ok(None)"
-    );
+    assert!(result.is_none(), "non-existent ID should return Ok(None)");
 }
 
 // ─── Test 5: decide approval success ────────────────────────────────────────
@@ -269,7 +270,10 @@ async fn test_decide_approval_success() {
         .await
         .unwrap();
 
-    assert!(updated, "decide should return true when a pending row is updated");
+    assert!(
+        updated,
+        "decide should return true when a pending row is updated"
+    );
 
     let got = storage
         .get_approval_request("decide-me")
@@ -325,7 +329,10 @@ async fn test_decide_approval_already_decided() {
         )
         .await
         .unwrap();
-    assert!(!second, "second decide on already-decided approval should return false");
+    assert!(
+        !second,
+        "second decide on already-decided approval should return false"
+    );
 
     // The stored record must reflect the first decision, not the second
     let got = storage
@@ -333,7 +340,10 @@ async fn test_decide_approval_already_decided() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(got.status, "approved", "status should not change after double-decide");
+    assert_eq!(
+        got.status, "approved",
+        "status should not change after double-decide"
+    );
     assert_eq!(
         got.decided_by.as_deref(),
         Some("alice"),
@@ -348,14 +358,7 @@ async fn test_decide_approval_not_found() {
     let storage = open_storage();
 
     let result = storage
-        .decide_approval_request(
-            "ghost-id",
-            "approved",
-            "nobody",
-            None,
-            Utc::now(),
-            "gate",
-        )
+        .decide_approval_request("ghost-id", "approved", "nobody", None, Utc::now(), "gate")
         .await
         .unwrap();
 
@@ -427,7 +430,10 @@ async fn test_decide_approval_reject() {
         .await
         .unwrap();
 
-    assert!(updated, "reject should return true when a pending row is updated");
+    assert!(
+        updated,
+        "reject should return true when a pending row is updated"
+    );
 
     let got = storage
         .get_approval_request("reject-me")
@@ -437,9 +443,9 @@ async fn test_decide_approval_reject() {
 
     assert_eq!(got.status, "rejected", "status should be rejected");
     assert_eq!(got.decided_by.as_deref(), Some("manager"));
-    assert_eq!(
-        got.decision_comment.as_deref(),
-        Some("Policy violation")
+    assert_eq!(got.decision_comment.as_deref(), Some("Policy violation"));
+    assert!(
+        got.decided_at.is_some(),
+        "decided_at should be set on rejection"
     );
-    assert!(got.decided_at.is_some(), "decided_at should be set on rejection");
 }

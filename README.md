@@ -301,6 +301,8 @@ r8r credentials set <name>            # Store secret
 r8r credentials list                  # List (masked)
 ```
 
+While a prompt is running, the REPL TUI shows staged progress: planning, active tool calls, latest completed tool, and reply drafting, alongside elapsed time.
+
 ## Security
 
 - **SSRF Protection** — Blocks internal IP requests

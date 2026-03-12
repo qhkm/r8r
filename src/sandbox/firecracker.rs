@@ -390,6 +390,7 @@ impl SandboxBackend for FirecrackerBackend {
                     stderr,
                     exit_code: resp.exit_code,
                     duration_ms,
+                    artifacts: Vec::new(),
                 })
             }
             Ok(Err(e)) => Err(e),

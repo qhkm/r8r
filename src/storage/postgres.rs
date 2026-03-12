@@ -278,7 +278,11 @@ fn row_to_execution(r: &sqlx::postgres::PgRow) -> Result<Execution> {
         id: r.try_get("id").map_err(sqlx_err)?,
         workflow_id: r.try_get("workflow_id").map_err(sqlx_err)?,
         workflow_name: r.try_get("workflow_name").map_err(sqlx_err)?,
-        workflow_version: r.try_get::<Option<i32>, _>("workflow_version").ok().flatten().map(|v| v as u32),
+        workflow_version: r
+            .try_get::<Option<i32>, _>("workflow_version")
+            .ok()
+            .flatten()
+            .map(|v| v as u32),
         status: status_str.parse().unwrap_or(ExecutionStatus::Failed),
         trigger_type: r.try_get("trigger_type").map_err(sqlx_err)?,
         input: serde_json::from_str(&input_str).unwrap_or_default(),
@@ -515,9 +519,18 @@ impl Storage for PostgresStorage {
         version: u32,
         created_by: Option<&str>,
     ) -> Result<StoredWorkflow> {
-        let ver = self.get_workflow_version(workflow_name, version).await?
-            .ok_or_else(|| Error::Storage(format!("Version {} not found for {}", version, workflow_name)))?;
-        let wf = self.get_workflow(workflow_name).await?
+        let ver = self
+            .get_workflow_version(workflow_name, version)
+            .await?
+            .ok_or_else(|| {
+                Error::Storage(format!(
+                    "Version {} not found for {}",
+                    version, workflow_name
+                ))
+            })?;
+        let wf = self
+            .get_workflow(workflow_name)
+            .await?
             .ok_or_else(|| Error::Storage(format!("Workflow '{}' not found", workflow_name)))?;
 
         let now = Utc::now();
@@ -529,7 +542,10 @@ impl Storage for PostgresStorage {
             .await
             .map_err(sqlx_err)?;
 
-        let max_v = self.get_latest_workflow_version_number(&wf.id).await?.unwrap_or(0);
+        let max_v = self
+            .get_latest_workflow_version_number(&wf.id)
+            .await?
+            .unwrap_or(0);
         let new_version = max_v + 1;
         let new_ver_id = uuid::Uuid::new_v4().to_string();
         let checksum = format!("{:016x}", {
@@ -677,9 +693,17 @@ impl Storage for PostgresStorage {
             idx += 1;
         }
 
-        let limit = if query.limit == 0 { 50 } else { query.limit.min(1000) };
+        let limit = if query.limit == 0 {
+            50
+        } else {
+            query.limit.min(1000)
+        };
         let offset = query.offset;
-        sql.push_str(&format!(" ORDER BY started_at DESC LIMIT ${} OFFSET ${}", idx, idx + 1));
+        sql.push_str(&format!(
+            " ORDER BY started_at DESC LIMIT ${} OFFSET ${}",
+            idx,
+            idx + 1
+        ));
 
         let mut q = sqlx::query(&sql);
         for b in &binds {
@@ -920,7 +944,8 @@ impl Storage for PostgresStorage {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<ApprovalRequest>> {
-        self.list_approval_requests_filtered(status_filter, None, None, limit, offset).await
+        self.list_approval_requests_filtered(status_filter, None, None, limit, offset)
+            .await
     }
 
     async fn list_approval_requests_filtered(
@@ -955,7 +980,11 @@ impl Storage for PostgresStorage {
             binds.push(format!("%\"{}\"% ", g));
             idx += 1;
         }
-        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ${} OFFSET ${}", idx, idx + 1));
+        sql.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+            idx,
+            idx + 1
+        ));
 
         let mut q = sqlx::query(&sql);
         for b in &binds {
@@ -1177,7 +1206,11 @@ impl Storage for PostgresStorage {
                     api_key: r.try_get("api_key").ok().flatten(),
                     endpoint: r.try_get("endpoint").ok().flatten(),
                     temperature: r.try_get("temperature").ok().flatten(),
-                    max_tokens: r.try_get::<Option<i64>, _>("max_tokens").ok().flatten().map(|v| v as u32),
+                    max_tokens: r
+                        .try_get::<Option<i64>, _>("max_tokens")
+                        .ok()
+                        .flatten()
+                        .map(|v| v as u32),
                     timeout_seconds: timeout.max(1) as u64,
                 })
             })
@@ -1243,13 +1276,12 @@ impl Storage for PostgresStorage {
 
     async fn count_pending_delayed_events(&self) -> Result<u64> {
         let now = Utc::now();
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM delayed_events WHERE scheduled_at > $1",
-        )
-        .bind(now)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(sqlx_err)?;
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM delayed_events WHERE scheduled_at > $1")
+                .bind(now)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(sqlx_err)?;
         Ok(count.max(0) as u64)
     }
 
@@ -1314,7 +1346,11 @@ impl Storage for PostgresStorage {
             binds.push(v.to_rfc3339());
             idx += 1;
         }
-        sql.push_str(&format!(" ORDER BY timestamp DESC LIMIT ${} OFFSET ${}", idx, idx + 1));
+        sql.push_str(&format!(
+            " ORDER BY timestamp DESC LIMIT ${} OFFSET ${}",
+            idx,
+            idx + 1
+        ));
 
         let mut q = sqlx::query(&sql);
         for b in &binds {
@@ -1327,9 +1363,9 @@ impl Storage for PostgresStorage {
         rows.iter()
             .map(|r| {
                 let event_str: String = r.try_get("event_type").map_err(sqlx_err)?;
-                let event_type: AuditEventType = event_str
-                    .parse()
-                    .map_err(|_| Error::Storage(format!("Unknown audit event type: {}", event_str)))?;
+                let event_type: AuditEventType = event_str.parse().map_err(|_| {
+                    Error::Storage(format!("Unknown audit event type: {}", event_str))
+                })?;
                 let metadata_str: Option<String> = r.try_get("metadata").ok().flatten();
                 Ok(AuditEntry {
                     id: r.try_get("id").map_err(sqlx_err)?,
@@ -1470,25 +1506,40 @@ impl Storage for PostgresStorage {
         .execute(&self.pool)
         .await
         .map_err(sqlx_err)?;
-        let count: i32 = sqlx::query_scalar("SELECT retry_count FROM dead_letter_queue WHERE id = $1")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(sqlx_err)?;
+        let count: i32 =
+            sqlx::query_scalar("SELECT retry_count FROM dead_letter_queue WHERE id = $1")
+                .bind(id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(sqlx_err)?;
         Ok(count as u32)
     }
 
     async fn get_dlq_stats(&self) -> Result<DlqStats> {
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dead_letter_queue")
-            .fetch_one(&self.pool).await.map_err(sqlx_err)?;
-        let pending: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dead_letter_queue WHERE status='pending'")
-            .fetch_one(&self.pool).await.map_err(sqlx_err)?;
-        let scheduled: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dead_letter_queue WHERE status='scheduled'")
-            .fetch_one(&self.pool).await.map_err(sqlx_err)?;
-        let resolved: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dead_letter_queue WHERE status='resolved'")
-            .fetch_one(&self.pool).await.map_err(sqlx_err)?;
-        let discarded: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dead_letter_queue WHERE status='discarded'")
-            .fetch_one(&self.pool).await.map_err(sqlx_err)?;
+            .fetch_one(&self.pool)
+            .await
+            .map_err(sqlx_err)?;
+        let pending: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM dead_letter_queue WHERE status='pending'")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(sqlx_err)?;
+        let scheduled: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM dead_letter_queue WHERE status='scheduled'")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(sqlx_err)?;
+        let resolved: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM dead_letter_queue WHERE status='resolved'")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(sqlx_err)?;
+        let discarded: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM dead_letter_queue WHERE status='discarded'")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(sqlx_err)?;
         Ok(DlqStats {
             total: total as u64,
             pending: pending as u64,

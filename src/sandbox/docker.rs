@@ -15,7 +15,9 @@ use std::collections::HashMap;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use super::{collect_output_artifacts, SandboxBackend, SandboxError, SandboxRequest, SandboxResult};
+use super::{
+    collect_output_artifacts, SandboxBackend, SandboxError, SandboxRequest, SandboxResult,
+};
 use crate::config::SandboxDockerConfig;
 
 /// Docker-based sandbox backend.
@@ -314,20 +316,20 @@ mod tests {
 
     #[test]
     fn test_cmd_for_runtime_python() {
-        let cmd = DockerBackend::cmd_for_runtime("python3", "print('hi')");
-        assert_eq!(cmd, vec!["python3", "-c", "print('hi')"]);
+        let cmd = DockerBackend::cmd_for_runtime("python3", &[]).unwrap();
+        assert_eq!(cmd, vec!["sh", "-c", "python3 /r8r_sandbox/code.py"]);
     }
 
     #[test]
     fn test_cmd_for_runtime_node() {
-        let cmd = DockerBackend::cmd_for_runtime("node", "console.log('hi')");
-        assert_eq!(cmd, vec!["node", "-e", "console.log('hi')"]);
+        let cmd = DockerBackend::cmd_for_runtime("node", &[]).unwrap();
+        assert_eq!(cmd, vec!["sh", "-c", "node /r8r_sandbox/code.js"]);
     }
 
     #[test]
     fn test_cmd_for_runtime_bash() {
-        let cmd = DockerBackend::cmd_for_runtime("bash", "echo hi");
-        assert_eq!(cmd, vec!["sh", "-c", "echo hi"]);
+        let cmd = DockerBackend::cmd_for_runtime("bash", &[]).unwrap();
+        assert_eq!(cmd, vec!["sh", "-c", "bash /r8r_sandbox/code.sh"]);
     }
 
     // Docker integration tests require Docker daemon and are not run in CI.

@@ -338,6 +338,18 @@ pub(crate) fn inject_approval_decision_into_checkpoint(
     Some(node_id)
 }
 
+fn is_approval_pause_status(status: &str) -> bool {
+    matches!(status, "paused" | "waiting_for_approval")
+}
+
+fn normalize_execution_status(status: &str) -> &str {
+    if is_approval_pause_status(status) {
+        "paused"
+    } else {
+        status
+    }
+}
+
 #[tool(tool_box)]
 impl R8rService {
     /// Execute an r8r workflow and return the result.
@@ -401,18 +413,10 @@ impl R8rService {
                         json!({ "execution_id": execution.id, "status": status_str }),
                     ));
                 }
-                if status_str == "waiting_for_approval" {
-                    return Ok(mcp_error_with_details(
-                        ErrorCode::ApprovalRequired,
-                        "Workflow is paused waiting for human approval",
-                        json!({ "execution_id": execution.id }),
-                    ));
-                }
-
                 let result = json!({
                     "execution_id": execution.id,
                     "workflow": execution.workflow_name,
-                    "status": status_str,
+                    "status": normalize_execution_status(&status_str),
                     "output": execution.output,
                     "error": execution.error,
                     "duration_ms": duration_ms
@@ -832,11 +836,14 @@ impl R8rService {
                         json!({ "execution_id": execution.id }),
                     ));
                 }
-                if status_str == "waiting_for_approval" {
+                if is_approval_pause_status(&status_str) {
                     return Ok(mcp_error_with_details(
                         ErrorCode::ApprovalRequired,
                         "Workflow is paused waiting for human approval",
-                        json!({ "execution_id": execution.id }),
+                        json!({
+                            "execution_id": execution.id,
+                            "status": normalize_execution_status(&status_str),
+                        }),
                     ));
                 }
                 match execution.output {
@@ -1533,6 +1540,13 @@ nodes:
         }
     }
 
+    #[test]
+    fn test_normalize_execution_status_maps_approval_pause() {
+        assert_eq!(normalize_execution_status("waiting_for_approval"), "paused");
+        assert_eq!(normalize_execution_status("paused"), "paused");
+        assert_eq!(normalize_execution_status("completed"), "completed");
+    }
+
     #[tokio::test]
     async fn test_r8r_execute_workflow_not_found() {
         let service = test_service();
@@ -1641,9 +1655,17 @@ nodes:
             })
             .await
             .unwrap();
-        assert!(!execute.is_error.unwrap_or(false));
+        // A paused-for-approval workflow is a successful execution with status "paused"
+        // and the approval details in the output — it is NOT an error.
+        assert!(
+            !execute.is_error.unwrap_or(false),
+            "expected is_error=false for approval-paused workflow, got: {}",
+            extract_text(&execute)
+        );
         let execute_data: Value = serde_json::from_str(extract_text(&execute)).unwrap();
         assert_eq!(execute_data["status"], "paused");
+        assert!(execute_data["output"]["approval_id"].is_string());
+        assert_eq!(execute_data["output"]["title"], "Approve large order");
 
         let listed = service
             .r8r_list_approvals(ListApprovalsParams {

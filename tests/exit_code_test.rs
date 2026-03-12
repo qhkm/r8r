@@ -87,7 +87,13 @@ fn prompt_dry_run_saves_nothing() {
     cmd.assert().success();
     let db_count = std::fs::read_dir(dir.path())
         .unwrap()
-        .filter(|e| e.as_ref().unwrap().path().extension().map_or(false, |x| x == "db"))
+        .filter(|e| {
+            e.as_ref()
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|x| x == "db")
+        })
         .count();
     assert_eq!(db_count, 0, "dry-run should not write to storage");
 }

@@ -408,9 +408,15 @@ async fn test_list_ordering() {
     }
 
     // The entry with the largest delta (5s) should be first.
-    assert_eq!(results[0].id, "ord-0", "entry with +5s delta should be first");
+    assert_eq!(
+        results[0].id, "ord-0",
+        "entry with +5s delta should be first"
+    );
     // The entry with delta 0 should be last.
-    assert_eq!(results[4].id, "ord-3", "entry with +0s delta should be last");
+    assert_eq!(
+        results[4].id, "ord-3",
+        "entry with +0s delta should be last"
+    );
 }
 
 // ─── Test 10: AuditEventType Display <-> FromStr round-trip ─────────────────

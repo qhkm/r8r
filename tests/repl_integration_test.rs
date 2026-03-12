@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn test_tool_execution_list_workflows() {
-    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> =
+        std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
     let executor = Arc::new(Executor::new(NodeRegistry::new(), storage.clone()));
 
     let result = execute_tool("r8r_list_workflows", &json!({}), &storage, &executor).await;
@@ -19,7 +20,8 @@ async fn test_tool_execution_list_workflows() {
 
 #[tokio::test]
 async fn test_tool_execution_validate_valid_yaml() {
-    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> =
+        std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
     let executor = Arc::new(Executor::new(NodeRegistry::new(), storage.clone()));
 
     let yaml = "name: test\nnodes:\n  - id: step1\n    type: transform\n    config:\n      expression: '\"hello\"'\n";
@@ -30,7 +32,8 @@ async fn test_tool_execution_validate_valid_yaml() {
 
 #[tokio::test]
 async fn test_tool_execution_validate_invalid_yaml() {
-    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> =
+        std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
     let executor = Arc::new(Executor::new(NodeRegistry::new(), storage.clone()));
 
     let result = execute_tool(
@@ -46,7 +49,8 @@ async fn test_tool_execution_validate_invalid_yaml() {
 
 #[tokio::test]
 async fn test_tool_execution_unknown_tool() {
-    let storage: std::sync::Arc<dyn r8r::storage::Storage> = std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
+    let storage: std::sync::Arc<dyn r8r::storage::Storage> =
+        std::sync::Arc::new(SqliteStorage::open_in_memory().unwrap());
     let executor = Arc::new(Executor::new(NodeRegistry::new(), storage.clone()));
 
     let result = execute_tool("r8r_nonexistent", &json!({}), &storage, &executor).await;

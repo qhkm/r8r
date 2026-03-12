@@ -35,11 +35,7 @@ pub trait SandboxBackend: Send + Sync + 'static {
     ///
     /// Default implementation buffers all output and sends a single Done event.
     /// Backends that support real streaming should override this.
-    async fn execute_streaming(
-        &self,
-        req: SandboxRequest,
-        tx: mpsc::Sender<SandboxStreamEvent>,
-    ) {
+    async fn execute_streaming(&self, req: SandboxRequest, tx: mpsc::Sender<SandboxStreamEvent>) {
         match self.execute(req).await {
             Ok(result) => {
                 if !result.stdout.is_empty() {
