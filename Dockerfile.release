@@ -1,0 +1,29 @@
+# Dockerfile.release — thin runtime image for CI releases
+# Pre-built binaries are copied in as build context (no Rust compilation)
+#
+# Usage (CI only):
+#   docker buildx build -f Dockerfile.release --platform linux/amd64 .
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -r -s /bin/false -d /data r8r
+
+COPY r8r /usr/local/bin/
+COPY r8r-mcp /usr/local/bin/
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+    /usr/local/bin/r8r \
+    /usr/local/bin/r8r-mcp
+
+ENV R8R_DB=/data/r8r.db
+ENV RUST_LOG=r8r=info
+
+EXPOSE 8080
+VOLUME /data
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["r8r", "server", "--port", "8080"]
