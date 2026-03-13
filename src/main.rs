@@ -3918,10 +3918,9 @@ async fn cmd_policy_validate(file: &str) -> anyhow::Result<()> {
 }
 
 async fn cmd_init(
-    _output: &r8r::cli::output::Output,
-    _yes: bool,
-    _force: bool,
+    output: &r8r::cli::output::Output,
+    yes: bool,
+    force: bool,
 ) -> anyhow::Result<()> {
-    println!("r8r init is not yet implemented");
-    Ok(())
+    r8r::cli::init::run_init(output, yes, force).await
 }
