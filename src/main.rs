@@ -506,22 +506,40 @@ fn init_logging(for_chat_tui: bool) {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     let cli = Cli::parse();
     let for_chat_tui = matches!(cli.command, None | Some(Commands::Chat { .. }));
     init_logging(for_chat_tui);
 
-    let output = r8r::cli::output::Output::new(if cli.json {
+    let output_mode = if cli.json {
         r8r::cli::output::OutputMode::Json
     } else {
         r8r::cli::output::OutputMode::Human
-    });
+    };
+    let output = r8r::cli::output::Output::new(output_mode);
 
-    match cli.command {
+    let result = run_command(cli.command, &output).await;
+
+    if let Err(err) = result {
+        if let Some(r8r_err) = err.downcast_ref::<r8r::error::Error>() {
+            let diag = r8r::cli::diagnostics::Diagnostic::from_error(r8r_err, &[]);
+            diag.render(output_mode);
+        } else {
+            eprintln!("error: {}", err);
+        }
+        std::process::exit(1);
+    }
+}
+
+async fn run_command(
+    command: Option<Commands>,
+    output: &r8r::cli::output::Output,
+) -> anyhow::Result<()> {
+    match command {
         None => cmd_chat(None).await?,
         Some(Commands::Chat { resume }) => cmd_chat(resume).await?,
         Some(Commands::Workflows { action }) => match action {
-            WorkflowActions::List => cmd_workflows_list(&output).await?,
+            WorkflowActions::List => cmd_workflows_list(output).await?,
             WorkflowActions::Create { file } => cmd_workflows_create(&file).await?,
             WorkflowActions::Run {
                 name,
@@ -579,7 +597,7 @@ async fn main() -> anyhow::Result<()> {
                 key,
                 value,
             } => cmd_credentials_set(&service, key.as_deref(), value.as_deref()).await?,
-            CredentialActions::List => cmd_credentials_list(&output).await?,
+            CredentialActions::List => cmd_credentials_list(output).await?,
             CredentialActions::Delete { service } => cmd_credentials_delete(&service).await?,
         },
         Some(Commands::Db { action }) => match action {
@@ -637,11 +655,11 @@ async fn main() -> anyhow::Result<()> {
                 key,
                 value,
             } => cmd_credentials_set(&service, key.as_deref(), value.as_deref()).await?,
-            SecretsActions::List => cmd_credentials_list(&output).await?,
+            SecretsActions::List => cmd_credentials_list(output).await?,
             SecretsActions::Delete { service } => cmd_credentials_delete(&service).await?,
         },
         Some(Commands::Watch { url, token }) => cmd_monitor(&url, token.as_deref()).await?,
-        Some(Commands::Doctor) => cmd_doctor(&output).await?,
+        Some(Commands::Doctor) => cmd_doctor(output).await?,
         Some(Commands::Approve { id, comment, by }) => {
             cmd_approve_deny(&id, "approve", comment.as_deref(), &by).await?
         }
@@ -673,7 +691,7 @@ async fn main() -> anyhow::Result<()> {
             json,
         }) => cmd_lint(&files, errors_only, json).await?,
         Some(Commands::Schema { output }) => cmd_schema(output.as_deref()).await?,
-        Some(Commands::Init { yes, force }) => cmd_init(&output, yes, force).await?,
+        Some(Commands::Init { yes, force }) => cmd_init(output, yes, force).await?,
     }
 
     Ok(())
