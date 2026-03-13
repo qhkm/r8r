@@ -9,6 +9,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// Output results as JSON
+    #[arg(long, global = true)]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -209,6 +213,16 @@ enum Commands {
         /// Write schema to this file instead of stdout
         #[arg(long, short)]
         output: Option<String>,
+    },
+    /// Set up r8r — detect services, configure LLM provider, install completions
+    Init {
+        /// Skip interactive prompts, auto-detect everything
+        #[arg(long)]
+        yes: bool,
+
+        /// Force re-initialization even if config exists
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -497,6 +511,12 @@ async fn main() -> anyhow::Result<()> {
     let for_chat_tui = matches!(cli.command, None | Some(Commands::Chat { .. }));
     init_logging(for_chat_tui);
 
+    let output = r8r::cli::output::Output::new(if cli.json {
+        r8r::cli::output::OutputMode::Json
+    } else {
+        r8r::cli::output::OutputMode::Human
+    });
+
     match cli.command {
         None => cmd_chat(None).await?,
         Some(Commands::Chat { resume }) => cmd_chat(resume).await?,
@@ -653,6 +673,7 @@ async fn main() -> anyhow::Result<()> {
             json,
         }) => cmd_lint(&files, errors_only, json).await?,
         Some(Commands::Schema { output }) => cmd_schema(output.as_deref()).await?,
+        Some(Commands::Init { yes, force }) => cmd_init(&output, yes, force).await?,
     }
 
     Ok(())
@@ -3843,5 +3864,14 @@ async fn cmd_policy_validate(file: &str) -> anyhow::Result<()> {
         std::process::exit(1);
     }
 
+    Ok(())
+}
+
+async fn cmd_init(
+    _output: &r8r::cli::output::Output,
+    _yes: bool,
+    _force: bool,
+) -> anyhow::Result<()> {
+    println!("r8r init is not yet implemented");
     Ok(())
 }
