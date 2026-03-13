@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! WebSocket client for connecting to the r8r monitor endpoint.
 
 use futures_util::StreamExt;

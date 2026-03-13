@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! REPL TUI layout and event loop.
 
 use crate::engine::Executor;
@@ -26,6 +32,43 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+
+fn estimate_cost(
+    model: &str,
+    prompt_tokens: Option<u64>,
+    completion_tokens: Option<u64>,
+) -> Option<f64> {
+    let p = prompt_tokens? as f64;
+    let c = completion_tokens? as f64;
+    // Rates per 1M tokens (input, output)
+    let (input_rate, output_rate) = match model {
+        m if m.contains("gpt-4o-mini") => (0.15, 0.60),
+        m if m.contains("gpt-4o") => (2.50, 10.00),
+        m if m.contains("claude-sonnet") => (3.00, 15.00),
+        m if m.contains("claude-haiku") => (0.80, 4.00),
+        m if m.contains("claude-opus") => (15.00, 75.00),
+        _ => return None, // Unknown model (e.g., Ollama local)
+    };
+    Some((p * input_rate + c * output_rate) / 1_000_000.0)
+}
+
+fn format_usage_line(usage: &crate::llm::LlmUsage, model: &str) -> Option<String> {
+    let prompt = usage.prompt_tokens;
+    let completion = usage.completion_tokens;
+    if prompt.is_none() && completion.is_none() {
+        return None;
+    }
+    let p = prompt.map(|v| format!("{}", v)).unwrap_or("?".into());
+    let c = completion.map(|v| format!("{}", v)).unwrap_or("?".into());
+    let cost = estimate_cost(model, prompt, completion);
+    let cost_str = cost
+        .map(|c| format!(" \u{00b7} ~${:.3}", c))
+        .unwrap_or_default();
+    Some(format!(
+        "[{} in \u{00b7} {} out{} \u{00b7} {}]",
+        p, c, cost_str, model
+    ))
+}
 
 const MAX_CONTEXT_MESSAGES: usize = 80;
 const CTRL_C_EXIT_WINDOW: Duration = Duration::from_millis(1500);
@@ -299,6 +342,16 @@ struct PendingWriteConfirm {
 }
 
 /// REPL UI state.
+/// Accumulated token usage for the current REPL session.
+#[derive(Debug, Default)]
+pub struct SessionUsage {
+    pub total_prompt_tokens: u64,
+    pub total_completion_tokens: u64,
+    pub persisted_total_tokens: u64,
+    pub turns_with_usage: u32,
+    pub turns_without_usage: u32,
+}
+
 pub struct ReplApp {
     pub session_id: String,
     /// Most recent execution_id returned by a tool call in this session.
@@ -333,6 +386,8 @@ pub struct ReplApp {
     sticky_actions: Option<QuickActionBar>,
     /// Guardrails: whether write-capable tool calls are permitted this session.
     /// Default: false (disarmed — safe mode). Set via /arm.
+    pub turn_usage: Option<crate::llm::LlmUsage>,
+    pub session_usage: SessionUsage,
     pub writes_armed: bool,
     /// Guardrails: operator mode shows policy/gate status in the status bar.
     pub operator_mode: bool,
@@ -377,6 +432,8 @@ impl ReplApp {
             inspector_scroll: 0,
             quick_actions: None,
             sticky_actions: None,
+            turn_usage: None,
+            session_usage: SessionUsage::default(),
             writes_armed: false,
             operator_mode: false,
             pending_write_confirm: None,
@@ -2067,6 +2124,16 @@ fn load_session_into_app(app: &mut ReplApp, stored: &[ReplMessage]) {
             "assistant" => {
                 values.push(json!({"role": "assistant", "content": msg.content}));
                 app.push_message(MessageKind::Assistant, msg.content.clone());
+                if let Some(tokens) = msg.token_count {
+                    if tokens > 0 {
+                        app.session_usage.persisted_total_tokens += tokens as u64;
+                        app.session_usage.turns_with_usage += 1;
+                    } else {
+                        app.session_usage.turns_without_usage += 1;
+                    }
+                } else {
+                    app.session_usage.turns_without_usage += 1;
+                }
             }
             "tool_call" | "tool_result" | "tool" => {
                 app.push_message(MessageKind::Tool, msg.content.clone());
@@ -2541,6 +2608,49 @@ async fn handle_slash_command(
                 format!("Plan loaded in Log panel. {}", header),
             );
         }
+        InputCommand::Usage => {
+            let su = &app.session_usage;
+            let current_total = su.total_prompt_tokens + su.total_completion_tokens;
+            let total = current_total + su.persisted_total_tokens;
+            let turns = su.turns_with_usage;
+            let current_cost = estimate_cost(
+                &app.model,
+                Some(su.total_prompt_tokens),
+                Some(su.total_completion_tokens),
+            );
+
+            let mut text = format!("Session usage ({} turns):\n\n", turns);
+            text.push_str(&format!(
+                "  Prompt tokens:      {:>10}\n",
+                su.total_prompt_tokens
+            ));
+            text.push_str(&format!(
+                "  Completion tokens:  {:>10}\n",
+                su.total_completion_tokens
+            ));
+            if su.persisted_total_tokens > 0 {
+                text.push_str(&format!(
+                    "  Historical tokens:  {:>10}\n",
+                    su.persisted_total_tokens
+                ));
+            }
+            text.push_str(&format!("  Total tokens:       {:>10}\n", total));
+            if su.persisted_total_tokens > 0 {
+                if let Some(c) = current_cost {
+                    text.push_str(&format!(
+                        "  Estimated cost:     ~${:.3} (current process only)\n",
+                        c
+                    ));
+                } else {
+                    text.push_str("  Estimated cost:     unavailable for resumed history\n");
+                }
+            } else if let Some(c) = current_cost {
+                text.push_str(&format!("  Estimated cost:     ~${:.3}\n", c));
+            }
+            text.push_str(&format!("\n  Model: {}", app.model));
+
+            app.push_message(MessageKind::System, text);
+        }
         InputCommand::ArmWrites => {
             app.writes_armed = true;
             app.push_message(
@@ -2723,6 +2833,19 @@ pub async fn run_repl_tui(
                     app.busy_since = None;
                     app.assistant_streaming_index = None;
                     app.conversation = conversation;
+
+                    // Track token usage
+                    if let Some(ref usage) = result.usage {
+                        app.turn_usage = Some(usage.clone());
+                        app.session_usage.total_prompt_tokens += usage.prompt_tokens.unwrap_or(0);
+                        app.session_usage.total_completion_tokens +=
+                            usage.completion_tokens.unwrap_or(0);
+                        app.session_usage.turns_with_usage += 1;
+                    } else {
+                        app.turn_usage = None;
+                        app.session_usage.turns_without_usage += 1;
+                    }
+
                     if !result.response.is_empty() {
                         let extracted = extract_fenced_yaml_blocks(&result.response);
                         if let Some(last_yaml) = extracted.last() {
@@ -2739,12 +2862,21 @@ pub async fn run_repl_tui(
                         {
                             msg.text = compact.clone();
                         }
+                        // Show inline usage after assistant message
+                        if let Some(ref usage) = app.turn_usage {
+                            if let Some(usage_line) = format_usage_line(usage, &app.model) {
+                                app.push_message(MessageKind::System, usage_line);
+                            }
+                        }
+                        let token_count = app.turn_usage.as_ref().map(|u| {
+                            (u.prompt_tokens.unwrap_or(0) + u.completion_tokens.unwrap_or(0)) as i64
+                        });
                         storage
                             .save_repl_message(
                                 &app.session_id,
                                 "assistant",
                                 &compact,
-                                None,
+                                token_count,
                                 app.last_run_id.as_deref(),
                             )
                             .await?;
@@ -3160,6 +3292,39 @@ mod tests {
                 line.trim_end().to_string()
             })
             .collect()
+    }
+
+    #[test]
+    fn load_session_restores_persisted_usage_totals() {
+        let mut app = test_app();
+        let stored = vec![
+            ReplMessage {
+                id: "msg-1".to_string(),
+                session_id: "session-1".to_string(),
+                role: "assistant".to_string(),
+                content: "first".to_string(),
+                token_count: Some(42),
+                run_id: None,
+                redacted: false,
+                created_at: chrono::Utc::now(),
+            },
+            ReplMessage {
+                id: "msg-2".to_string(),
+                session_id: "session-1".to_string(),
+                role: "assistant".to_string(),
+                content: "second".to_string(),
+                token_count: None,
+                run_id: None,
+                redacted: false,
+                created_at: chrono::Utc::now(),
+            },
+        ];
+
+        load_session_into_app(&mut app, &stored);
+
+        assert_eq!(app.session_usage.persisted_total_tokens, 42);
+        assert_eq!(app.session_usage.turns_with_usage, 1);
+        assert_eq!(app.session_usage.turns_without_usage, 1);
     }
 
     #[test]

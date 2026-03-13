@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Input parsing for the REPL.
 
 /// Parsed user input.
@@ -52,6 +58,8 @@ pub enum InputCommand {
     Disarm,
     /// Toggle operator mode: /operator [on|off]
     Operator { enable: Option<bool> },
+    /// Show session token usage: /usage
+    Usage,
     /// Unknown slash command.
     Unknown(String),
     /// Empty input.
@@ -150,6 +158,7 @@ pub fn parse_input(input: &str) -> InputCommand {
         "/plan" => InputCommand::Plan {
             description: arg.filter(|s| !s.is_empty()),
         },
+        "/usage" => InputCommand::Usage,
         "/arm" => InputCommand::ArmWrites,
         "/disarm" => InputCommand::Disarm,
         "/operator" => {
@@ -185,6 +194,7 @@ pub fn slash_commands() -> Vec<(&'static str, &'static str)> {
         ("/view <target>", "Switch panel: log|tools|yaml|dag|trace"),
         ("/export yaml <path>", "Export current YAML to a file"),
         ("/plan [description]", "Draft a plan before executing"),
+        ("/usage", "Show session token usage and estimated cost"),
         ("/arm", "Arm write operations for this session"),
         ("/disarm", "Disarm write operations (safe mode)"),
         (

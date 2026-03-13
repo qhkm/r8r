@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Delayed event processing using SQLite storage.
 //!
 //! This module provides functionality to schedule events for future processing,

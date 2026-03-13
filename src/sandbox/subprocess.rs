@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Subprocess sandbox backend.
 //!
 //! Executes code by spawning a child process. Provides no real isolation
@@ -100,7 +106,10 @@ fn truncate_output(s: &str, max_bytes: usize) -> String {
         end -= 1;
     }
     let mut truncated = s[..end].to_string();
-    truncated.push_str("\n... [output truncated]");
+    truncated.push_str(
+        "
+... [output truncated]",
+    );
     truncated
 }
 
@@ -269,7 +278,11 @@ impl SandboxBackend for SubprocessBackend {
             let mut reader = BufReader::new(stdout_pipe).lines();
             while let Ok(Some(line)) = reader.next_line().await {
                 if tx_out
-                    .send(SandboxStreamEvent::Stdout(format!("{}\n", line)))
+                    .send(SandboxStreamEvent::Stdout(format!(
+                        "{}
+",
+                        line
+                    )))
                     .await
                     .is_err()
                 {
@@ -282,7 +295,11 @@ impl SandboxBackend for SubprocessBackend {
             let mut reader = BufReader::new(stderr_pipe).lines();
             while let Ok(Some(line)) = reader.next_line().await {
                 if tx_err
-                    .send(SandboxStreamEvent::Stderr(format!("{}\n", line)))
+                    .send(SandboxStreamEvent::Stderr(format!(
+                        "{}
+",
+                        line
+                    )))
                     .await
                     .is_err()
                 {

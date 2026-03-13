@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Redis event backend (optional, behind `redis` feature flag).
 //!
 //! Provides cross-process event pub/sub via Redis pub/sub channels.

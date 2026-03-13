@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{generate, Shell};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -9,6 +15,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// Output results as JSON
+    #[arg(long, global = true)]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -209,6 +219,16 @@ enum Commands {
         /// Write schema to this file instead of stdout
         #[arg(long, short)]
         output: Option<String>,
+    },
+    /// Set up r8r — detect services, configure LLM provider, install completions
+    Init {
+        /// Skip interactive prompts, auto-detect everything
+        #[arg(long)]
+        yes: bool,
+
+        /// Force re-initialization even if config exists
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -486,23 +506,47 @@ fn init_logging(for_chat_tui: bool) {
     } else {
         tracing_subscriber::registry()
             .with(env_filter)
-            .with(tracing_subscriber::fmt::layer())
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .init();
     }
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     let cli = Cli::parse();
     let for_chat_tui = matches!(cli.command, None | Some(Commands::Chat { .. }));
     init_logging(for_chat_tui);
 
-    match cli.command {
+    let output_mode = if cli.json {
+        r8r::cli::output::OutputMode::Json
+    } else {
+        r8r::cli::output::OutputMode::Human
+    };
+    let output = r8r::cli::output::Output::new(output_mode);
+
+    let result = run_command(cli.command, &output).await;
+
+    if let Err(err) = result {
+        if let Some(r8r_err) = err.downcast_ref::<r8r::error::Error>() {
+            let diag = r8r::cli::diagnostics::Diagnostic::from_error(r8r_err, &[]);
+            diag.render(output_mode);
+        } else {
+            eprintln!("error: {}", err);
+        }
+        std::process::exit(1);
+    }
+}
+
+async fn run_command(
+    command: Option<Commands>,
+    output: &r8r::cli::output::Output,
+) -> anyhow::Result<()> {
+    match command {
         None => cmd_chat(None).await?,
         Some(Commands::Chat { resume }) => cmd_chat(resume).await?,
         Some(Commands::Workflows { action }) => match action {
-            WorkflowActions::List => cmd_workflows_list().await?,
-            WorkflowActions::Create { file } => cmd_workflows_create(&file).await?,
+            WorkflowActions::List => cmd_workflows_list(output).await?,
+            WorkflowActions::Create { file } => cmd_workflows_create(&file, output).await?,
             WorkflowActions::Run {
                 name,
                 input,
@@ -558,15 +602,17 @@ async fn main() -> anyhow::Result<()> {
                 service,
                 key,
                 value,
-            } => cmd_credentials_set(&service, key.as_deref(), value.as_deref()).await?,
-            CredentialActions::List => cmd_credentials_list().await?,
+            } => cmd_credentials_set(&service, key.as_deref(), value.as_deref(), output).await?,
+            CredentialActions::List => cmd_credentials_list(output).await?,
             CredentialActions::Delete { service } => cmd_credentials_delete(&service).await?,
         },
         Some(Commands::Db { action }) => match action {
             DbActions::Check => cmd_db_check().await?,
         },
         Some(Commands::Templates { action }) => match action {
-            TemplateActions::List { by_category } => cmd_templates_list(by_category).await?,
+            TemplateActions::List { by_category } => {
+                cmd_templates_list(by_category, output).await?
+            }
             TemplateActions::Show { name } => cmd_templates_show(&name).await?,
             TemplateActions::Use {
                 name,
@@ -579,7 +625,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Completions { shell }) => {
             cmd_completions(shell)?;
         }
-        Some(Commands::Create { prompt }) => cmd_create(&prompt).await?,
+        Some(Commands::Create { prompt }) => cmd_create(&prompt, output).await?,
         Some(Commands::Refine { name, prompt }) => cmd_refine(&name, &prompt).await?,
         Some(Commands::Prompt {
             description,
@@ -603,25 +649,27 @@ async fn main() -> anyhow::Result<()> {
             status,
         }) => match action {
             Some(RunsActions::Pending { limit }) => cmd_runs_pending(limit).await?,
-            Some(RunsActions::Show { run_id, trace }) => cmd_runs_show(&run_id, trace).await?,
+            Some(RunsActions::Show { run_id, trace }) => {
+                cmd_runs_show(&run_id, trace, output).await?
+            }
             Some(RunsActions::Export {
                 run_id,
                 format,
                 output,
             }) => cmd_runs_export(&run_id, &format, output.as_deref()).await?,
-            None => cmd_runs(workflow.as_deref(), limit, status.as_deref()).await?,
+            None => cmd_runs(workflow.as_deref(), limit, status.as_deref(), output).await?,
         },
         Some(Commands::Secrets { action }) => match action {
             SecretsActions::Set {
                 service,
                 key,
                 value,
-            } => cmd_credentials_set(&service, key.as_deref(), value.as_deref()).await?,
-            SecretsActions::List => cmd_credentials_list().await?,
+            } => cmd_credentials_set(&service, key.as_deref(), value.as_deref(), output).await?,
+            SecretsActions::List => cmd_credentials_list(output).await?,
             SecretsActions::Delete { service } => cmd_credentials_delete(&service).await?,
         },
         Some(Commands::Watch { url, token }) => cmd_monitor(&url, token.as_deref()).await?,
-        Some(Commands::Doctor) => cmd_doctor().await?,
+        Some(Commands::Doctor) => cmd_doctor(output).await?,
         Some(Commands::Approve { id, comment, by }) => {
             cmd_approve_deny(&id, "approve", comment.as_deref(), &by).await?
         }
@@ -629,7 +677,7 @@ async fn main() -> anyhow::Result<()> {
             cmd_approve_deny(&id, "reject", comment.as_deref(), &by).await?
         }
         Some(Commands::Policy { action }) => match action {
-            PolicyActions::Show => cmd_policy_show().await?,
+            PolicyActions::Show => cmd_policy_show(output).await?,
             PolicyActions::Set { profile } => cmd_policy_set(&profile).await?,
             PolicyActions::Validate { file } => cmd_policy_validate(&file).await?,
         },
@@ -653,9 +701,28 @@ async fn main() -> anyhow::Result<()> {
             json,
         }) => cmd_lint(&files, errors_only, json).await?,
         Some(Commands::Schema { output }) => cmd_schema(output.as_deref()).await?,
+        Some(Commands::Init { yes, force }) => cmd_init(output, yes, force).await?,
     }
 
     Ok(())
+}
+
+/// Show a one-time hint to run `r8r init` when no LLM provider is configured.
+fn maybe_show_init_hint(output: &r8r::cli::output::Output) {
+    if output.is_json() {
+        return;
+    }
+    // Skip expensive runtime checks — only look at env vars, config, and local credentials.
+    let has_openai = std::env::var("OPENAI_API_KEY").is_ok();
+    let has_anthropic = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    let config = r8r::config::Config::load();
+    let has_llm_config = config.llm.provider.is_some() || config.llm.endpoint.is_some();
+    let has_credentials = r8r::credentials::CredentialStore::path().exists();
+
+    if !has_openai && !has_anthropic && !has_llm_config && !has_credentials {
+        eprintln!();
+        eprintln!("  tip: Run 'r8r init' to set up your environment");
+    }
 }
 
 /// Shell completion variants
@@ -702,35 +769,36 @@ async fn cmd_chat(resume: Option<String>) -> anyhow::Result<()> {
 // Workflow Commands
 // ============================================================================
 
-async fn cmd_workflows_list() -> anyhow::Result<()> {
+async fn cmd_workflows_list(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     let storage = get_storage()?;
     let workflows = storage.list_workflows().await?;
 
     if workflows.is_empty() {
-        println!("No workflows found.");
-        println!();
-        println!("Create one with: r8r workflows create <file.yaml>");
+        output.success("No workflows found. Create one with: r8r workflows create <file.yaml>");
         return Ok(());
     }
 
-    println!("{:<30} {:<10} {:<20}", "NAME", "ENABLED", "UPDATED");
-    println!("{}", "-".repeat(62));
+    output.list(&["NAME", "ENABLED", "UPDATED"], &workflows, |wf| {
+        vec![
+            wf.name.clone(),
+            if wf.enabled {
+                "yes".into()
+            } else {
+                "no".into()
+            },
+            wf.updated_at.format("%Y-%m-%d %H:%M").to_string(),
+        ]
+    });
 
-    for wf in workflows {
-        println!(
-            "{:<30} {:<10} {:<20}",
-            wf.name,
-            if wf.enabled { "yes" } else { "no" },
-            wf.updated_at.format("%Y-%m-%d %H:%M")
-        );
-    }
+    maybe_show_init_hint(output);
 
     Ok(())
 }
 
-async fn cmd_workflows_create(file: &str) -> anyhow::Result<()> {
+async fn cmd_workflows_create(file: &str, output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     use r8r::storage::StoredWorkflow;
     use r8r::workflow::{parse_workflow_file, validate_workflow};
+    use serde::Serialize;
     use std::path::Path;
 
     let path = Path::new(file);
@@ -760,12 +828,40 @@ async fn cmd_workflows_create(file: &str) -> anyhow::Result<()> {
 
     storage.save_workflow(&stored).await?;
 
-    println!("✓ Workflow '{}' created successfully", workflow.name);
+    if output.is_json() {
+        #[derive(Serialize)]
+        struct WorkflowCreateResult<'a> {
+            ok: bool,
+            id: &'a str,
+            name: &'a str,
+            nodes: usize,
+            triggers: usize,
+            enabled: bool,
+        }
+
+        let result = WorkflowCreateResult {
+            ok: true,
+            id: &stored.id,
+            name: &workflow.name,
+            nodes: workflow.nodes.len(),
+            triggers: workflow.triggers.len(),
+            enabled: stored.enabled,
+        };
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
+
+    println!("\u{2713} Workflow '{}' created successfully", workflow.name);
     println!();
     println!("  Nodes: {}", workflow.nodes.len());
     println!("  Triggers: {}", workflow.triggers.len());
-    println!();
-    println!("Run with: r8r workflows run {}", workflow.name);
+
+    let run_cmd = format!("r8r run {}", workflow.name);
+    let dag_cmd = format!("r8r workflows dag {}", workflow.name);
+    output.suggest(&[
+        (&run_cmd, "execute the workflow"),
+        (&dag_cmd, "visualize the DAG"),
+    ]);
 
     Ok(())
 }
@@ -1617,8 +1713,10 @@ async fn cmd_credentials_set(
     service: &str,
     key: Option<&str>,
     value: Option<&str>,
+    output: &r8r::cli::output::Output,
 ) -> anyhow::Result<()> {
     use r8r::credentials::CredentialStore;
+    use serde::Serialize;
     use std::io::{self, BufRead};
 
     // Get value from argument or stdin
@@ -1640,35 +1738,69 @@ async fn cmd_credentials_set(
     let mut store = CredentialStore::load().await?;
     store.set(service, key, &credential_value).await?;
 
-    println!("✓ Credential '{}' saved", service);
+    if output.is_json() {
+        #[derive(Serialize)]
+        struct CredentialSetResult<'a> {
+            ok: bool,
+            service: &'a str,
+            key: Option<&'a str>,
+        }
+
+        let result = CredentialSetResult {
+            ok: true,
+            service,
+            key,
+        };
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
+
+    println!("\u{2713} Credential '{}' saved", service);
     if let Some(k) = key {
         println!("  Key: {}", k);
     }
 
+    output.suggest(&[
+        ("r8r doctor", "verify your setup"),
+        ("r8r chat", "start building workflows"),
+    ]);
+
     Ok(())
 }
 
-async fn cmd_credentials_list() -> anyhow::Result<()> {
+async fn cmd_credentials_list(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     use r8r::credentials::CredentialStore;
 
     let store = CredentialStore::load().await?;
     let credentials = store.list();
 
     if credentials.is_empty() {
-        println!("No credentials stored.");
-        println!();
-        println!("Add one with: r8r credentials set <service> -v <value>");
+        output.success(
+            "No credentials stored. Add one with: r8r credentials set <service> -v <value>",
+        );
         return Ok(());
     }
 
-    println!("{:<20} {:<15} {:<20}", "SERVICE", "KEY", "UPDATED");
-    println!("{}", "-".repeat(55));
-
-    for cred in credentials {
-        let key_display = cred.key.as_deref().unwrap_or("-");
-        let updated = cred.updated_at.format("%Y-%m-%d %H:%M");
-        println!("{:<20} {:<15} {:<20}", cred.service, key_display, updated);
+    // Redacted projection — excludes the encrypted `value` field for safe JSON output
+    #[derive(serde::Serialize)]
+    struct CredentialSummary {
+        service: String,
+        key: String,
+        updated_at: String,
     }
+
+    let summaries: Vec<CredentialSummary> = credentials
+        .iter()
+        .map(|c| CredentialSummary {
+            service: c.service.clone(),
+            key: c.key.as_deref().unwrap_or("-").to_string(),
+            updated_at: c.updated_at.format("%Y-%m-%d %H:%M").to_string(),
+        })
+        .collect();
+
+    output.list(&["SERVICE", "KEY", "UPDATED"], &summaries, |s| {
+        vec![s.service.clone(), s.key.clone(), s.updated_at.clone()]
+    });
 
     Ok(())
 }
@@ -1734,19 +1866,29 @@ async fn cmd_db_check() -> anyhow::Result<()> {
 // Template Commands
 // ============================================================================
 
-async fn cmd_templates_list(by_category: bool) -> anyhow::Result<()> {
+async fn cmd_templates_list(
+    by_category: bool,
+    output: &r8r::cli::output::Output,
+) -> anyhow::Result<()> {
     use r8r::templates::TemplateRegistry;
 
     let registry = TemplateRegistry::new();
 
     if by_category {
-        let by_category = registry.list_by_category();
-        let mut categories: Vec<_> = by_category.keys().collect();
+        let by_cat = registry.list_by_category();
+
+        if output.is_json() {
+            let all: Vec<_> = by_cat.values().flatten().collect();
+            println!("{}", serde_json::to_string_pretty(&all)?);
+            return Ok(());
+        }
+
+        let mut categories: Vec<_> = by_cat.keys().collect();
         categories.sort();
 
         for category in categories {
             println!("{}:", category.to_uppercase());
-            for template in &by_category[category] {
+            for template in &by_cat[category] {
                 println!("  {:<25} {}", template.name, template.description);
             }
             println!();
@@ -1755,23 +1897,19 @@ async fn cmd_templates_list(by_category: bool) -> anyhow::Result<()> {
         let templates = registry.list();
 
         if templates.is_empty() {
-            println!("No templates available.");
+            output.success("No templates available.");
             return Ok(());
         }
 
-        println!("{:<25} {:<15} DESCRIPTION", "NAME", "CATEGORY");
-        println!("{}", "-".repeat(70));
-
-        for template in templates {
-            println!(
-                "{:<25} {:<15} {}",
-                template.name, template.category, template.description
-            );
-        }
+        output.list(&["NAME", "CATEGORY", "DESCRIPTION"], &templates, |t| {
+            vec![t.name.clone(), t.category.clone(), t.description.clone()]
+        });
     }
 
-    println!();
-    println!("Use a template with: r8r templates use <name> --var key=value");
+    if !output.is_json() {
+        println!();
+        println!("Use a template with: r8r templates use <name> --var key=value");
+    }
 
     Ok(())
 }
@@ -2022,10 +2160,45 @@ fn get_storage() -> anyhow::Result<std::sync::Arc<dyn r8r::storage::Storage>> {
 // Generate / Refine Commands
 // ============================================================================
 
-async fn cmd_create(prompt_parts: &[String]) -> anyhow::Result<()> {
+async fn cmd_create(
+    prompt_parts: &[String],
+    output: &r8r::cli::output::Output,
+) -> anyhow::Result<()> {
     use r8r::generator;
     use r8r::storage::StoredWorkflow;
+    use serde::Serialize;
     use std::io::{self, BufRead, Write};
+
+    #[derive(Serialize)]
+    struct CreateResult<'a> {
+        ok: bool,
+        saved: bool,
+        name: Option<&'a str>,
+        summary: &'a str,
+        valid: bool,
+        errors: &'a [String],
+        yaml: &'a str,
+    }
+
+    macro_rules! outln {
+        ($($arg:tt)*) => {
+            if output.is_json() {
+                eprintln!($($arg)*);
+            } else {
+                println!($($arg)*);
+            }
+        };
+    }
+
+    macro_rules! out {
+        ($($arg:tt)*) => {
+            if output.is_json() {
+                eprint!($($arg)*);
+            } else {
+                print!($($arg)*);
+            }
+        };
+    }
 
     let user_prompt = prompt_parts.join(" ");
     if user_prompt.trim().is_empty() {
@@ -2034,7 +2207,8 @@ async fn cmd_create(prompt_parts: &[String]) -> anyhow::Result<()> {
         );
     }
 
-    println!("Generating workflow...\n");
+    outln!("Generating workflow...");
+    outln!("");
 
     let mut result = generator::generate(&user_prompt)
         .await
@@ -2042,21 +2216,25 @@ async fn cmd_create(prompt_parts: &[String]) -> anyhow::Result<()> {
 
     loop {
         // Show the YAML
-        println!("{}", result.yaml);
-        println!();
+        outln!("{}", result.yaml);
+        outln!("");
 
         if result.valid {
-            println!("✓ {}", result.summary);
+            outln!("\u{2713} {}", result.summary);
         } else {
-            println!("⚠ Workflow has validation errors:");
+            outln!("\u{26a0} Workflow has validation errors:");
             for err in &result.errors {
-                println!("  - {}", err);
+                outln!("  - {}", err);
             }
         }
 
-        println!();
-        print!("Save? [yes/no/or type feedback to refine] > ");
-        io::stdout().flush()?;
+        outln!("");
+        out!("Save? [yes/no/or type feedback to refine] > ");
+        if output.is_json() {
+            io::stderr().flush()?;
+        } else {
+            io::stdout().flush()?;
+        }
 
         let mut input = String::new();
         io::stdin().lock().read_line(&mut input)?;
@@ -2065,7 +2243,7 @@ async fn cmd_create(prompt_parts: &[String]) -> anyhow::Result<()> {
         match input.to_lowercase().as_str() {
             "yes" | "y" => {
                 if !result.valid {
-                    println!(
+                    outln!(
                         "Cannot save — workflow has validation errors. Provide feedback to fix or type 'no' to discard."
                     );
                     continue;
@@ -2085,16 +2263,47 @@ async fn cmd_create(prompt_parts: &[String]) -> anyhow::Result<()> {
                 };
 
                 storage.save_workflow(&stored).await?;
-                println!("\n✓ Workflow '{}' saved", workflow.name);
-                println!("Run with: r8r workflows run {}", workflow.name);
+                if output.is_json() {
+                    let payload = CreateResult {
+                        ok: true,
+                        saved: true,
+                        name: Some(&workflow.name),
+                        summary: &result.summary,
+                        valid: result.valid,
+                        errors: &result.errors,
+                        yaml: &result.yaml,
+                    };
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                } else {
+                    println!("\n\u{2713} Workflow '{}' saved", workflow.name);
+
+                    let run_cmd = format!("r8r run {}", workflow.name);
+                    let refine_cmd = format!("r8r refine {} \"...\"", workflow.name);
+                    output.suggest(&[(&run_cmd, "execute it now"), (&refine_cmd, "improve it")]);
+                }
                 return Ok(());
             }
             "no" | "n" => {
-                println!("Discarded.");
+                if output.is_json() {
+                    let payload = CreateResult {
+                        ok: true,
+                        saved: false,
+                        name: None,
+                        summary: &result.summary,
+                        valid: result.valid,
+                        errors: &result.errors,
+                        yaml: &result.yaml,
+                    };
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                } else {
+                    println!("Discarded.");
+                }
                 return Ok(());
             }
             feedback => {
-                println!("\nRefining...\n");
+                outln!("");
+                outln!("Refining...");
+                outln!("");
                 result = generator::refine(&result.yaml, feedback)
                     .await
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -2551,6 +2760,7 @@ async fn cmd_runs(
     workflow: Option<&str>,
     limit: usize,
     status_filter: Option<&str>,
+    output: &r8r::cli::output::Output,
 ) -> anyhow::Result<()> {
     use r8r::storage::ExecutionQuery;
 
@@ -2567,29 +2777,30 @@ async fn cmd_runs(
     let executions = storage.query_executions(&query).await?;
 
     if executions.is_empty() {
-        println!("No executions found.");
+        output.success("No executions found.");
         return Ok(());
     }
 
-    println!(
-        "{:<36} {:<24} {:<12} {:<10} {:<20}",
-        "EXECUTION ID", "WORKFLOW", "STATUS", "TRIGGER", "STARTED"
+    output.list(
+        &["EXECUTION ID", "WORKFLOW", "STATUS", "TRIGGER", "STARTED"],
+        &executions,
+        |exec| {
+            vec![
+                exec.id.clone(),
+                truncate(&exec.workflow_name, 23).to_string(),
+                exec.status.to_string(),
+                exec.trigger_type.clone(),
+                exec.started_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            ]
+        },
     );
-    println!("{}", "─".repeat(105));
 
-    for exec in &executions {
-        println!(
-            "{:<36} {:<24} {:<12} {:<10} {:<20}",
-            exec.id,
-            truncate(&exec.workflow_name, 23),
-            exec.status.to_string(),
-            exec.trigger_type,
-            exec.started_at.format("%Y-%m-%d %H:%M:%S"),
-        );
+    if !output.is_json() {
+        println!();
+        println!("{} execution(s) shown", executions.len());
     }
 
-    println!();
-    println!("{} execution(s) shown", executions.len());
+    maybe_show_init_hint(output);
 
     Ok(())
 }
@@ -2606,24 +2817,46 @@ fn truncate(s: &str, max: usize) -> &str {
     &s[..boundary]
 }
 
+fn llm_endpoint_for_display(config: &r8r::llm::LlmConfig) -> &'static str {
+    match config.provider {
+        r8r::llm::LlmProvider::Openai | r8r::llm::LlmProvider::Custom => {
+            "https://api.openai.com/v1/chat/completions"
+        }
+        r8r::llm::LlmProvider::Anthropic => "https://api.anthropic.com/v1/messages",
+        r8r::llm::LlmProvider::Ollama => "http://localhost:11434/api/chat",
+    }
+}
+
 /// `r8r doctor` — verify DB, config, credentials, and node registry.
-async fn cmd_doctor() -> anyhow::Result<()> {
+async fn cmd_doctor(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     let mut pass = 0usize;
     let mut fail = 0usize;
+    let mut checks: Vec<(&str, bool, String)> = Vec::new();
 
-    println!("r8r doctor\n");
+    if !output.is_json() {
+        println!("r8r doctor\n");
+    }
 
-    // Helper closure to print result
-    let mut report = |label: &str, result: Result<String, String>| match result {
-        Ok(msg) => {
-            println!("  ✓ {:<30} {}", label, msg);
-            pass += 1;
-        }
-        Err(e) => {
-            println!("  ✗ {:<30} {}", label, e);
-            fail += 1;
-        }
-    };
+    macro_rules! report {
+        ($label:expr, $result:expr) => {
+            match $result {
+                Ok(msg) => {
+                    if !output.is_json() {
+                        println!("  \u{2713} {:<30} {}", $label, msg);
+                    }
+                    checks.push(($label, true, msg));
+                    pass += 1;
+                }
+                Err(e) => {
+                    if !output.is_json() {
+                        println!("  \u{2717} {:<30} {}", $label, e);
+                    }
+                    checks.push(($label, false, e));
+                    fail += 1;
+                }
+            }
+        };
+    }
 
     // 1. Database connectivity
     let db_result = async {
@@ -2632,24 +2865,27 @@ async fn cmd_doctor() -> anyhow::Result<()> {
         Ok::<String, String>(format!("{} workflow(s) stored", workflows.len()))
     }
     .await;
-    report("Database", db_result);
+    report!("Database", db_result);
 
     // 2. LLM config
-    let llm_result = {
-        let base_url = std::env::var("R8R_LLM_BASE_URL")
-            .or_else(|_| std::env::var("OPENAI_BASE_URL"))
-            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
-        let model = std::env::var("R8R_LLM_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
-        let api_key = std::env::var("R8R_LLM_API_KEY")
-            .or_else(|_| std::env::var("OPENAI_API_KEY"))
-            .unwrap_or_default();
-        if api_key.is_empty() {
-            Err("R8R_LLM_API_KEY / OPENAI_API_KEY not set".to_string())
-        } else {
-            Ok(format!("model={} endpoint={}", model, base_url))
+    let llm_result = match r8r::generator::resolve_llm_config().await {
+        Ok(config) => {
+            let model = config
+                .model
+                .clone()
+                .unwrap_or_else(|| "provider default".to_string());
+            let endpoint = config
+                .endpoint
+                .clone()
+                .unwrap_or_else(|| llm_endpoint_for_display(&config).to_string());
+            Ok(format!(
+                "provider={:?} model={} endpoint={}",
+                config.provider, model, endpoint
+            ))
         }
+        Err(err) => Err(err.to_string()),
     };
-    report("LLM config", llm_result);
+    report!("LLM config", llm_result);
 
     // 3. Credentials
     let cred_result = async {
@@ -2659,7 +2895,7 @@ async fn cmd_doctor() -> anyhow::Result<()> {
         Ok::<String, String>(format!("{} configured", creds.len()))
     }
     .await;
-    report("Credentials", cred_result);
+    report!("Credentials", cred_result);
 
     // 4. Node registry
     let reg_result = {
@@ -2692,15 +2928,39 @@ async fn cmd_doctor() -> anyhow::Result<()> {
         let count = known.iter().filter(|t| registry.has(t)).count();
         Ok::<String, String>(format!("{} node type(s) registered", count))
     };
-    report("Node registry", reg_result);
+    report!("Node registry", reg_result);
 
-    println!();
-    if fail == 0 {
-        println!("All {} checks passed.", pass);
+    if output.is_json() {
+        let checks_json: Vec<serde_json::Value> = checks
+            .iter()
+            .map(|(name, passed, msg)| {
+                serde_json::json!({"name": name, "pass": passed, "message": msg})
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::json!({"checks": checks_json, "pass": pass, "fail": fail})
+        );
+        if fail > 0 {
+            use std::io::Write as _;
+            let _ = std::io::stdout().flush();
+            std::process::exit(1);
+        }
     } else {
-        println!("{} passed, {} failed.", pass, fail);
-        std::process::exit(1);
+        println!();
+        if fail == 0 {
+            println!("All {} checks passed.", pass);
+        } else {
+            println!("{} passed, {} failed.", pass, fail);
+            output.suggest(&[
+                ("r8r init", "re-run setup wizard"),
+                ("r8r credentials list", "check stored credentials"),
+            ]);
+            std::process::exit(1);
+        }
     }
+
+    maybe_show_init_hint(output);
 
     Ok(())
 }
@@ -3334,13 +3594,27 @@ async fn cmd_runs_pending(limit: usize) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_runs_show(run_id: &str, include_trace: bool) -> anyhow::Result<()> {
+async fn cmd_runs_show(
+    run_id: &str,
+    include_trace: bool,
+    output: &r8r::cli::output::Output,
+) -> anyhow::Result<()> {
     let storage = get_storage()?;
 
     let exec = storage
         .get_execution(run_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Execution not found: {}", run_id))?;
+
+    if output.is_json() {
+        let mut json_val = serde_json::to_value(&exec)?;
+        if include_trace {
+            let nodes = storage.get_node_executions(run_id).await?;
+            json_val["trace"] = serde_json::to_value(&nodes)?;
+        }
+        println!("{}", serde_json::to_string_pretty(&json_val)?);
+        return Ok(());
+    }
 
     println!("Execution  : {}", exec.id);
     println!("Workflow   : {}", exec.workflow_name);
@@ -3371,10 +3645,10 @@ async fn cmd_runs_show(run_id: &str, include_trace: bool) -> anyhow::Result<()> 
         println!("{}", serde_json::to_string_pretty(&exec.input)?);
     }
 
-    if let Some(output) = &exec.output {
+    if let Some(exec_output) = &exec.output {
         println!();
         println!("Output:");
-        println!("{}", serde_json::to_string_pretty(output)?);
+        println!("{}", serde_json::to_string_pretty(exec_output)?);
     }
 
     // Show pending approvals for this execution (filter by status at storage level)
@@ -3389,7 +3663,10 @@ async fn cmd_runs_show(run_id: &str, include_trace: bool) -> anyhow::Result<()> 
         println!();
         println!("Pending approvals:");
         for a in &pending {
-            println!("  {} — {} (approval ID: {})", a.title, a.status, a.id);
+            println!(
+                "  {} \u{2014} {} (approval ID: {})",
+                a.title, a.status, a.id
+            );
             if let Some(desc) = &a.description {
                 println!("    {}", desc);
             }
@@ -3405,7 +3682,7 @@ async fn cmd_runs_show(run_id: &str, include_trace: bool) -> anyhow::Result<()> 
         } else {
             println!();
             println!("{:<24} {:<12} {:<8} ERROR", "NODE", "STATUS", "MS");
-            println!("{}", "─".repeat(72));
+            println!("{}", "\u{2500}".repeat(72));
             for n in &nodes {
                 let ms = n
                     .finished_at
@@ -3734,10 +4011,15 @@ fn save_policy(policy: &PolicyConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_policy_show() -> anyhow::Result<()> {
+async fn cmd_policy_show(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     let policy = load_policy();
-    let path = policy_path();
 
+    if output.is_json() {
+        println!("{}", serde_json::to_string_pretty(&policy)?);
+        return Ok(());
+    }
+
+    let path = policy_path();
     println!("Active policy: {}", policy.profile.to_uppercase());
     println!("Config file  : {}", path.display());
     println!();
@@ -3844,4 +4126,8 @@ async fn cmd_policy_validate(file: &str) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn cmd_init(output: &r8r::cli::output::Output, yes: bool, force: bool) -> anyhow::Result<()> {
+    r8r::cli::init::run_init(output, yes, force).await
 }

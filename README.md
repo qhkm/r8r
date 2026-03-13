@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
   <a href="https://github.com/qhkm/r8r"><img src="https://img.shields.io/badge/rust-1.70+-orange.svg" alt="Rust"></a>
   <img src="https://img.shields.io/badge/status-beta-yellow.svg" alt="Status: Beta">
   <img src="https://img.shields.io/badge/binary-~15MB-brightgreen.svg" alt="Binary: ~15MB">
@@ -48,6 +48,9 @@ r8r:            LLM only where needed    →  $
 # Install (recommended)
 curl -sSf https://r8r.sh/install.sh | sh
 
+# Pin a specific release if needed
+curl -sSf https://r8r.sh/install.sh | R8R_VERSION=v0.3.1 sh
+
 # Or use Docker
 docker run -d -p 8080:8080 -v r8r-data:/data ghcr.io/qhkm/r8r
 
@@ -58,6 +61,8 @@ cargo install r8r
 git clone https://github.com/qhkm/r8r.git && cd r8r
 cargo build --release
 ```
+
+The install script resolves the latest GitHub release automatically and falls back to `R8R_VERSION` when you want to pin a version.
 
 Then create and run a workflow:
 
@@ -360,9 +365,17 @@ See [Roadmap](docs/TODO.md) for contribution ideas.
 
 ## License
 
-Apache 2.0 — Free to use, modify, and distribute. No copyleft restrictions.
+This repository uses multiple licenses:
 
-**Commercial extensions** (RBAC, SSO, fleet management, HA) available for enterprise. [Contact us](mailto:hello@r8r.sh) for details.
+| Component | License |
+|-----------|---------|
+| Core engine (`src/`) | [AGPL-3.0](LICENSE-AGPL) |
+| Client libraries | [Apache 2.0](LICENSE-APACHE) |
+| Enterprise features | Commercial (requires license key) |
+
+The source code compiled without the `enterprise` feature flag is open source under AGPLv3. See [LICENSE](LICENSE) for full terms.
+
+**Commercial license** available for teams that need to use r8r without AGPL obligations or need enterprise features (RBAC, SSO, fleet management, HA). [Contact us](mailto:hello@r8r.sh).
 
 ---
 

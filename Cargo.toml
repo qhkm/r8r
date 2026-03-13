@@ -3,7 +3,7 @@ name = "r8r"
 version = "0.3.1"
 edition = "2021"
 description = "Agent-first Rust workflow automation engine"
-license = "Apache-2.0"
+license = "AGPL-3.0-only AND Apache-2.0"
 repository = "https://github.com/qhkm/r8r"
 homepage = "https://r8r-docs.pages.dev"
 authors = ["Kitakod Ventures"]
@@ -34,7 +34,15 @@ exclude = [
 ]
 
 [features]
-default = []
+default = ["ce"]
+
+# Edition features
+ce = []                                          # Community Edition (AGPL-3.0)
+oss = []                                         # Fully open-source build (no CE restrictions)
+enterprise = []                                  # Enterprise features (commercial license required)
+ee = ["enterprise", "redis", "storage-postgres"] # Full Enterprise Edition bundle
+
+# Infrastructure features
 redis = ["dep:redis"]
 sandbox = ["dep:tempfile"]
 sandbox-docker = ["sandbox", "dep:bollard"]
@@ -116,6 +124,7 @@ redis = { version = "0.27", features = ["tokio-comp", "aio"], optional = true }
 
 # Utilities
 uuid = { version = "1", features = ["v4"] }
+strsim = "0.11"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 thiserror = "2"

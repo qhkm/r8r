@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! TUI application state and event handling.
 
 use std::collections::VecDeque;
@@ -565,8 +571,7 @@ impl App {
     /// Spinner frame based on tick counter.
     pub fn spinner_frame(&self) -> &'static str {
         const FRAMES: &[&str] = &[
-            "\u{2801}", "\u{2809}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{2830}", "\u{2820}",
-            "\u{2800}",
+            " {2801}", " {2809}", " {2819}", " {2839}", " {2838}", " {2830}", " {2820}", " {2800}",
         ];
         FRAMES[(self.tick as usize / 2) % FRAMES.len()]
     }

@@ -5,6 +5,7 @@ This document describes all environment variables used by r8r for configuration.
 ## Table of Contents
 
 - [Core Configuration](#core-configuration)
+- [LLM Configuration](#llm-configuration)
 - [Security Settings](#security-settings)
 - [API Server Settings](#api-server-settings)
 - [CORS Configuration](#cors-configuration)
@@ -31,6 +32,40 @@ This document describes all environment variables used by r8r for configuration.
 ```bash
 export R8R_DATA_DIR=/var/lib/r8r
 ```
+
+---
+
+## LLM Configuration
+
+`r8r init` writes the same settings to `~/.config/r8r/config.toml` under `[llm]`. These environment variables override file-based values when set.
+
+### `R8R_LLM_PROVIDER`
+
+**Default**: `openai`
+
+**Description**: Default provider for CLI and REPL LLM calls. Supported values: `openai`, `anthropic`, `ollama`, `custom`.
+
+### `R8R_LLM_MODEL`
+
+**Default**: Provider-specific default
+
+**Description**: Default model name used for CLI and REPL LLM calls.
+
+### `R8R_LLM_ENDPOINT`
+
+**Default**: Provider-specific API endpoint
+
+**Description**: Full override URL for the selected LLM provider endpoint.
+
+### `R8R_LLM_TIMEOUT_SECONDS`
+
+**Default**: `60`
+
+**Description**: Timeout for CLI and REPL LLM requests in seconds.
+
+### API Keys
+
+Use `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `R8R_LLM_API_KEY`, or the credential store populated by `r8r init` / `r8r credentials set`.
 
 ---
 

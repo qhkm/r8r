@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Workflow DAG (Directed Acyclic Graph) support.
 //!
 //! Allows workflows to declare dependencies on other workflows,
@@ -174,7 +180,10 @@ impl WorkflowDag {
 
         self.format_node(root, 0, &mut visited, &mut lines);
 
-        lines.join("\n")
+        lines.join(
+            "
+",
+        )
     }
 
     fn format_node(

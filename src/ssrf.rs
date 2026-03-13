@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! SSRF protection helpers shared across HTTP node and notification channels.
 //!
 //! Blocks access to localhost, private IP ranges, and non-http(s) schemes.

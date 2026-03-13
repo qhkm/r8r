@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! WebSocket handler for live execution monitoring.
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};

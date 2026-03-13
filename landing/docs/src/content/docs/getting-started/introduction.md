@@ -28,7 +28,7 @@ description: What is r8r and why does it exist?
 | **Storage** | SQLite (embedded) | PostgreSQL/MySQL |
 | **Workflows** | YAML files (git-friendly) | Database blobs |
 | **MCP Support** | Built-in | None |
-| **License** | Apache 2.0 | Sustainable Use License |
+| **License** | AGPL-3.0 | Sustainable Use License |
 
 ## Key Concepts
 
@@ -76,6 +76,10 @@ r8r includes a built-in MCP (Model Context Protocol) server so AI agents can dis
 
 ## License
 
-r8r is licensed under **Apache 2.0**. Free to use, modify, and distribute. No copyleft restrictions.
+r8r uses a multi-license model:
 
-**Commercial extensions** (RBAC, SSO, fleet management, HA) are available for enterprise.
+- **Core engine** — [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html) (free to use, modify, distribute; network use counts as distribution)
+- **Client libraries** — [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (permissive, integrate freely)
+- **Enterprise features** — Commercial license (RBAC, SSO, fleet management, HA)
+
+**Commercial license** available for teams that need to use r8r without AGPL obligations.
