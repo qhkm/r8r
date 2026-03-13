@@ -10,6 +10,28 @@ authors = ["Kitakod Ventures"]
 keywords = ["workflow", "automation", "mcp", "agent", "orchestration"]
 categories = ["asynchronous", "development-tools", "web-programming"]
 readme = "README.md"
+exclude = [
+    ".github/",
+    ".internal/",
+    "assets/",
+    "deploy/",
+    "docs/",
+    "examples/",
+    "infra/",
+    "landing/",
+    "scripts/",
+    "signatures/",
+    "tests/",
+    "ui/",
+    "Dockerfile",
+    "Dockerfile.release",
+    "docker-entrypoint.sh",
+    "docker-compose*.yml",
+    "install.sh",
+    "Cross.toml",
+    "*.md",
+    "!README.md",
+]
 
 [features]
 default = []
