@@ -116,6 +116,7 @@ redis = { version = "0.27", features = ["tokio-comp", "aio"], optional = true }
 
 # Utilities
 uuid = { version = "1", features = ["v4"] }
+strsim = "0.11"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 thiserror = "2"

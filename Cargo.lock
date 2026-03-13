@@ -2672,6 +2672,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sqlx",
+ "strsim",
  "subtle",
  "tempfile",
  "thiserror 2.0.18",
