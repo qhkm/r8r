@@ -243,6 +243,7 @@ async fn process_stream(
             StreamEvent::ToolCallDelta { arguments, .. } => {
                 tool_call_args.push_str(&arguments);
             }
+            StreamEvent::Usage(_) => { /* handled by caller */ }
             StreamEvent::Done => break,
         }
     }

@@ -149,6 +149,8 @@ pub enum StreamEvent {
     ToolCallStart { id: String, name: String },
     /// Tool call argument chunk.
     ToolCallDelta { id: String, arguments: String },
+    /// Token usage data from the final chunk.
+    Usage(LlmUsage),
     /// Stream completed.
     Done,
 }
@@ -277,6 +279,17 @@ pub fn parse_openai_sse_line(line: &str) -> Option<StreamEvent> {
         return Some(StreamEvent::Done);
     }
     let v: serde_json::Value = serde_json::from_str(data).ok()?;
+
+    // Check for usage in final chunk FIRST (before choices processing)
+    if let Some(usage) = v.get("usage") {
+        if !usage.is_null() {
+            return Some(StreamEvent::Usage(LlmUsage {
+                prompt_tokens: usage.get("prompt_tokens").and_then(|v| v.as_u64()),
+                completion_tokens: usage.get("completion_tokens").and_then(|v| v.as_u64()),
+            }));
+        }
+    }
+
     let delta = &v["choices"][0]["delta"];
 
     if let Some(tool_calls) = delta["tool_calls"].as_array() {
@@ -344,6 +357,16 @@ pub fn parse_anthropic_sse_line(line: &str) -> Option<StreamEvent> {
                     })
                 }
                 _ => None,
+            }
+        }
+        "message_delta" => {
+            if let Some(usage) = v.get("usage") {
+                Some(StreamEvent::Usage(LlmUsage {
+                    prompt_tokens: usage.get("input_tokens").and_then(|t| t.as_u64()),
+                    completion_tokens: usage.get("output_tokens").and_then(|t| t.as_u64()),
+                }))
+            } else {
+                None
             }
         }
         "message_stop" => Some(StreamEvent::Done),
@@ -482,6 +505,7 @@ async fn build_openai_streaming_request(
         "model": model,
         "messages": all_messages,
         "stream": true,
+        "stream_options": {"include_usage": true},
     });
     if let Some(temp) = config.temperature {
         body["temperature"] = json!(temp);
@@ -821,6 +845,23 @@ async fn stream_ndjson_lines(mut response: reqwest::Response, tx: mpsc::Sender<S
 
             if let Some(event) = parse_ollama_ndjson_line(&line) {
                 let is_done = matches!(event, StreamEvent::Done);
+                if is_done {
+                    // Extract usage from the raw line before sending Done
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+                        let prompt_tokens =
+                            json.get("prompt_eval_count").and_then(|v| v.as_u64());
+                        let completion_tokens =
+                            json.get("eval_count").and_then(|v| v.as_u64());
+                        if prompt_tokens.is_some() || completion_tokens.is_some() {
+                            let _ = tx
+                                .send(StreamEvent::Usage(LlmUsage {
+                                    prompt_tokens,
+                                    completion_tokens,
+                                }))
+                                .await;
+                        }
+                    }
+                }
                 if tx.send(event).await.is_err() {
                     return;
                 }
