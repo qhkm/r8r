@@ -2588,6 +2588,33 @@ async fn handle_slash_command(
                 format!("Plan loaded in Log panel. {}", header),
             );
         }
+        InputCommand::Usage => {
+            let su = &app.session_usage;
+            let total = su.total_prompt_tokens + su.total_completion_tokens;
+            let turns = su.turns_with_usage;
+            let cost = estimate_cost(
+                &app.model,
+                Some(su.total_prompt_tokens),
+                Some(su.total_completion_tokens),
+            );
+
+            let mut text = format!("Session usage ({} turns):\n\n", turns);
+            text.push_str(&format!(
+                "  Prompt tokens:      {:>10}\n",
+                su.total_prompt_tokens
+            ));
+            text.push_str(&format!(
+                "  Completion tokens:  {:>10}\n",
+                su.total_completion_tokens
+            ));
+            text.push_str(&format!("  Total tokens:       {:>10}\n", total));
+            if let Some(c) = cost {
+                text.push_str(&format!("  Estimated cost:     ~${:.3}\n", c));
+            }
+            text.push_str(&format!("\n  Model: {}", app.model));
+
+            app.push_message(MessageKind::System, text);
+        }
         InputCommand::ArmWrites => {
             app.writes_armed = true;
             app.push_message(
