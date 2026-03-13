@@ -22,6 +22,8 @@ pub struct TurnResult {
     pub tool_calls: Vec<ToolCallRecord>,
     /// Whether the turn was cancelled.
     pub cancelled: bool,
+    /// Accumulated token usage across all LLM calls in this turn.
+    pub usage: Option<crate::llm::LlmUsage>,
 }
 
 /// Record of a single tool call during a turn.
@@ -66,6 +68,7 @@ pub async fn run_turn(
 
     let mut tool_calls = Vec::new();
     let mut total_tool_calls = 0;
+    let mut accumulated_usage: Option<crate::llm::LlmUsage> = None;
 
     loop {
         let messages = conversation.messages_for_llm();
@@ -92,11 +95,24 @@ pub async fn run_turn(
                     response: error_msg,
                     tool_calls,
                     cancelled: false,
+                    usage: accumulated_usage,
                 };
             }
         };
 
-        let stream_result = process_stream(rx, on_update).await;
+        let (stream_result, turn_usage) = process_stream(rx, on_update).await;
+
+        // Accumulate usage across multi-step tool calls
+        if let Some(u) = turn_usage {
+            let acc = accumulated_usage.get_or_insert(crate::llm::LlmUsage {
+                prompt_tokens: Some(0),
+                completion_tokens: Some(0),
+            });
+            acc.prompt_tokens =
+                Some(acc.prompt_tokens.unwrap_or(0) + u.prompt_tokens.unwrap_or(0));
+            acc.completion_tokens =
+                Some(acc.completion_tokens.unwrap_or(0) + u.completion_tokens.unwrap_or(0));
+        }
 
         match stream_result {
             StreamResult::TextResponse(text) => {
@@ -106,6 +122,7 @@ pub async fn run_turn(
                     response: text,
                     tool_calls,
                     cancelled: false,
+                    usage: accumulated_usage,
                 };
             }
             StreamResult::ToolCall {
@@ -124,6 +141,7 @@ pub async fn run_turn(
                         response: msg,
                         tool_calls,
                         cancelled: false,
+                        usage: accumulated_usage,
                     };
                 }
 
@@ -161,6 +179,7 @@ pub async fn run_turn(
                         response: msg,
                         tool_calls,
                         cancelled: false,
+                        usage: accumulated_usage,
                     };
                 }
 
@@ -196,6 +215,7 @@ pub async fn run_turn(
                     response: e,
                     tool_calls,
                     cancelled: false,
+                    usage: accumulated_usage,
                 };
             }
         }
@@ -219,12 +239,13 @@ enum StreamResult {
 async fn process_stream(
     mut rx: mpsc::Receiver<StreamEvent>,
     on_update: &StreamCallback,
-) -> StreamResult {
+) -> (StreamResult, Option<crate::llm::LlmUsage>) {
     let mut text_buffer = String::new();
     let mut tool_call_id = String::new();
     let mut tool_call_name = String::new();
     let mut tool_call_args = String::new();
     let mut in_tool_call = false;
+    let mut usage: Option<crate::llm::LlmUsage> = None;
 
     while let Some(event) = rx.recv().await {
         match event {
@@ -243,29 +264,37 @@ async fn process_stream(
             StreamEvent::ToolCallDelta { arguments, .. } => {
                 tool_call_args.push_str(&arguments);
             }
-            StreamEvent::Usage(_) => { /* handled by caller */ }
+            StreamEvent::Usage(u) => {
+                usage = Some(u);
+            }
             StreamEvent::Done => break,
         }
     }
 
     if in_tool_call && !tool_call_name.is_empty() {
-        return StreamResult::ToolCall {
-            id: tool_call_id,
-            name: tool_call_name,
-            arguments: tool_call_args,
-        };
+        return (
+            StreamResult::ToolCall {
+                id: tool_call_id,
+                name: tool_call_name,
+                arguments: tool_call_args,
+            },
+            usage,
+        );
     }
 
     if let Some((name, args)) = tools::parse_text_tool_call(&text_buffer) {
-        return StreamResult::TextToolCall {
-            name,
-            arguments: args,
-        };
+        return (
+            StreamResult::TextToolCall {
+                name,
+                arguments: args,
+            },
+            usage,
+        );
     }
 
     if text_buffer.is_empty() {
-        StreamResult::Error("Empty response from LLM".to_string())
+        (StreamResult::Error("Empty response from LLM".to_string()), usage)
     } else {
-        StreamResult::TextResponse(text_buffer)
+        (StreamResult::TextResponse(text_buffer), usage)
     }
 }
