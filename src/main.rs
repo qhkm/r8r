@@ -604,7 +604,7 @@ async fn run_command(
             DbActions::Check => cmd_db_check().await?,
         },
         Some(Commands::Templates { action }) => match action {
-            TemplateActions::List { by_category } => cmd_templates_list(by_category).await?,
+            TemplateActions::List { by_category } => cmd_templates_list(by_category, output).await?,
             TemplateActions::Show { name } => cmd_templates_show(&name).await?,
             TemplateActions::Use {
                 name,
@@ -641,7 +641,7 @@ async fn run_command(
             status,
         }) => match action {
             Some(RunsActions::Pending { limit }) => cmd_runs_pending(limit).await?,
-            Some(RunsActions::Show { run_id, trace }) => cmd_runs_show(&run_id, trace).await?,
+            Some(RunsActions::Show { run_id, trace }) => cmd_runs_show(&run_id, trace, output).await?,
             Some(RunsActions::Export {
                 run_id,
                 format,
@@ -667,7 +667,7 @@ async fn run_command(
             cmd_approve_deny(&id, "reject", comment.as_deref(), &by).await?
         }
         Some(Commands::Policy { action }) => match action {
-            PolicyActions::Show => cmd_policy_show().await?,
+            PolicyActions::Show => cmd_policy_show(output).await?,
             PolicyActions::Set { profile } => cmd_policy_set(&profile).await?,
             PolicyActions::Validate { file } => cmd_policy_validate(&file).await?,
         },
@@ -1814,19 +1814,26 @@ async fn cmd_db_check() -> anyhow::Result<()> {
 // Template Commands
 // ============================================================================
 
-async fn cmd_templates_list(by_category: bool) -> anyhow::Result<()> {
+async fn cmd_templates_list(by_category: bool, output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     use r8r::templates::TemplateRegistry;
 
     let registry = TemplateRegistry::new();
 
     if by_category {
-        let by_category = registry.list_by_category();
-        let mut categories: Vec<_> = by_category.keys().collect();
+        let by_cat = registry.list_by_category();
+
+        if output.is_json() {
+            let all: Vec<_> = by_cat.values().flatten().collect();
+            println!("{}", serde_json::to_string_pretty(&all)?);
+            return Ok(());
+        }
+
+        let mut categories: Vec<_> = by_cat.keys().collect();
         categories.sort();
 
         for category in categories {
             println!("{}:", category.to_uppercase());
-            for template in &by_category[category] {
+            for template in &by_cat[category] {
                 println!("  {:<25} {}", template.name, template.description);
             }
             println!();
@@ -1835,23 +1842,21 @@ async fn cmd_templates_list(by_category: bool) -> anyhow::Result<()> {
         let templates = registry.list();
 
         if templates.is_empty() {
-            println!("No templates available.");
+            output.success("No templates available.");
             return Ok(());
         }
 
-        println!("{:<25} {:<15} DESCRIPTION", "NAME", "CATEGORY");
-        println!("{}", "-".repeat(70));
-
-        for template in templates {
-            println!(
-                "{:<25} {:<15} {}",
-                template.name, template.category, template.description
-            );
-        }
+        output.list(
+            &["NAME", "CATEGORY", "DESCRIPTION"],
+            &templates,
+            |t| vec![t.name.clone(), t.category.clone(), t.description.clone()],
+        );
     }
 
-    println!();
-    println!("Use a template with: r8r templates use <name> --var key=value");
+    if !output.is_json() {
+        println!();
+        println!("Use a template with: r8r templates use <name> --var key=value");
+    }
 
     Ok(())
 }
@@ -2654,29 +2659,28 @@ async fn cmd_runs(
     let executions = storage.query_executions(&query).await?;
 
     if executions.is_empty() {
-        println!("No executions found.");
+        output.success("No executions found.");
         return Ok(());
     }
 
-    println!(
-        "{:<36} {:<24} {:<12} {:<10} {:<20}",
-        "EXECUTION ID", "WORKFLOW", "STATUS", "TRIGGER", "STARTED"
+    output.list(
+        &["EXECUTION ID", "WORKFLOW", "STATUS", "TRIGGER", "STARTED"],
+        &executions,
+        |exec| {
+            vec![
+                exec.id.clone(),
+                truncate(&exec.workflow_name, 23).to_string(),
+                exec.status.to_string(),
+                exec.trigger_type.clone(),
+                exec.started_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            ]
+        },
     );
-    println!("{}", "─".repeat(105));
 
-    for exec in &executions {
-        println!(
-            "{:<36} {:<24} {:<12} {:<10} {:<20}",
-            exec.id,
-            truncate(&exec.workflow_name, 23),
-            exec.status.to_string(),
-            exec.trigger_type,
-            exec.started_at.format("%Y-%m-%d %H:%M:%S"),
-        );
+    if !output.is_json() {
+        println!();
+        println!("{} execution(s) shown", executions.len());
     }
-
-    println!();
-    println!("{} execution(s) shown", executions.len());
 
     maybe_show_init_hint(output);
 
@@ -3454,13 +3458,23 @@ async fn cmd_runs_pending(limit: usize) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_runs_show(run_id: &str, include_trace: bool) -> anyhow::Result<()> {
+async fn cmd_runs_show(run_id: &str, include_trace: bool, output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     let storage = get_storage()?;
 
     let exec = storage
         .get_execution(run_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Execution not found: {}", run_id))?;
+
+    if output.is_json() {
+        let mut json_val = serde_json::to_value(&exec)?;
+        if include_trace {
+            let nodes = storage.get_node_executions(run_id).await?;
+            json_val["trace"] = serde_json::to_value(&nodes)?;
+        }
+        println!("{}", serde_json::to_string_pretty(&json_val)?);
+        return Ok(());
+    }
 
     println!("Execution  : {}", exec.id);
     println!("Workflow   : {}", exec.workflow_name);
@@ -3491,10 +3505,10 @@ async fn cmd_runs_show(run_id: &str, include_trace: bool) -> anyhow::Result<()> 
         println!("{}", serde_json::to_string_pretty(&exec.input)?);
     }
 
-    if let Some(output) = &exec.output {
+    if let Some(exec_output) = &exec.output {
         println!();
         println!("Output:");
-        println!("{}", serde_json::to_string_pretty(output)?);
+        println!("{}", serde_json::to_string_pretty(exec_output)?);
     }
 
     // Show pending approvals for this execution (filter by status at storage level)
@@ -3509,7 +3523,7 @@ async fn cmd_runs_show(run_id: &str, include_trace: bool) -> anyhow::Result<()> 
         println!();
         println!("Pending approvals:");
         for a in &pending {
-            println!("  {} — {} (approval ID: {})", a.title, a.status, a.id);
+            println!("  {} \u{2014} {} (approval ID: {})", a.title, a.status, a.id);
             if let Some(desc) = &a.description {
                 println!("    {}", desc);
             }
@@ -3525,7 +3539,7 @@ async fn cmd_runs_show(run_id: &str, include_trace: bool) -> anyhow::Result<()> 
         } else {
             println!();
             println!("{:<24} {:<12} {:<8} ERROR", "NODE", "STATUS", "MS");
-            println!("{}", "─".repeat(72));
+            println!("{}", "\u{2500}".repeat(72));
             for n in &nodes {
                 let ms = n
                     .finished_at
@@ -3854,10 +3868,15 @@ fn save_policy(policy: &PolicyConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_policy_show() -> anyhow::Result<()> {
+async fn cmd_policy_show(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     let policy = load_policy();
-    let path = policy_path();
 
+    if output.is_json() {
+        println!("{}", serde_json::to_string_pretty(&policy)?);
+        return Ok(());
+    }
+
+    let path = policy_path();
     println!("Active policy: {}", policy.profile.to_uppercase());
     println!("Config file  : {}", path.display());
     println!();
