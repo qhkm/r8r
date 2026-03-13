@@ -1,0 +1,195 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            use_cross: false
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            use_cross: true
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            use_cross: true
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-latest
+            use_cross: true
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            use_cross: false
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            use_cross: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add ${{ matrix.target }}
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-release-
+
+      - name: Install protoc (native Linux builds)
+        if: "!matrix.use_cross && runner.os == 'Linux'"
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --version 0.2.5
+
+      - name: Build release binary
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+
+      - name: Package artifacts
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          ARCHIVE="r8r-${VERSION}-${{ matrix.target }}.tar.gz"
+          cd target/${{ matrix.target }}/release
+          tar czf "../../../${ARCHIVE}" r8r r8r-mcp
+          cd ../../..
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: r8r-${{ matrix.target }}
+          path: ${{ env.ARCHIVE }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          cd artifacts
+          sha256sum r8r-*.tar.gz > "r8r-${VERSION}-checksums.txt"
+          cat "r8r-${VERSION}-checksums.txt"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/r8r-*.tar.gz
+            artifacts/r8r-*-checksums.txt
+
+  docker:
+    name: Docker Image
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux amd64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: r8r-x86_64-unknown-linux-gnu
+          path: docker-amd64
+
+      - name: Download Linux arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: r8r-aarch64-unknown-linux-gnu
+          path: docker-arm64
+
+      - name: Extract binaries
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p context-amd64 context-arm64
+
+          tar xzf docker-amd64/r8r-${VERSION}-x86_64-unknown-linux-gnu.tar.gz -C context-amd64
+          tar xzf docker-arm64/r8r-${VERSION}-aarch64-unknown-linux-gnu.tar.gz -C context-arm64
+
+          cp docker-entrypoint.sh context-amd64/
+          cp docker-entrypoint.sh context-arm64/
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push amd64 image
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            -f Dockerfile.release \
+            -t ghcr.io/${{ github.repository_owner }}/r8r:amd64 \
+            --push \
+            context-amd64
+
+      - name: Push arm64 image
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            -f Dockerfile.release \
+            -t ghcr.io/${{ github.repository_owner }}/r8r:arm64 \
+            --push \
+            context-arm64
+
+      - name: Create and push multi-arch manifests
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          IMAGE="ghcr.io/${{ github.repository_owner }}/r8r"
+
+          # Create versioned multi-arch manifest
+          docker buildx imagetools create \
+            -t "${IMAGE}:${VERSION}" \
+            "${IMAGE}:amd64" \
+            "${IMAGE}:arm64"
+
+          # Create latest multi-arch manifest
+          docker buildx imagetools create \
+            -t "${IMAGE}:latest" \
+            "${IMAGE}:amd64" \
+            "${IMAGE}:arm64"
+
+          echo "Published ${IMAGE}:${VERSION} and ${IMAGE}:latest"

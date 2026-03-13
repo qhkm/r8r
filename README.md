@@ -45,10 +45,23 @@ r8r:            LLM only where needed    →  $
 ## Quick Start
 
 ```bash
-# Install
+# Install (recommended)
+curl -sSf https://r8r.sh/install.sh | sh
+
+# Or use Docker
+docker run -d -p 8080:8080 -v r8r-data:/data ghcr.io/qhkm/r8r
+
+# Or via Cargo (requires Rust)
+cargo install r8r
+
+# Or build from source
 git clone https://github.com/qhkm/r8r.git && cd r8r
 cargo build --release
+```
 
+Then create and run a workflow:
+
+```bash
 # Create a workflow
 cat > hello.yaml << 'EOF'
 name: hello-world
@@ -59,15 +72,17 @@ nodes:
       expression: '"Hello, " + (input.name ?? "World") + "!"'
 EOF
 
-# Run it
-./target/release/r8r server --workflows . &
-curl -X POST localhost:3000/api/workflows/hello-world/execute \
+# Start the server
+r8r server --workflows . &
+
+# Execute it
+curl -X POST localhost:8080/api/workflows/hello-world/execute \
   -H "Content-Type: application/json" \
   -d '{"input": {"name": "Agent"}}'
 
 # Open the web UI
-# Dashboard: http://localhost:3000/
-# Guided workflow studio: http://localhost:3000/editor
+# Dashboard: http://localhost:8080/
+# Guided workflow studio: http://localhost:8080/editor
 ```
 
 ## Deployment Modes
@@ -77,7 +92,7 @@ curl -X POST localhost:3000/api/workflows/hello-world/execute \
 Run `r8r server` for the full-featured automation server — REST API, web dashboard, MCP server, webhooks, cron triggers, and credential management.
 
 ```bash
-r8r server --workflows ./workflows --port 3000
+r8r server --workflows ./workflows
 ```
 
 This is the primary mode today. Supports SQLite (default) or PostgreSQL (`--features storage-postgres`) for execution history and state.
