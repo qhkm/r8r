@@ -540,7 +540,7 @@ async fn run_command(
         Some(Commands::Chat { resume }) => cmd_chat(resume).await?,
         Some(Commands::Workflows { action }) => match action {
             WorkflowActions::List => cmd_workflows_list(output).await?,
-            WorkflowActions::Create { file } => cmd_workflows_create(&file).await?,
+            WorkflowActions::Create { file } => cmd_workflows_create(&file, output).await?,
             WorkflowActions::Run {
                 name,
                 input,
@@ -596,7 +596,7 @@ async fn run_command(
                 service,
                 key,
                 value,
-            } => cmd_credentials_set(&service, key.as_deref(), value.as_deref()).await?,
+            } => cmd_credentials_set(&service, key.as_deref(), value.as_deref(), output).await?,
             CredentialActions::List => cmd_credentials_list(output).await?,
             CredentialActions::Delete { service } => cmd_credentials_delete(&service).await?,
         },
@@ -617,7 +617,7 @@ async fn run_command(
         Some(Commands::Completions { shell }) => {
             cmd_completions(shell)?;
         }
-        Some(Commands::Create { prompt }) => cmd_create(&prompt).await?,
+        Some(Commands::Create { prompt }) => cmd_create(&prompt, output).await?,
         Some(Commands::Refine { name, prompt }) => cmd_refine(&name, &prompt).await?,
         Some(Commands::Prompt {
             description,
@@ -647,14 +647,14 @@ async fn run_command(
                 format,
                 output,
             }) => cmd_runs_export(&run_id, &format, output.as_deref()).await?,
-            None => cmd_runs(workflow.as_deref(), limit, status.as_deref()).await?,
+            None => cmd_runs(workflow.as_deref(), limit, status.as_deref(), output).await?,
         },
         Some(Commands::Secrets { action }) => match action {
             SecretsActions::Set {
                 service,
                 key,
                 value,
-            } => cmd_credentials_set(&service, key.as_deref(), value.as_deref()).await?,
+            } => cmd_credentials_set(&service, key.as_deref(), value.as_deref(), output).await?,
             SecretsActions::List => cmd_credentials_list(output).await?,
             SecretsActions::Delete { service } => cmd_credentials_delete(&service).await?,
         },
@@ -695,6 +695,24 @@ async fn run_command(
     }
 
     Ok(())
+}
+
+/// Show a one-time hint to run `r8r init` when no LLM provider is configured.
+fn maybe_show_init_hint(output: &r8r::cli::output::Output) {
+    if output.is_json() {
+        return;
+    }
+    // Skip expensive Ollama HTTP check — only look at env vars and config file.
+    let has_openai = std::env::var("OPENAI_API_KEY").is_ok();
+    let has_anthropic = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    let has_config = r8r::config::Config::config_dir()
+        .join("config.toml")
+        .exists();
+
+    if !has_openai && !has_anthropic && !has_config {
+        eprintln!();
+        eprintln!("  tip: Run 'r8r init' to set up your environment");
+    }
 }
 
 /// Shell completion variants
@@ -750,22 +768,24 @@ async fn cmd_workflows_list(output: &r8r::cli::output::Output) -> anyhow::Result
         return Ok(());
     }
 
-    output.list(
-        &["NAME", "ENABLED", "UPDATED"],
-        &workflows,
-        |wf| {
-            vec![
-                wf.name.clone(),
-                if wf.enabled { "yes".into() } else { "no".into() },
-                wf.updated_at.format("%Y-%m-%d %H:%M").to_string(),
-            ]
-        },
-    );
+    output.list(&["NAME", "ENABLED", "UPDATED"], &workflows, |wf| {
+        vec![
+            wf.name.clone(),
+            if wf.enabled {
+                "yes".into()
+            } else {
+                "no".into()
+            },
+            wf.updated_at.format("%Y-%m-%d %H:%M").to_string(),
+        ]
+    });
+
+    maybe_show_init_hint(output);
 
     Ok(())
 }
 
-async fn cmd_workflows_create(file: &str) -> anyhow::Result<()> {
+async fn cmd_workflows_create(file: &str, output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     use r8r::storage::StoredWorkflow;
     use r8r::workflow::{parse_workflow_file, validate_workflow};
     use std::path::Path;
@@ -797,12 +817,17 @@ async fn cmd_workflows_create(file: &str) -> anyhow::Result<()> {
 
     storage.save_workflow(&stored).await?;
 
-    println!("✓ Workflow '{}' created successfully", workflow.name);
+    println!("\u{2713} Workflow '{}' created successfully", workflow.name);
     println!();
     println!("  Nodes: {}", workflow.nodes.len());
     println!("  Triggers: {}", workflow.triggers.len());
-    println!();
-    println!("Run with: r8r workflows run {}", workflow.name);
+
+    let run_cmd = format!("r8r run {}", workflow.name);
+    let dag_cmd = format!("r8r workflows dag {}", workflow.name);
+    output.suggest(&[
+        (&run_cmd, "execute the workflow"),
+        (&dag_cmd, "visualize the DAG"),
+    ]);
 
     Ok(())
 }
@@ -1654,6 +1679,7 @@ async fn cmd_credentials_set(
     service: &str,
     key: Option<&str>,
     value: Option<&str>,
+    output: &r8r::cli::output::Output,
 ) -> anyhow::Result<()> {
     use r8r::credentials::CredentialStore;
     use std::io::{self, BufRead};
@@ -1677,10 +1703,15 @@ async fn cmd_credentials_set(
     let mut store = CredentialStore::load().await?;
     store.set(service, key, &credential_value).await?;
 
-    println!("✓ Credential '{}' saved", service);
+    println!("\u{2713} Credential '{}' saved", service);
     if let Some(k) = key {
         println!("  Key: {}", k);
     }
+
+    output.suggest(&[
+        ("r8r doctor", "verify your setup"),
+        ("r8r chat", "start building workflows"),
+    ]);
 
     Ok(())
 }
@@ -1692,7 +1723,9 @@ async fn cmd_credentials_list(output: &r8r::cli::output::Output) -> anyhow::Resu
     let credentials = store.list();
 
     if credentials.is_empty() {
-        output.success("No credentials stored. Add one with: r8r credentials set <service> -v <value>");
+        output.success(
+            "No credentials stored. Add one with: r8r credentials set <service> -v <value>",
+        );
         return Ok(());
     }
 
@@ -1713,11 +1746,9 @@ async fn cmd_credentials_list(output: &r8r::cli::output::Output) -> anyhow::Resu
         })
         .collect();
 
-    output.list(
-        &["SERVICE", "KEY", "UPDATED"],
-        &summaries,
-        |s| vec![s.service.clone(), s.key.clone(), s.updated_at.clone()],
-    );
+    output.list(&["SERVICE", "KEY", "UPDATED"], &summaries, |s| {
+        vec![s.service.clone(), s.key.clone(), s.updated_at.clone()]
+    });
 
     Ok(())
 }
@@ -2071,7 +2102,10 @@ fn get_storage() -> anyhow::Result<std::sync::Arc<dyn r8r::storage::Storage>> {
 // Generate / Refine Commands
 // ============================================================================
 
-async fn cmd_create(prompt_parts: &[String]) -> anyhow::Result<()> {
+async fn cmd_create(
+    prompt_parts: &[String],
+    output: &r8r::cli::output::Output,
+) -> anyhow::Result<()> {
     use r8r::generator;
     use r8r::storage::StoredWorkflow;
     use std::io::{self, BufRead, Write};
@@ -2134,8 +2168,11 @@ async fn cmd_create(prompt_parts: &[String]) -> anyhow::Result<()> {
                 };
 
                 storage.save_workflow(&stored).await?;
-                println!("\n✓ Workflow '{}' saved", workflow.name);
-                println!("Run with: r8r workflows run {}", workflow.name);
+                println!("\n\u{2713} Workflow '{}' saved", workflow.name);
+
+                let run_cmd = format!("r8r run {}", workflow.name);
+                let refine_cmd = format!("r8r refine {} \"...\"", workflow.name);
+                output.suggest(&[(&run_cmd, "execute it now"), (&refine_cmd, "improve it")]);
                 return Ok(());
             }
             "no" | "n" => {
@@ -2600,6 +2637,7 @@ async fn cmd_runs(
     workflow: Option<&str>,
     limit: usize,
     status_filter: Option<&str>,
+    output: &r8r::cli::output::Output,
 ) -> anyhow::Result<()> {
     use r8r::storage::ExecutionQuery;
 
@@ -2639,6 +2677,8 @@ async fn cmd_runs(
 
     println!();
     println!("{} execution(s) shown", executions.len());
+
+    maybe_show_init_hint(output);
 
     Ok(())
 }
@@ -2762,16 +2802,25 @@ async fn cmd_doctor(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
                 serde_json::json!({"name": name, "pass": passed, "message": msg})
             })
             .collect();
-        println!("{}", serde_json::json!({"checks": checks_json, "pass": pass, "fail": fail}));
+        println!(
+            "{}",
+            serde_json::json!({"checks": checks_json, "pass": pass, "fail": fail})
+        );
     } else {
         println!();
         if fail == 0 {
             println!("All {} checks passed.", pass);
         } else {
             println!("{} passed, {} failed.", pass, fail);
+            output.suggest(&[
+                ("r8r init", "re-run setup wizard"),
+                ("r8r credentials list", "check stored credentials"),
+            ]);
             std::process::exit(1);
         }
     }
+
+    maybe_show_init_hint(output);
 
     Ok(())
 }
@@ -3917,10 +3966,6 @@ async fn cmd_policy_validate(file: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_init(
-    output: &r8r::cli::output::Output,
-    yes: bool,
-    force: bool,
-) -> anyhow::Result<()> {
+async fn cmd_init(output: &r8r::cli::output::Output, yes: bool, force: bool) -> anyhow::Result<()> {
     r8r::cli::init::run_init(output, yes, force).await
 }
