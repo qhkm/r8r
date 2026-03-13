@@ -579,7 +579,7 @@ async fn main() -> anyhow::Result<()> {
                 key,
                 value,
             } => cmd_credentials_set(&service, key.as_deref(), value.as_deref()).await?,
-            CredentialActions::List => cmd_credentials_list().await?,
+            CredentialActions::List => cmd_credentials_list(&output).await?,
             CredentialActions::Delete { service } => cmd_credentials_delete(&service).await?,
         },
         Some(Commands::Db { action }) => match action {
@@ -637,7 +637,7 @@ async fn main() -> anyhow::Result<()> {
                 key,
                 value,
             } => cmd_credentials_set(&service, key.as_deref(), value.as_deref()).await?,
-            SecretsActions::List => cmd_credentials_list().await?,
+            SecretsActions::List => cmd_credentials_list(&output).await?,
             SecretsActions::Delete { service } => cmd_credentials_delete(&service).await?,
         },
         Some(Commands::Watch { url, token }) => cmd_monitor(&url, token.as_deref()).await?,
@@ -1667,27 +1667,39 @@ async fn cmd_credentials_set(
     Ok(())
 }
 
-async fn cmd_credentials_list() -> anyhow::Result<()> {
+async fn cmd_credentials_list(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     use r8r::credentials::CredentialStore;
 
     let store = CredentialStore::load().await?;
     let credentials = store.list();
 
     if credentials.is_empty() {
-        println!("No credentials stored.");
-        println!();
-        println!("Add one with: r8r credentials set <service> -v <value>");
+        output.success("No credentials stored. Add one with: r8r credentials set <service> -v <value>");
         return Ok(());
     }
 
-    println!("{:<20} {:<15} {:<20}", "SERVICE", "KEY", "UPDATED");
-    println!("{}", "-".repeat(55));
-
-    for cred in credentials {
-        let key_display = cred.key.as_deref().unwrap_or("-");
-        let updated = cred.updated_at.format("%Y-%m-%d %H:%M");
-        println!("{:<20} {:<15} {:<20}", cred.service, key_display, updated);
+    // Redacted projection — excludes the encrypted `value` field for safe JSON output
+    #[derive(serde::Serialize)]
+    struct CredentialSummary {
+        service: String,
+        key: String,
+        updated_at: String,
     }
+
+    let summaries: Vec<CredentialSummary> = credentials
+        .iter()
+        .map(|c| CredentialSummary {
+            service: c.service.clone(),
+            key: c.key.as_deref().unwrap_or("-").to_string(),
+            updated_at: c.updated_at.format("%Y-%m-%d %H:%M").to_string(),
+        })
+        .collect();
+
+    output.list(
+        &["SERVICE", "KEY", "UPDATED"],
+        &summaries,
+        |s| vec![s.service.clone(), s.key.clone(), s.updated_at.clone()],
+    );
 
     Ok(())
 }
