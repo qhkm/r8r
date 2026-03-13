@@ -641,7 +641,7 @@ async fn main() -> anyhow::Result<()> {
             SecretsActions::Delete { service } => cmd_credentials_delete(&service).await?,
         },
         Some(Commands::Watch { url, token }) => cmd_monitor(&url, token.as_deref()).await?,
-        Some(Commands::Doctor) => cmd_doctor().await?,
+        Some(Commands::Doctor) => cmd_doctor(&output).await?,
         Some(Commands::Approve { id, comment, by }) => {
             cmd_approve_deny(&id, "approve", comment.as_deref(), &by).await?
         }
@@ -2638,23 +2638,35 @@ fn truncate(s: &str, max: usize) -> &str {
 }
 
 /// `r8r doctor` — verify DB, config, credentials, and node registry.
-async fn cmd_doctor() -> anyhow::Result<()> {
+async fn cmd_doctor(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     let mut pass = 0usize;
     let mut fail = 0usize;
+    let mut checks: Vec<(&str, bool, String)> = Vec::new();
 
-    println!("r8r doctor\n");
+    if !output.is_json() {
+        println!("r8r doctor\n");
+    }
 
-    // Helper closure to print result
-    let mut report = |label: &str, result: Result<String, String>| match result {
-        Ok(msg) => {
-            println!("  ✓ {:<30} {}", label, msg);
-            pass += 1;
-        }
-        Err(e) => {
-            println!("  ✗ {:<30} {}", label, e);
-            fail += 1;
-        }
-    };
+    macro_rules! report {
+        ($label:expr, $result:expr) => {
+            match $result {
+                Ok(msg) => {
+                    if !output.is_json() {
+                        println!("  \u{2713} {:<30} {}", $label, msg);
+                    }
+                    checks.push(($label, true, msg));
+                    pass += 1;
+                }
+                Err(e) => {
+                    if !output.is_json() {
+                        println!("  \u{2717} {:<30} {}", $label, e);
+                    }
+                    checks.push(($label, false, e));
+                    fail += 1;
+                }
+            }
+        };
+    }
 
     // 1. Database connectivity
     let db_result = async {
@@ -2663,7 +2675,7 @@ async fn cmd_doctor() -> anyhow::Result<()> {
         Ok::<String, String>(format!("{} workflow(s) stored", workflows.len()))
     }
     .await;
-    report("Database", db_result);
+    report!("Database", db_result);
 
     // 2. LLM config
     let llm_result = {
@@ -2680,7 +2692,7 @@ async fn cmd_doctor() -> anyhow::Result<()> {
             Ok(format!("model={} endpoint={}", model, base_url))
         }
     };
-    report("LLM config", llm_result);
+    report!("LLM config", llm_result);
 
     // 3. Credentials
     let cred_result = async {
@@ -2690,7 +2702,7 @@ async fn cmd_doctor() -> anyhow::Result<()> {
         Ok::<String, String>(format!("{} configured", creds.len()))
     }
     .await;
-    report("Credentials", cred_result);
+    report!("Credentials", cred_result);
 
     // 4. Node registry
     let reg_result = {
@@ -2723,14 +2735,24 @@ async fn cmd_doctor() -> anyhow::Result<()> {
         let count = known.iter().filter(|t| registry.has(t)).count();
         Ok::<String, String>(format!("{} node type(s) registered", count))
     };
-    report("Node registry", reg_result);
+    report!("Node registry", reg_result);
 
-    println!();
-    if fail == 0 {
-        println!("All {} checks passed.", pass);
+    if output.is_json() {
+        let checks_json: Vec<serde_json::Value> = checks
+            .iter()
+            .map(|(name, passed, msg)| {
+                serde_json::json!({"name": name, "pass": passed, "message": msg})
+            })
+            .collect();
+        println!("{}", serde_json::json!({"checks": checks_json, "pass": pass, "fail": fail}));
     } else {
-        println!("{} passed, {} failed.", pass, fail);
-        std::process::exit(1);
+        println!();
+        if fail == 0 {
+            println!("All {} checks passed.", pass);
+        } else {
+            println!("{} passed, {} failed.", pass, fail);
+            std::process::exit(1);
+        }
     }
 
     Ok(())
