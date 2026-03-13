@@ -123,12 +123,12 @@ jobs:
           # Upload each artifact under releases/<version>/
           for file in artifacts/r8r-*.tar.gz artifacts/r8r-*-checksums.txt; do
             filename="$(basename "$file")"
-            wrangler r2 object put "${R2_BUCKET}/releases/${VERSION}/${filename}" --file "$file"
+            wrangler r2 object put "${R2_BUCKET}/releases/${VERSION}/${filename}" --file "$file" --remote
           done
 
           # Update latest.txt so install script can resolve version
           echo "${VERSION}" > /tmp/latest.txt
-          wrangler r2 object put "${R2_BUCKET}/latest.txt" --file /tmp/latest.txt --content-type text/plain
+          wrangler r2 object put "${R2_BUCKET}/latest.txt" --file /tmp/latest.txt --content-type text/plain --remote
 
           echo "Uploaded ${VERSION} to R2"
 
