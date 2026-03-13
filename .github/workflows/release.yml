@@ -26,16 +26,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-latest
             use_cross: true
-          - target: x86_64-unknown-linux-musl
-            runner: ubuntu-latest
-            use_cross: true
-          - target: aarch64-unknown-linux-musl
-            runner: ubuntu-latest
-            use_cross: true
           - target: aarch64-apple-darwin
-            runner: macos-latest
-            use_cross: false
-          - target: x86_64-apple-darwin
             runner: macos-latest
             use_cross: false
     steps:
@@ -121,6 +112,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Download Linux amd64 artifact
         uses: actions/download-artifact@v4
         with:
@@ -180,13 +175,11 @@ jobs:
           VERSION="${GITHUB_REF_NAME}"
           IMAGE="ghcr.io/${{ github.repository_owner }}/r8r"
 
-          # Create versioned multi-arch manifest
           docker buildx imagetools create \
             -t "${IMAGE}:${VERSION}" \
             "${IMAGE}:amd64" \
             "${IMAGE}:arm64"
 
-          # Create latest multi-arch manifest
           docker buildx imagetools create \
             -t "${IMAGE}:latest" \
             "${IMAGE}:amd64" \

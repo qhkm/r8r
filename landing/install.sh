@@ -27,18 +27,15 @@ detect_platform() {
     case "${OS}" in
         Linux)
             case "${ARCH}" in
-                x86_64)  TARGET="x86_64-unknown-linux-musl" ;;
-                aarch64) TARGET="aarch64-unknown-linux-musl" ;;
-                arm64)   TARGET="aarch64-unknown-linux-musl" ;;
+                x86_64)  TARGET="x86_64-unknown-linux-gnu" ;;
+                aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
+                arm64)   TARGET="aarch64-unknown-linux-gnu" ;;
                 *)       err "Unsupported architecture: ${ARCH}" ;;
             esac
             ;;
         Darwin)
-            case "${ARCH}" in
-                x86_64)  TARGET="x86_64-apple-darwin" ;;
-                arm64)   TARGET="aarch64-apple-darwin" ;;
-                *)       err "Unsupported architecture: ${ARCH}" ;;
-            esac
+            # ARM binary works on Intel Macs via Rosetta 2
+            TARGET="aarch64-apple-darwin"
             ;;
         *)
             err "Unsupported OS: ${OS}. r8r supports Linux and macOS."
