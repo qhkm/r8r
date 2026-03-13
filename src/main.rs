@@ -521,7 +521,7 @@ async fn main() -> anyhow::Result<()> {
         None => cmd_chat(None).await?,
         Some(Commands::Chat { resume }) => cmd_chat(resume).await?,
         Some(Commands::Workflows { action }) => match action {
-            WorkflowActions::List => cmd_workflows_list().await?,
+            WorkflowActions::List => cmd_workflows_list(&output).await?,
             WorkflowActions::Create { file } => cmd_workflows_create(&file).await?,
             WorkflowActions::Run {
                 name,
@@ -723,28 +723,26 @@ async fn cmd_chat(resume: Option<String>) -> anyhow::Result<()> {
 // Workflow Commands
 // ============================================================================
 
-async fn cmd_workflows_list() -> anyhow::Result<()> {
+async fn cmd_workflows_list(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     let storage = get_storage()?;
     let workflows = storage.list_workflows().await?;
 
     if workflows.is_empty() {
-        println!("No workflows found.");
-        println!();
-        println!("Create one with: r8r workflows create <file.yaml>");
+        output.success("No workflows found. Create one with: r8r workflows create <file.yaml>");
         return Ok(());
     }
 
-    println!("{:<30} {:<10} {:<20}", "NAME", "ENABLED", "UPDATED");
-    println!("{}", "-".repeat(62));
-
-    for wf in workflows {
-        println!(
-            "{:<30} {:<10} {:<20}",
-            wf.name,
-            if wf.enabled { "yes" } else { "no" },
-            wf.updated_at.format("%Y-%m-%d %H:%M")
-        );
-    }
+    output.list(
+        &["NAME", "ENABLED", "UPDATED"],
+        &workflows,
+        |wf| {
+            vec![
+                wf.name.clone(),
+                if wf.enabled { "yes".into() } else { "no".into() },
+                wf.updated_at.format("%Y-%m-%d %H:%M").to_string(),
+            ]
+        },
+    );
 
     Ok(())
 }
