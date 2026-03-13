@@ -27,6 +27,40 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+fn estimate_cost(
+    model: &str,
+    prompt_tokens: Option<u64>,
+    completion_tokens: Option<u64>,
+) -> Option<f64> {
+    let p = prompt_tokens? as f64;
+    let c = completion_tokens? as f64;
+    // Rates per 1M tokens (input, output)
+    let (input_rate, output_rate) = match model {
+        m if m.contains("gpt-4o-mini") => (0.15, 0.60),
+        m if m.contains("gpt-4o") => (2.50, 10.00),
+        m if m.contains("claude-sonnet") => (3.00, 15.00),
+        m if m.contains("claude-haiku") => (0.80, 4.00),
+        m if m.contains("claude-opus") => (15.00, 75.00),
+        _ => return None, // Unknown model (e.g., Ollama local)
+    };
+    Some((p * input_rate + c * output_rate) / 1_000_000.0)
+}
+
+fn format_usage_line(usage: &crate::llm::LlmUsage, model: &str) -> Option<String> {
+    let prompt = usage.prompt_tokens;
+    let completion = usage.completion_tokens;
+    if prompt.is_none() && completion.is_none() {
+        return None;
+    }
+    let p = prompt.map(|v| format!("{}", v)).unwrap_or("?".into());
+    let c = completion.map(|v| format!("{}", v)).unwrap_or("?".into());
+    let cost = estimate_cost(model, prompt, completion);
+    let cost_str = cost
+        .map(|c| format!(" \u{00b7} ~${:.3}", c))
+        .unwrap_or_default();
+    Some(format!("[{} in \u{00b7} {} out{} \u{00b7} {}]", p, c, cost_str, model))
+}
+
 const MAX_CONTEXT_MESSAGES: usize = 80;
 const CTRL_C_EXIT_WINDOW: Duration = Duration::from_millis(1500);
 
@@ -299,6 +333,15 @@ struct PendingWriteConfirm {
 }
 
 /// REPL UI state.
+/// Accumulated token usage for the current REPL session.
+#[derive(Debug, Default)]
+pub struct SessionUsage {
+    pub total_prompt_tokens: u64,
+    pub total_completion_tokens: u64,
+    pub turns_with_usage: u32,
+    pub turns_without_usage: u32,
+}
+
 pub struct ReplApp {
     pub session_id: String,
     /// Most recent execution_id returned by a tool call in this session.
@@ -333,6 +376,8 @@ pub struct ReplApp {
     sticky_actions: Option<QuickActionBar>,
     /// Guardrails: whether write-capable tool calls are permitted this session.
     /// Default: false (disarmed — safe mode). Set via /arm.
+    pub turn_usage: Option<crate::llm::LlmUsage>,
+    pub session_usage: SessionUsage,
     pub writes_armed: bool,
     /// Guardrails: operator mode shows policy/gate status in the status bar.
     pub operator_mode: bool,
@@ -377,6 +422,8 @@ impl ReplApp {
             inspector_scroll: 0,
             quick_actions: None,
             sticky_actions: None,
+            turn_usage: None,
+            session_usage: SessionUsage::default(),
             writes_armed: false,
             operator_mode: false,
             pending_write_confirm: None,
@@ -2723,6 +2770,20 @@ pub async fn run_repl_tui(
                     app.busy_since = None;
                     app.assistant_streaming_index = None;
                     app.conversation = conversation;
+
+                    // Track token usage
+                    if let Some(ref usage) = result.usage {
+                        app.turn_usage = Some(usage.clone());
+                        app.session_usage.total_prompt_tokens +=
+                            usage.prompt_tokens.unwrap_or(0);
+                        app.session_usage.total_completion_tokens +=
+                            usage.completion_tokens.unwrap_or(0);
+                        app.session_usage.turns_with_usage += 1;
+                    } else {
+                        app.turn_usage = None;
+                        app.session_usage.turns_without_usage += 1;
+                    }
+
                     if !result.response.is_empty() {
                         let extracted = extract_fenced_yaml_blocks(&result.response);
                         if let Some(last_yaml) = extracted.last() {
@@ -2739,12 +2800,22 @@ pub async fn run_repl_tui(
                         {
                             msg.text = compact.clone();
                         }
+                        // Show inline usage after assistant message
+                        if let Some(ref usage) = app.turn_usage {
+                            if let Some(usage_line) = format_usage_line(usage, &app.model) {
+                                app.push_message(MessageKind::System, usage_line);
+                            }
+                        }
+                        let token_count = app.turn_usage.as_ref().map(|u| {
+                            (u.prompt_tokens.unwrap_or(0) + u.completion_tokens.unwrap_or(0))
+                                as i64
+                        });
                         storage
                             .save_repl_message(
                                 &app.session_id,
                                 "assistant",
                                 &compact,
-                                None,
+                                token_count,
                                 app.last_run_id.as_deref(),
                             )
                             .await?;
