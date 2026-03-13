@@ -567,6 +567,34 @@ fn busy_progress_text(stage: BusyStage, spinner: &str) -> String {
     format!("plan {}  ->  tools {}  ->  reply {}", plan, tools, reply)
 }
 
+fn busy_progress_text_for_width(stage: BusyStage, spinner: &str, max_len: usize) -> String {
+    let full = busy_progress_text(stage, spinner);
+    if full.chars().count() <= max_len {
+        return full;
+    }
+
+    let stage_label = match stage {
+        BusyStage::Planning => "1/3 planning",
+        BusyStage::RunningTools => "2/3 tools",
+        BusyStage::Drafting => "3/3 reply",
+    };
+    let compact = format!("{} {}", spinner, stage_label);
+    if compact.chars().count() <= max_len {
+        compact
+    } else {
+        truncate_for_width(&compact, max_len)
+    }
+}
+
+fn busy_cancel_hint(max_len: usize) -> String {
+    let full = "Ctrl+C cancels the current turn.";
+    if full.chars().count() <= max_len {
+        full.to_string()
+    } else {
+        truncate_for_width("Ctrl+C cancels.", max_len)
+    }
+}
+
 fn build_busy_state_view(app: &ReplApp) -> BusyStateView {
     let active_tools = active_busy_tools(app);
     let completed_tools = app.turn_outcome.tool_durations.len();
@@ -626,6 +654,52 @@ fn build_busy_state_view(app: &ReplApp) -> BusyStateView {
         detail,
         support: latest_completed.map(|entry| format!("Latest finished: {}", entry)),
     }
+}
+
+fn build_busy_input_lines(app: &ReplApp, spinner: &str, text_width: usize) -> Vec<Line<'static>> {
+    let busy_state = build_busy_state_view(app);
+    let elapsed = app
+        .busy_since
+        .map(|t| format_duration(t.elapsed()))
+        .unwrap_or_else(|| "0ms".to_string());
+    let headline = format!("{} {} ({})", spinner, busy_state.headline, elapsed);
+    let mut lines = Vec::new();
+
+    for line in wrap_and_truncate_for_width(&headline, text_width) {
+        lines.push(Line::from(Span::styled(
+            line,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
+    for line in wrap_and_truncate_for_width(&busy_state.detail, text_width) {
+        lines.push(Line::from(Span::styled(
+            line,
+            Style::default().fg(Color::Gray),
+        )));
+    }
+    for line in wrap_and_truncate_for_width(
+        &busy_progress_text_for_width(busy_state.stage, spinner, text_width),
+        text_width,
+    ) {
+        lines.push(Line::from(Span::styled(
+            line,
+            Style::default().fg(Color::Cyan),
+        )));
+    }
+
+    let support = busy_state
+        .support
+        .unwrap_or_else(|| busy_cancel_hint(text_width));
+    for line in wrap_and_truncate_for_width(&support, text_width) {
+        lines.push(Line::from(Span::styled(
+            line,
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    lines
 }
 
 fn parse_markdown_bold_spans(text: &str) -> Vec<Span<'static>> {
@@ -831,6 +905,13 @@ fn truncate_for_width(input: &str, max_len: usize) -> String {
     } else {
         truncated
     }
+}
+
+fn wrap_and_truncate_for_width(input: &str, max_len: usize) -> Vec<String> {
+    wrap_for_width(input, max_len)
+        .into_iter()
+        .map(|line| truncate_for_width(&line, max_len))
+        .collect()
 }
 
 fn wrap_for_width(input: &str, max_len: usize) -> Vec<String> {
@@ -1608,7 +1689,7 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
                 Style::default().fg(Color::Green),
             ),
         ]));
-        for line in wrap_for_width(&busy_state.headline, card_text_width) {
+        for line in wrap_and_truncate_for_width(&busy_state.headline, card_text_width) {
             let padded = format!("{:<width$}", line, width = card_text_width);
             conversation_lines.push(Line::from(vec![
                 Span::raw("  "),
@@ -1622,7 +1703,7 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
                 Span::styled(" │", Style::default().fg(Color::Green)),
             ]));
         }
-        for line in wrap_for_width(&busy_state.detail, card_text_width) {
+        for line in wrap_and_truncate_for_width(&busy_state.detail, card_text_width) {
             let padded = format!("{:<width$}", line, width = card_text_width);
             conversation_lines.push(Line::from(vec![
                 Span::raw("  "),
@@ -1632,7 +1713,7 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
             ]));
         }
         if let Some(support) = &busy_state.support {
-            for line in wrap_for_width(support, card_text_width) {
+            for line in wrap_and_truncate_for_width(support, card_text_width) {
                 let padded = format!("{:<width$}", line, width = card_text_width);
                 conversation_lines.push(Line::from(vec![
                     Span::raw("  "),
@@ -1642,28 +1723,28 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
                 ]));
             }
         }
-        let progress = format!(
-            "{:<width$}",
-            busy_progress_text(busy_state.stage, spinner),
-            width = card_text_width
-        );
-        conversation_lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled("│ ", Style::default().fg(Color::Green)),
-            Span::styled(progress, Style::default().fg(Color::Cyan)),
-            Span::styled(" │", Style::default().fg(Color::Green)),
-        ]));
-        let hint = format!(
-            "{:<width$}",
-            "Ctrl+C cancels the current turn.",
-            width = card_text_width
-        );
-        conversation_lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled("│ ", Style::default().fg(Color::Green)),
-            Span::styled(hint, Style::default().fg(Color::DarkGray)),
-            Span::styled(" │", Style::default().fg(Color::Green)),
-        ]));
+        for line in wrap_and_truncate_for_width(
+            &busy_progress_text_for_width(busy_state.stage, spinner, card_text_width),
+            card_text_width,
+        ) {
+            let padded = format!("{:<width$}", line, width = card_text_width);
+            conversation_lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("│ ", Style::default().fg(Color::Green)),
+                Span::styled(padded, Style::default().fg(Color::Cyan)),
+                Span::styled(" │", Style::default().fg(Color::Green)),
+            ]));
+        }
+        for line in wrap_and_truncate_for_width(&busy_cancel_hint(card_text_width), card_text_width)
+        {
+            let padded = format!("{:<width$}", line, width = card_text_width);
+            conversation_lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("│ ", Style::default().fg(Color::Green)),
+                Span::styled(padded, Style::default().fg(Color::DarkGray)),
+                Span::styled(" │", Style::default().fg(Color::Green)),
+            ]));
+        }
         conversation_lines.push(Line::from(vec![
             Span::raw("  "),
             Span::styled(
@@ -1790,40 +1871,9 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
     } else {
         (" Input (Enter to send, /help) ", Color::White)
     };
+    let input_text_width = root[2].width.saturating_sub(2) as usize;
     let mut input_lines = if app.busy {
-        let busy_state = build_busy_state_view(app);
-        let elapsed = app
-            .busy_since
-            .map(|t| format_duration(t.elapsed()))
-            .unwrap_or_else(|| "0ms".to_string());
-        let mut lines = vec![
-            Line::from(Span::styled(
-                format!("{} {} ({})", spinner, busy_state.headline, elapsed),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                busy_state.detail,
-                Style::default().fg(Color::Gray),
-            )),
-            Line::from(Span::styled(
-                busy_progress_text(busy_state.stage, spinner),
-                Style::default().fg(Color::Cyan),
-            )),
-        ];
-        if let Some(support) = busy_state.support {
-            lines.push(Line::from(Span::styled(
-                support,
-                Style::default().fg(Color::DarkGray),
-            )));
-        } else {
-            lines.push(Line::from(Span::styled(
-                "Ctrl+C cancels the current turn.",
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
-        lines
+        build_busy_input_lines(app, spinner, input_text_width)
     } else if app.input.is_empty() {
         vec![Line::from(Span::styled(
             "Type / for commands, or ask in plain English...",
@@ -3084,6 +3134,7 @@ pub fn handle_key_event(_app: &mut ReplApp, _key: KeyEvent) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
 
     fn test_app() -> ReplApp {
         ReplApp::new(
@@ -3092,6 +3143,23 @@ mod tests {
             Conversation::new(MAX_CONTEXT_MESSAGES),
             0,
         )
+    }
+
+    fn render_lines(app: &ReplApp, width: u16, height: u16) -> Vec<String> {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, app)).unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        (0..buffer.area.height)
+            .map(|y| {
+                let mut line = String::new();
+                for x in 0..buffer.area.width {
+                    line.push_str(buffer[(x, y)].symbol());
+                }
+                line.trim_end().to_string()
+            })
+            .collect()
     }
 
     #[test]
@@ -3160,5 +3228,51 @@ mod tests {
             busy_progress_text(state.stage, "◓"),
             "plan ✓  ->  tools ✓  ->  reply ◓"
         );
+    }
+
+    #[test]
+    fn busy_progress_text_compacts_for_narrow_width() {
+        assert_eq!(
+            busy_progress_text_for_width(BusyStage::Planning, "◐", 14),
+            "◐ 1/3 planning"
+        );
+        assert_eq!(
+            busy_progress_text_for_width(BusyStage::RunningTools, "◑", 12),
+            "◑ 2/3 tools"
+        );
+    }
+
+    #[test]
+    fn busy_input_lines_wrap_long_tool_names() {
+        let mut app = test_app();
+        app.busy_since = Some(Instant::now());
+        app.tool_start_times.insert(
+            "r8r_generate_extremely_long_tool_name".to_string(),
+            Instant::now(),
+        );
+
+        let lines = build_busy_input_lines(&app, "◐", 16);
+        let rendered: Vec<String> = lines.into_iter().map(|line| line.to_string()).collect();
+
+        assert!(rendered.iter().all(|line| line.chars().count() <= 16));
+        assert!(rendered.iter().any(|line| line.ends_with('…')));
+    }
+
+    #[test]
+    fn busy_render_uses_compact_copy_on_narrow_width() {
+        let mut app = test_app();
+        app.busy = true;
+        app.busy_since = Some(Instant::now());
+        app.spinner_index = 1;
+        app.tool_start_times.insert(
+            "r8r_generate_extremely_long_tool_name".to_string(),
+            Instant::now(),
+        );
+
+        let rendered = render_lines(&app, 32, 16).join("\n");
+
+        assert!(rendered.contains("2/3 tools"));
+        assert!(rendered.contains("Ctrl+C cancels."));
+        assert!(!rendered.contains("Ctrl+C cancels the current turn."));
     }
 }
