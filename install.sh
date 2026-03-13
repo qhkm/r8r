@@ -8,7 +8,7 @@
 
 set -e
 
-REPO="qhkm/r8r"
+CDN_BASE="https://pub-55a6f9724469496aa4f0bd4214b25331.r2.dev"
 DEFAULT_INSTALL_DIR="${HOME}/.r8r/bin"
 INSTALL_DIR="${R8R_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
 
@@ -54,13 +54,10 @@ resolve_version() {
 
     say "Resolving latest version..."
 
-    # Use redirect-based approach to avoid GitHub API rate limits
-    LATEST_URL="https://github.com/${REPO}/releases/latest"
-
     if has curl; then
-        VERSION="$(curl -sI "${LATEST_URL}" 2>/dev/null | grep -i '^location:' | sed 's/.*tag\///' | tr -d '\r\n')"
+        VERSION="$(curl -sSf "${CDN_BASE}/latest.txt" 2>/dev/null | tr -d '\r\n')"
     elif has wget; then
-        VERSION="$(wget --spider -S "${LATEST_URL}" 2>&1 | grep -i 'location:' | sed 's/.*tag\///' | tr -d '\r\n')"
+        VERSION="$(wget -qO- "${CDN_BASE}/latest.txt" 2>/dev/null | tr -d '\r\n')"
     else
         err "curl or wget is required to download r8r"
     fi
@@ -75,7 +72,7 @@ resolve_version() {
 download_and_verify() {
     ARCHIVE="r8r-${VERSION}-${TARGET}.tar.gz"
     CHECKSUMS="r8r-${VERSION}-checksums.txt"
-    BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+    BASE_URL="${CDN_BASE}/releases/${VERSION}"
 
     R8R_TMP="$(mktemp -d)"
     trap 'rm -rf "${R8R_TMP}"' EXIT

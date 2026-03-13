@@ -11,6 +11,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  R2_BUCKET: r8r-releases
 
 jobs:
   build:
@@ -78,11 +79,15 @@ jobs:
           path: ${{ env.ARCHIVE }}
 
   release:
-    name: Create Release
+    name: Publish Release
     needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -104,6 +109,28 @@ jobs:
           files: |
             artifacts/r8r-*.tar.gz
             artifacts/r8r-*-checksums.txt
+
+      - name: Install wrangler
+        run: npm install -g wrangler
+
+      - name: Upload to R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+
+          # Upload each artifact under releases/<version>/
+          for file in artifacts/r8r-*.tar.gz artifacts/r8r-*-checksums.txt; do
+            filename="$(basename "$file")"
+            wrangler r2 object put "${R2_BUCKET}/releases/${VERSION}/${filename}" --file "$file"
+          done
+
+          # Update latest.txt so install script can resolve version
+          echo "${VERSION}" > /tmp/latest.txt
+          wrangler r2 object put "${R2_BUCKET}/latest.txt" --file /tmp/latest.txt --content-type text/plain
+
+          echo "Uploaded ${VERSION} to R2"
 
   docker:
     name: Docker Image
