@@ -24,7 +24,7 @@ r8r is built in Rust with an embedded SQLite database, making it exceptionally w
 | External DB | None (embedded SQLite) | None (JSON files) | Required (cloud-connected) | Required (cloud-connected) |
 | Offline mode | Full execution | Partial | Limited | Limited |
 | Local LLM | Yes (via agent node + Ollama) | Plugin required | Not natively supported | Not natively supported |
-| License | AGPL-3.0 (dual) | Apache 2.0 | Proprietary | Proprietary |
+| License | Apache 2.0 | Apache 2.0 | Proprietary | Proprietary |
 
 ---
 

@@ -26,7 +26,7 @@ r8r occupies a unique position in the workflow automation landscape — lightwei
 | Edge deployment | Yes — single binary, minimal resources | Impractical — too heavy for constrained devices |
 | Integrations | ~25 node types | 400+ pre-built integrations |
 | Self-hosted | Yes (single binary) | Yes (Docker recommended) |
-| Pricing model | Open source (AGPL-3.0) | Open source (Sustainable Use License) + paid cloud |
+| Pricing model | Open source (Apache 2.0) | Open source (Sustainable Use License) + paid cloud |
 
 **Where n8n wins:** Visual editor, 400+ integrations, larger community, lower barrier for non-technical users.
 **Where r8r wins:** Performance (20x less memory), edge deployment, native AI/MCP support, git-friendly YAML workflows, sub-second cold start.
@@ -64,7 +64,7 @@ r8r occupies a unique position in the workflow automation landscape — lightwei
 | Learning curve | Write YAML, run binary | Learn SDK (Go/Java/Python/TypeScript), understand activities/workflows |
 | Workflow definition | YAML (declarative) | Code-first SDK (imperative) |
 | AI-native | Yes — agent node, MCP server | No — build it yourself with activities |
-| Pricing | Open source (AGPL-3.0) | Open source + Temporal Cloud ($200+/mo) |
+| Pricing | Open source (Apache 2.0) | Open source + Temporal Cloud ($200+/mo) |
 | Edge deployment | Yes | No — too resource-heavy |
 | Durable execution | Yes | Yes — industry-leading |
 | Long-running workflows | Minutes to days | Minutes to years |
@@ -86,7 +86,7 @@ r8r occupies a unique position in the workflow automation landscape — lightwei
 | Workflow capabilities | 25+ node types, durable execution | Lambda functions, limited orchestration |
 | Offline operation | Full operation with SQLite | Partial — syncs when connectivity returns |
 | Cost model | Free (self-hosted) | Per-device pricing + AWS service costs |
-| Open source | Yes (AGPL-3.0) | Partially (Greengrass Core is open source) |
+| Open source | Yes (Apache 2.0) | Partially (Greengrass Core is open source) |
 | Fleet management | Planned | Yes — mature, at-scale device management |
 | Cloud integration | Any cloud or none | AWS services (IoT Core, S3, Lambda, etc.) |
 | Setup complexity | Download binary, run | AWS account, IAM roles, certificates, provisioning |

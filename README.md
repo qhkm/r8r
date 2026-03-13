@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License: AGPL v3"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
   <a href="https://github.com/qhkm/r8r"><img src="https://img.shields.io/badge/rust-1.70+-orange.svg" alt="Rust"></a>
   <img src="https://img.shields.io/badge/status-beta-yellow.svg" alt="Status: Beta">
   <img src="https://img.shields.io/badge/binary-~15MB-brightgreen.svg" alt="Binary: ~15MB">
@@ -345,9 +345,9 @@ See [Roadmap](docs/TODO.md) for contribution ideas.
 
 ## License
 
-AGPL-3.0 — Free to use, modify, and distribute. If you run a modified version as a network service, you must make the source available.
+Apache 2.0 — Free to use, modify, and distribute. No copyleft restrictions.
 
-**Commercial licensing available** for organizations that cannot use AGPL. [Contact us](mailto:hello@r8r.dev) for details.
+**Commercial extensions** (RBAC, SSO, fleet management, HA) available for enterprise. [Contact us](mailto:hello@r8r.sh) for details.
 
 ---
 
