@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! TUI monitor for live r8r server monitoring.
 //!
 //! Provides a ratatui-based terminal UI that connects to a running r8r server
@@ -252,7 +258,11 @@ nodes:
 
         // Print the rendered buffer
         let buffer = terminal.backend().buffer().clone();
-        println!("\n{}", "=".repeat(120));
+        println!(
+            "
+{}",
+            "=".repeat(120)
+        );
         println!("  r8r monitor TUI snapshot (120x35)");
         println!("{}", "=".repeat(120));
         for y in 0..buffer.area.height {

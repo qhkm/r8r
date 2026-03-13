@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Notification channels for approval requests and other workflow events.
 //!
 //! Supports: webhook (HTTP POST), Slack incoming webhooks, and email (SMTP).
@@ -135,8 +141,10 @@ async fn send_slack(cfg: &SlackConfig, ctx: &NotifyContext<'_>) -> anyhow::Resul
         json!({
             "type": "section",
             "fields": [
-                { "type": "mrkdwn", "text": format!("*Workflow:*\n{}", ctx.workflow_name) },
-                { "type": "mrkdwn", "text": format!("*Approval ID:*\n`{}`", ctx.approval_id) },
+                { "type": "mrkdwn", "text": format!("*Workflow:*
+        {}", ctx.workflow_name) },
+                { "type": "mrkdwn", "text": format!("*Approval ID:*
+        `{}`", ctx.approval_id) },
             ]
         }),
     ];

@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Prompt-to-workflow generation.
 //!
 //! Generate r8r workflow YAML from natural language prompts using LLMs.
@@ -36,46 +42,59 @@ pub struct GenerateResult {
 /// Resolve LLM configuration from environment variables.
 ///
 /// Priority order for each field:
-/// - `R8R_GENERATOR_*` → `R8R_AGENT_*` → built-in default
+/// - `R8R_GENERATOR_*` → `R8R_AGENT_*` → `R8R_LLM_*` → `config.toml`
 ///
 /// Returns an error if the resolved provider is not Ollama and no API key is
 /// available.
 pub async fn resolve_llm_config() -> Result<LlmConfig> {
+    let config = crate::config::Config::load();
+
     // --- Provider ---
     let provider_str = std::env::var("R8R_GENERATOR_PROVIDER")
         .or_else(|_| std::env::var("R8R_AGENT_PROVIDER"))
-        .unwrap_or_else(|_| "openai".to_string());
-
-    let provider = match provider_str.to_lowercase().as_str() {
-        "anthropic" => LlmProvider::Anthropic,
-        "ollama" => LlmProvider::Ollama,
-        "custom" => LlmProvider::Custom,
-        _ => LlmProvider::Openai,
-    };
+        .or_else(|_| std::env::var("R8R_LLM_PROVIDER"))
+        .ok()
+        .or(config.llm.provider.clone())
+        .unwrap_or_else(|| "openai".to_string());
+    let provider = parse_provider(&provider_str);
 
     // --- Model (optional) ---
     let model = std::env::var("R8R_GENERATOR_MODEL")
         .or_else(|_| std::env::var("R8R_AGENT_MODEL"))
-        .ok();
+        .or_else(|_| std::env::var("R8R_LLM_MODEL"))
+        .ok()
+        .or(config.llm.model.clone());
 
     // --- API key ---
     let api_key = std::env::var("R8R_GENERATOR_API_KEY")
         .or_else(|_| std::env::var("R8R_AGENT_API_KEY"))
-        .ok();
+        .or_else(|_| std::env::var("R8R_LLM_API_KEY"))
+        .ok()
+        .or(resolve_provider_api_key(&provider).await);
 
     // Require API key for all providers except Ollama.
     if provider != LlmProvider::Ollama && api_key.is_none() {
-        return Err(Error::Config(
-            "Generator LLM API key is required. \
-             Set R8R_GENERATOR_API_KEY or R8R_AGENT_API_KEY."
-                .to_string(),
-        ));
+        return Err(Error::Config(format!(
+            "LLM API key is required for {}. Set R8R_GENERATOR_API_KEY, \
+             R8R_AGENT_API_KEY, or store it with `r8r credentials set {}`.",
+            provider_name(&provider),
+            credential_name(&provider),
+        )));
     }
 
     // --- Endpoint (optional override) ---
     let endpoint = std::env::var("R8R_GENERATOR_ENDPOINT")
         .or_else(|_| std::env::var("R8R_AGENT_ENDPOINT"))
-        .ok();
+        .or_else(|_| std::env::var("R8R_LLM_ENDPOINT"))
+        .ok()
+        .or(config.llm.endpoint.clone());
+
+    // --- Timeout (optional override) ---
+    let timeout_seconds = std::env::var("R8R_LLM_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .or(config.llm.timeout_seconds)
+        .unwrap_or(60);
 
     Ok(LlmConfig {
         provider,
@@ -84,8 +103,56 @@ pub async fn resolve_llm_config() -> Result<LlmConfig> {
         endpoint,
         temperature: Some(0.3),
         max_tokens: Some(4096),
-        timeout_seconds: 60,
+        timeout_seconds,
     })
+}
+
+fn parse_provider(provider: &str) -> LlmProvider {
+    match provider.to_ascii_lowercase().as_str() {
+        "anthropic" => LlmProvider::Anthropic,
+        "ollama" => LlmProvider::Ollama,
+        "custom" => LlmProvider::Custom,
+        _ => LlmProvider::Openai,
+    }
+}
+
+fn provider_name(provider: &LlmProvider) -> &'static str {
+    match provider {
+        LlmProvider::Openai => "OpenAI",
+        LlmProvider::Anthropic => "Anthropic",
+        LlmProvider::Ollama => "Ollama",
+        LlmProvider::Custom => "custom",
+    }
+}
+
+fn credential_name(provider: &LlmProvider) -> &'static str {
+    match provider {
+        LlmProvider::Openai => "openai",
+        LlmProvider::Anthropic => "anthropic",
+        LlmProvider::Ollama => "ollama",
+        LlmProvider::Custom => "llm",
+    }
+}
+
+async fn resolve_provider_api_key(provider: &LlmProvider) -> Option<String> {
+    let env_key = match provider {
+        LlmProvider::Openai | LlmProvider::Custom => "OPENAI_API_KEY",
+        LlmProvider::Anthropic => "ANTHROPIC_API_KEY",
+        LlmProvider::Ollama => return None,
+    };
+
+    if let Ok(value) = std::env::var(env_key) {
+        if !value.is_empty() {
+            return Some(value);
+        }
+    }
+
+    let store = crate::credentials::CredentialStore::load().await.ok()?;
+    store
+        .get(credential_name(provider))
+        .ok()
+        .flatten()
+        .or_else(|| store.get("llm").ok().flatten())
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +252,10 @@ async fn validate_or_fix(
                 errors.len()
             );
 
-            let errors_text = errors.join("\n");
+            let errors_text = errors.join(
+                "
+",
+            );
             let fix_msg = prompt::build_fix_prompt(yaml, &errors_text);
 
             match llm::call_llm(client, llm_config, Some(system), &fix_msg).await {
@@ -270,7 +340,13 @@ mod tests {
 
     #[test]
     fn test_try_validate_valid_yaml() {
-        let yaml = "name: test-workflow\nnodes:\n  - id: step1\n    type: transform\n    config:\n      expression: '\"hello\"'\n";
+        let yaml = "name: test-workflow
+nodes:
+  - id: step1
+    type: transform
+    config:
+      expression: '\"hello\"'
+";
         let result = try_validate(yaml);
         assert!(result.is_ok());
         let summary = result.unwrap();
@@ -286,8 +362,16 @@ mod tests {
 
     #[test]
     fn test_try_validate_empty_name() {
-        let yaml = "name: \nnodes: []";
+        let yaml = "name: 
+nodes: []";
         let result = try_validate(yaml);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_provider_defaults_to_openai() {
+        assert_eq!(parse_provider("unexpected"), LlmProvider::Openai);
+        assert_eq!(parse_provider("anthropic"), LlmProvider::Anthropic);
+        assert_eq!(parse_provider("ollama"), LlmProvider::Ollama);
     }
 }

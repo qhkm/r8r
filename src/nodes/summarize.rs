@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Summarize node - AI-powered text summarization.
 
 use async_trait::async_trait;
@@ -242,7 +248,11 @@ fn get_text(config: &SummarizeConfig, input: &Value) -> Result<String> {
                     _ => v.to_string(),
                 })
                 .collect();
-            Ok(texts.join("\n\n"))
+            Ok(texts.join(
+                "
+
+",
+            ))
         }
         _ => Ok(input.to_string()),
     }
@@ -304,7 +314,10 @@ fn build_prompt(config: &SummarizeConfig, text: &str) -> String {
         .unwrap_or_default();
 
     format!(
-        "{}{}{}{}\n\nText to summarize:\n{}",
+        "{}{}{}{}
+
+Text to summarize:
+{}",
         style_instruction, length_instruction, language_instruction, context_instruction, text
     )
 }

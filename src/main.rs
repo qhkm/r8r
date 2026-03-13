@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{generate, Shell};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -500,7 +506,7 @@ fn init_logging(for_chat_tui: bool) {
     } else {
         tracing_subscriber::registry()
             .with(env_filter)
-            .with(tracing_subscriber::fmt::layer())
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .init();
     }
 }
@@ -604,7 +610,9 @@ async fn run_command(
             DbActions::Check => cmd_db_check().await?,
         },
         Some(Commands::Templates { action }) => match action {
-            TemplateActions::List { by_category } => cmd_templates_list(by_category, output).await?,
+            TemplateActions::List { by_category } => {
+                cmd_templates_list(by_category, output).await?
+            }
             TemplateActions::Show { name } => cmd_templates_show(&name).await?,
             TemplateActions::Use {
                 name,
@@ -641,7 +649,9 @@ async fn run_command(
             status,
         }) => match action {
             Some(RunsActions::Pending { limit }) => cmd_runs_pending(limit).await?,
-            Some(RunsActions::Show { run_id, trace }) => cmd_runs_show(&run_id, trace, output).await?,
+            Some(RunsActions::Show { run_id, trace }) => {
+                cmd_runs_show(&run_id, trace, output).await?
+            }
             Some(RunsActions::Export {
                 run_id,
                 format,
@@ -702,14 +712,14 @@ fn maybe_show_init_hint(output: &r8r::cli::output::Output) {
     if output.is_json() {
         return;
     }
-    // Skip expensive Ollama HTTP check — only look at env vars and config file.
+    // Skip expensive runtime checks — only look at env vars, config, and local credentials.
     let has_openai = std::env::var("OPENAI_API_KEY").is_ok();
     let has_anthropic = std::env::var("ANTHROPIC_API_KEY").is_ok();
-    let has_config = r8r::config::Config::config_dir()
-        .join("config.toml")
-        .exists();
+    let config = r8r::config::Config::load();
+    let has_llm_config = config.llm.provider.is_some() || config.llm.endpoint.is_some();
+    let has_credentials = r8r::credentials::CredentialStore::path().exists();
 
-    if !has_openai && !has_anthropic && !has_config {
+    if !has_openai && !has_anthropic && !has_llm_config && !has_credentials {
         eprintln!();
         eprintln!("  tip: Run 'r8r init' to set up your environment");
     }
@@ -788,6 +798,7 @@ async fn cmd_workflows_list(output: &r8r::cli::output::Output) -> anyhow::Result
 async fn cmd_workflows_create(file: &str, output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     use r8r::storage::StoredWorkflow;
     use r8r::workflow::{parse_workflow_file, validate_workflow};
+    use serde::Serialize;
     use std::path::Path;
 
     let path = Path::new(file);
@@ -816,6 +827,29 @@ async fn cmd_workflows_create(file: &str, output: &r8r::cli::output::Output) -> 
     };
 
     storage.save_workflow(&stored).await?;
+
+    if output.is_json() {
+        #[derive(Serialize)]
+        struct WorkflowCreateResult<'a> {
+            ok: bool,
+            id: &'a str,
+            name: &'a str,
+            nodes: usize,
+            triggers: usize,
+            enabled: bool,
+        }
+
+        let result = WorkflowCreateResult {
+            ok: true,
+            id: &stored.id,
+            name: &workflow.name,
+            nodes: workflow.nodes.len(),
+            triggers: workflow.triggers.len(),
+            enabled: stored.enabled,
+        };
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
 
     println!("\u{2713} Workflow '{}' created successfully", workflow.name);
     println!();
@@ -1682,6 +1716,7 @@ async fn cmd_credentials_set(
     output: &r8r::cli::output::Output,
 ) -> anyhow::Result<()> {
     use r8r::credentials::CredentialStore;
+    use serde::Serialize;
     use std::io::{self, BufRead};
 
     // Get value from argument or stdin
@@ -1702,6 +1737,23 @@ async fn cmd_credentials_set(
 
     let mut store = CredentialStore::load().await?;
     store.set(service, key, &credential_value).await?;
+
+    if output.is_json() {
+        #[derive(Serialize)]
+        struct CredentialSetResult<'a> {
+            ok: bool,
+            service: &'a str,
+            key: Option<&'a str>,
+        }
+
+        let result = CredentialSetResult {
+            ok: true,
+            service,
+            key,
+        };
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
 
     println!("\u{2713} Credential '{}' saved", service);
     if let Some(k) = key {
@@ -1814,7 +1866,10 @@ async fn cmd_db_check() -> anyhow::Result<()> {
 // Template Commands
 // ============================================================================
 
-async fn cmd_templates_list(by_category: bool, output: &r8r::cli::output::Output) -> anyhow::Result<()> {
+async fn cmd_templates_list(
+    by_category: bool,
+    output: &r8r::cli::output::Output,
+) -> anyhow::Result<()> {
     use r8r::templates::TemplateRegistry;
 
     let registry = TemplateRegistry::new();
@@ -1846,11 +1901,9 @@ async fn cmd_templates_list(by_category: bool, output: &r8r::cli::output::Output
             return Ok(());
         }
 
-        output.list(
-            &["NAME", "CATEGORY", "DESCRIPTION"],
-            &templates,
-            |t| vec![t.name.clone(), t.category.clone(), t.description.clone()],
-        );
+        output.list(&["NAME", "CATEGORY", "DESCRIPTION"], &templates, |t| {
+            vec![t.name.clone(), t.category.clone(), t.description.clone()]
+        });
     }
 
     if !output.is_json() {
@@ -2113,7 +2166,39 @@ async fn cmd_create(
 ) -> anyhow::Result<()> {
     use r8r::generator;
     use r8r::storage::StoredWorkflow;
+    use serde::Serialize;
     use std::io::{self, BufRead, Write};
+
+    #[derive(Serialize)]
+    struct CreateResult<'a> {
+        ok: bool,
+        saved: bool,
+        name: Option<&'a str>,
+        summary: &'a str,
+        valid: bool,
+        errors: &'a [String],
+        yaml: &'a str,
+    }
+
+    macro_rules! outln {
+        ($($arg:tt)*) => {
+            if output.is_json() {
+                eprintln!($($arg)*);
+            } else {
+                println!($($arg)*);
+            }
+        };
+    }
+
+    macro_rules! out {
+        ($($arg:tt)*) => {
+            if output.is_json() {
+                eprint!($($arg)*);
+            } else {
+                print!($($arg)*);
+            }
+        };
+    }
 
     let user_prompt = prompt_parts.join(" ");
     if user_prompt.trim().is_empty() {
@@ -2122,7 +2207,8 @@ async fn cmd_create(
         );
     }
 
-    println!("Generating workflow...\n");
+    outln!("Generating workflow...");
+    outln!("");
 
     let mut result = generator::generate(&user_prompt)
         .await
@@ -2130,21 +2216,25 @@ async fn cmd_create(
 
     loop {
         // Show the YAML
-        println!("{}", result.yaml);
-        println!();
+        outln!("{}", result.yaml);
+        outln!("");
 
         if result.valid {
-            println!("✓ {}", result.summary);
+            outln!("\u{2713} {}", result.summary);
         } else {
-            println!("⚠ Workflow has validation errors:");
+            outln!("\u{26a0} Workflow has validation errors:");
             for err in &result.errors {
-                println!("  - {}", err);
+                outln!("  - {}", err);
             }
         }
 
-        println!();
-        print!("Save? [yes/no/or type feedback to refine] > ");
-        io::stdout().flush()?;
+        outln!("");
+        out!("Save? [yes/no/or type feedback to refine] > ");
+        if output.is_json() {
+            io::stderr().flush()?;
+        } else {
+            io::stdout().flush()?;
+        }
 
         let mut input = String::new();
         io::stdin().lock().read_line(&mut input)?;
@@ -2153,7 +2243,7 @@ async fn cmd_create(
         match input.to_lowercase().as_str() {
             "yes" | "y" => {
                 if !result.valid {
-                    println!(
+                    outln!(
                         "Cannot save — workflow has validation errors. Provide feedback to fix or type 'no' to discard."
                     );
                     continue;
@@ -2173,19 +2263,47 @@ async fn cmd_create(
                 };
 
                 storage.save_workflow(&stored).await?;
-                println!("\n\u{2713} Workflow '{}' saved", workflow.name);
+                if output.is_json() {
+                    let payload = CreateResult {
+                        ok: true,
+                        saved: true,
+                        name: Some(&workflow.name),
+                        summary: &result.summary,
+                        valid: result.valid,
+                        errors: &result.errors,
+                        yaml: &result.yaml,
+                    };
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                } else {
+                    println!("\n\u{2713} Workflow '{}' saved", workflow.name);
 
-                let run_cmd = format!("r8r run {}", workflow.name);
-                let refine_cmd = format!("r8r refine {} \"...\"", workflow.name);
-                output.suggest(&[(&run_cmd, "execute it now"), (&refine_cmd, "improve it")]);
+                    let run_cmd = format!("r8r run {}", workflow.name);
+                    let refine_cmd = format!("r8r refine {} \"...\"", workflow.name);
+                    output.suggest(&[(&run_cmd, "execute it now"), (&refine_cmd, "improve it")]);
+                }
                 return Ok(());
             }
             "no" | "n" => {
-                println!("Discarded.");
+                if output.is_json() {
+                    let payload = CreateResult {
+                        ok: true,
+                        saved: false,
+                        name: None,
+                        summary: &result.summary,
+                        valid: result.valid,
+                        errors: &result.errors,
+                        yaml: &result.yaml,
+                    };
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                } else {
+                    println!("Discarded.");
+                }
                 return Ok(());
             }
             feedback => {
-                println!("\nRefining...\n");
+                outln!("");
+                outln!("Refining...");
+                outln!("");
                 result = generator::refine(&result.yaml, feedback)
                     .await
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -2699,6 +2817,16 @@ fn truncate(s: &str, max: usize) -> &str {
     &s[..boundary]
 }
 
+fn llm_endpoint_for_display(config: &r8r::llm::LlmConfig) -> &'static str {
+    match config.provider {
+        r8r::llm::LlmProvider::Openai | r8r::llm::LlmProvider::Custom => {
+            "https://api.openai.com/v1/chat/completions"
+        }
+        r8r::llm::LlmProvider::Anthropic => "https://api.anthropic.com/v1/messages",
+        r8r::llm::LlmProvider::Ollama => "http://localhost:11434/api/chat",
+    }
+}
+
 /// `r8r doctor` — verify DB, config, credentials, and node registry.
 async fn cmd_doctor(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     let mut pass = 0usize;
@@ -2740,19 +2868,22 @@ async fn cmd_doctor(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     report!("Database", db_result);
 
     // 2. LLM config
-    let llm_result = {
-        let base_url = std::env::var("R8R_LLM_BASE_URL")
-            .or_else(|_| std::env::var("OPENAI_BASE_URL"))
-            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
-        let model = std::env::var("R8R_LLM_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
-        let api_key = std::env::var("R8R_LLM_API_KEY")
-            .or_else(|_| std::env::var("OPENAI_API_KEY"))
-            .unwrap_or_default();
-        if api_key.is_empty() {
-            Err("R8R_LLM_API_KEY / OPENAI_API_KEY not set".to_string())
-        } else {
-            Ok(format!("model={} endpoint={}", model, base_url))
+    let llm_result = match r8r::generator::resolve_llm_config().await {
+        Ok(config) => {
+            let model = config
+                .model
+                .clone()
+                .unwrap_or_else(|| "provider default".to_string());
+            let endpoint = config
+                .endpoint
+                .clone()
+                .unwrap_or_else(|| llm_endpoint_for_display(&config).to_string());
+            Ok(format!(
+                "provider={:?} model={} endpoint={}",
+                config.provider, model, endpoint
+            ))
         }
+        Err(err) => Err(err.to_string()),
     };
     report!("LLM config", llm_result);
 
@@ -2810,6 +2941,11 @@ async fn cmd_doctor(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
             "{}",
             serde_json::json!({"checks": checks_json, "pass": pass, "fail": fail})
         );
+        if fail > 0 {
+            use std::io::Write as _;
+            let _ = std::io::stdout().flush();
+            std::process::exit(1);
+        }
     } else {
         println!();
         if fail == 0 {
@@ -3458,7 +3594,11 @@ async fn cmd_runs_pending(limit: usize) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_runs_show(run_id: &str, include_trace: bool, output: &r8r::cli::output::Output) -> anyhow::Result<()> {
+async fn cmd_runs_show(
+    run_id: &str,
+    include_trace: bool,
+    output: &r8r::cli::output::Output,
+) -> anyhow::Result<()> {
     let storage = get_storage()?;
 
     let exec = storage
@@ -3523,7 +3663,10 @@ async fn cmd_runs_show(run_id: &str, include_trace: bool, output: &r8r::cli::out
         println!();
         println!("Pending approvals:");
         for a in &pending {
-            println!("  {} \u{2014} {} (approval ID: {})", a.title, a.status, a.id);
+            println!(
+                "  {} \u{2014} {} (approval ID: {})",
+                a.title, a.status, a.id
+            );
             if let Some(desc) = &a.description {
                 println!("    {}", desc);
             }

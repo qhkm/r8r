@@ -2,7 +2,10 @@ use r8r::cli::diagnostics::{classify_error, fuzzy_match, Diagnostic, DiagnosticK
 
 #[test]
 fn test_classify_workflow_not_found() {
-    let kind = classify_error("WORKFLOW_ERROR", "Workflow error: workflow 'my-wf' not found");
+    let kind = classify_error(
+        "WORKFLOW_ERROR",
+        "Workflow error: workflow 'my-wf' not found",
+    );
     match kind {
         DiagnosticKind::WorkflowNotFound { name } => assert_eq!(name, "my-wf"),
         other => panic!("Expected WorkflowNotFound, got {:?}", other),
@@ -11,7 +14,10 @@ fn test_classify_workflow_not_found() {
 
 #[test]
 fn test_classify_no_llm_configured() {
-    let kind = classify_error("CONFIG_ERROR", "Configuration error: no LLM provider configured");
+    let kind = classify_error(
+        "CONFIG_ERROR",
+        "Configuration error: no LLM provider configured",
+    );
     assert!(matches!(kind, DiagnosticKind::NoLlmConfigured));
 }
 

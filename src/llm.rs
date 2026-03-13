@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Shared LLM client module.
 //!
 //! Provides a provider-agnostic interface for calling LLMs (OpenAI, Anthropic,
@@ -359,16 +365,12 @@ pub fn parse_anthropic_sse_line(line: &str) -> Option<StreamEvent> {
                 _ => None,
             }
         }
-        "message_delta" => {
-            if let Some(usage) = v.get("usage") {
-                Some(StreamEvent::Usage(LlmUsage {
-                    prompt_tokens: usage.get("input_tokens").and_then(|t| t.as_u64()),
-                    completion_tokens: usage.get("output_tokens").and_then(|t| t.as_u64()),
-                }))
-            } else {
-                None
-            }
-        }
+        "message_delta" => v.get("usage").map(|usage| {
+            StreamEvent::Usage(LlmUsage {
+                prompt_tokens: usage.get("input_tokens").and_then(|t| t.as_u64()),
+                completion_tokens: usage.get("output_tokens").and_then(|t| t.as_u64()),
+            })
+        }),
         "message_stop" => Some(StreamEvent::Done),
         _ => None,
     }
@@ -848,10 +850,8 @@ async fn stream_ndjson_lines(mut response: reqwest::Response, tx: mpsc::Sender<S
                 if is_done {
                     // Extract usage from the raw line before sending Done
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
-                        let prompt_tokens =
-                            json.get("prompt_eval_count").and_then(|v| v.as_u64());
-                        let completion_tokens =
-                            json.get("eval_count").and_then(|v| v.as_u64());
+                        let prompt_tokens = json.get("prompt_eval_count").and_then(|v| v.as_u64());
+                        let completion_tokens = json.get("eval_count").and_then(|v| v.as_u64());
                         if prompt_tokens.is_some() || completion_tokens.is_some() {
                             let _ = tx
                                 .send(StreamEvent::Usage(LlmUsage {

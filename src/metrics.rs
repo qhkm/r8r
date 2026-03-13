@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Prometheus metrics for r8r.
 //!
 //! This module provides application metrics exposed via the /metrics endpoint.
@@ -49,7 +55,9 @@ pub fn get_prometheus_handle() -> Option<&'static PrometheusHandle> {
 pub fn render_metrics() -> String {
     match get_prometheus_handle() {
         Some(handle) => handle.render(),
-        None => "# Metrics not initialized\n".to_string(),
+        None => "# Metrics not initialized
+"
+        .to_string(),
     }
 }
 

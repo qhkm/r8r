@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! REPL TUI layout and event loop.
 
 use crate::engine::Executor;
@@ -58,7 +64,10 @@ fn format_usage_line(usage: &crate::llm::LlmUsage, model: &str) -> Option<String
     let cost_str = cost
         .map(|c| format!(" \u{00b7} ~${:.3}", c))
         .unwrap_or_default();
-    Some(format!("[{} in \u{00b7} {} out{} \u{00b7} {}]", p, c, cost_str, model))
+    Some(format!(
+        "[{} in \u{00b7} {} out{} \u{00b7} {}]",
+        p, c, cost_str, model
+    ))
 }
 
 const MAX_CONTEXT_MESSAGES: usize = 80;
@@ -338,6 +347,7 @@ struct PendingWriteConfirm {
 pub struct SessionUsage {
     pub total_prompt_tokens: u64,
     pub total_completion_tokens: u64,
+    pub persisted_total_tokens: u64,
     pub turns_with_usage: u32,
     pub turns_without_usage: u32,
 }
@@ -2114,6 +2124,16 @@ fn load_session_into_app(app: &mut ReplApp, stored: &[ReplMessage]) {
             "assistant" => {
                 values.push(json!({"role": "assistant", "content": msg.content}));
                 app.push_message(MessageKind::Assistant, msg.content.clone());
+                if let Some(tokens) = msg.token_count {
+                    if tokens > 0 {
+                        app.session_usage.persisted_total_tokens += tokens as u64;
+                        app.session_usage.turns_with_usage += 1;
+                    } else {
+                        app.session_usage.turns_without_usage += 1;
+                    }
+                } else {
+                    app.session_usage.turns_without_usage += 1;
+                }
             }
             "tool_call" | "tool_result" | "tool" => {
                 app.push_message(MessageKind::Tool, msg.content.clone());
@@ -2590,9 +2610,10 @@ async fn handle_slash_command(
         }
         InputCommand::Usage => {
             let su = &app.session_usage;
-            let total = su.total_prompt_tokens + su.total_completion_tokens;
+            let current_total = su.total_prompt_tokens + su.total_completion_tokens;
+            let total = current_total + su.persisted_total_tokens;
             let turns = su.turns_with_usage;
-            let cost = estimate_cost(
+            let current_cost = estimate_cost(
                 &app.model,
                 Some(su.total_prompt_tokens),
                 Some(su.total_completion_tokens),
@@ -2607,8 +2628,23 @@ async fn handle_slash_command(
                 "  Completion tokens:  {:>10}\n",
                 su.total_completion_tokens
             ));
+            if su.persisted_total_tokens > 0 {
+                text.push_str(&format!(
+                    "  Historical tokens:  {:>10}\n",
+                    su.persisted_total_tokens
+                ));
+            }
             text.push_str(&format!("  Total tokens:       {:>10}\n", total));
-            if let Some(c) = cost {
+            if su.persisted_total_tokens > 0 {
+                if let Some(c) = current_cost {
+                    text.push_str(&format!(
+                        "  Estimated cost:     ~${:.3} (current process only)\n",
+                        c
+                    ));
+                } else {
+                    text.push_str("  Estimated cost:     unavailable for resumed history\n");
+                }
+            } else if let Some(c) = current_cost {
                 text.push_str(&format!("  Estimated cost:     ~${:.3}\n", c));
             }
             text.push_str(&format!("\n  Model: {}", app.model));
@@ -2801,8 +2837,7 @@ pub async fn run_repl_tui(
                     // Track token usage
                     if let Some(ref usage) = result.usage {
                         app.turn_usage = Some(usage.clone());
-                        app.session_usage.total_prompt_tokens +=
-                            usage.prompt_tokens.unwrap_or(0);
+                        app.session_usage.total_prompt_tokens += usage.prompt_tokens.unwrap_or(0);
                         app.session_usage.total_completion_tokens +=
                             usage.completion_tokens.unwrap_or(0);
                         app.session_usage.turns_with_usage += 1;
@@ -2834,8 +2869,7 @@ pub async fn run_repl_tui(
                             }
                         }
                         let token_count = app.turn_usage.as_ref().map(|u| {
-                            (u.prompt_tokens.unwrap_or(0) + u.completion_tokens.unwrap_or(0))
-                                as i64
+                            (u.prompt_tokens.unwrap_or(0) + u.completion_tokens.unwrap_or(0)) as i64
                         });
                         storage
                             .save_repl_message(
@@ -3258,6 +3292,39 @@ mod tests {
                 line.trim_end().to_string()
             })
             .collect()
+    }
+
+    #[test]
+    fn load_session_restores_persisted_usage_totals() {
+        let mut app = test_app();
+        let stored = vec![
+            ReplMessage {
+                id: "msg-1".to_string(),
+                session_id: "session-1".to_string(),
+                role: "assistant".to_string(),
+                content: "first".to_string(),
+                token_count: Some(42),
+                run_id: None,
+                redacted: false,
+                created_at: chrono::Utc::now(),
+            },
+            ReplMessage {
+                id: "msg-2".to_string(),
+                session_id: "session-1".to_string(),
+                role: "assistant".to_string(),
+                content: "second".to_string(),
+                token_count: None,
+                run_id: None,
+                redacted: false,
+                created_at: chrono::Utc::now(),
+            },
+        ];
+
+        load_session_into_app(&mut app, &stored);
+
+        assert_eq!(app.session_usage.persisted_total_tokens, 42);
+        assert_eq!(app.session_usage.turns_with_usage, 1);
+        assert_eq!(app.session_usage.turns_without_usage, 1);
     }
 
     #[test]

@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! HTTP API server for r8r.
 
 mod middleware;
@@ -1475,7 +1481,13 @@ nodes:
     #[tokio::test]
     async fn test_execute_workflow_invalid_definition_returns_422() {
         let state = test_app_state();
-        save_workflow(&state, "broken-workflow", "name: broken-workflow\nnodes: [").await;
+        save_workflow(
+            &state,
+            "broken-workflow",
+            "name: broken-workflow
+nodes: [",
+        )
+        .await;
         let app = create_api_routes().with_state(state);
 
         let response = app

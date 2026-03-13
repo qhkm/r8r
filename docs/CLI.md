@@ -8,6 +8,8 @@
 | `1`  | Error (see stderr for details) |
 | `42` | Execution requires human approval (non-interactive mode) |
 
+`r8r doctor` follows the same rule in both human and `--json` modes: any failed check returns exit code `1`.
+
 ### Exit 42 — Non-Interactive Approval Guard
 
 When `r8r run` is used in a non-interactive context (e.g. CI, piped stdin, scripts) and the workflow reaches an `approval` node, the process exits with code **42** instead of blocking.
@@ -68,3 +70,21 @@ r8r run <workflow-name> [--yes] [--json]
 
 In interactive mode, shows a side-effect summary before execution.
 In non-interactive mode (`--yes` or piped stdin), skips the confirmation.
+
+---
+
+## `r8r init` — Bootstrap Local CLI Configuration
+
+~~~
+r8r init [--yes] [--force] [--json]
+~~~
+
+`r8r init` writes `~/.config/r8r/config.toml` with a real `[llm]` section and stores detected API keys in the local credential store when available.
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Accept detected defaults without prompting |
+| `--force` | Overwrite an existing `config.toml` |
+| `--json` | Emit a single JSON summary to stdout |

@@ -6,7 +6,9 @@ We welcome contributions! Whether it's bug reports, feature requests, documentat
 
 Before we can accept your first pull request, you must sign our [Contributor License Agreement](CLA.md).
 
-**Why?** r8r is dual-licensed (Apache 2.0 open source + commercial extensions). The CLA ensures we can legally accept your contribution and continue offering both licenses. You retain full copyright ownership of your work.
+**Why?** r8r is dual-licensed (AGPL-3.0 open source + commercial enterprise). The CLA ensures we can legally accept your contribution and continue offering both licenses. You retain full copyright ownership of your work.
+
+All contributions to `src/` are licensed under AGPLv3. Please include the standard license header in new source files (see any existing `.rs` file for the template).
 
 **How to sign:**
 

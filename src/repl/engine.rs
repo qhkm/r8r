@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Core REPL agentic loop.
 //!
 //! Processes user input through the LLM with autonomous tool execution.
@@ -108,8 +114,7 @@ pub async fn run_turn(
                 prompt_tokens: Some(0),
                 completion_tokens: Some(0),
             });
-            acc.prompt_tokens =
-                Some(acc.prompt_tokens.unwrap_or(0) + u.prompt_tokens.unwrap_or(0));
+            acc.prompt_tokens = Some(acc.prompt_tokens.unwrap_or(0) + u.prompt_tokens.unwrap_or(0));
             acc.completion_tokens =
                 Some(acc.completion_tokens.unwrap_or(0) + u.completion_tokens.unwrap_or(0));
         }
@@ -293,7 +298,10 @@ async fn process_stream(
     }
 
     if text_buffer.is_empty() {
-        (StreamResult::Error("Empty response from LLM".to_string()), usage)
+        (
+            StreamResult::Error("Empty response from LLM".to_string()),
+            usage,
+        )
     } else {
         (StreamResult::TextResponse(text_buffer), usage)
     }

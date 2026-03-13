@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Configuration management.
 //!
 //! r8r configuration can come from:
@@ -19,6 +25,10 @@ pub struct Config {
     #[serde(default)]
     pub storage: StorageConfig,
 
+    /// LLM runtime configuration
+    #[serde(default)]
+    pub llm: LlmSettings,
+
     /// ZeptoClaw integration
     #[serde(default)]
     pub agent: AgentConfig,
@@ -27,6 +37,26 @@ pub struct Config {
     #[cfg(feature = "sandbox")]
     #[serde(default)]
     pub sandbox: SandboxConfig,
+}
+
+/// LLM runtime configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LlmSettings {
+    /// Provider name (openai, anthropic, ollama, custom)
+    #[serde(default)]
+    pub provider: Option<String>,
+
+    /// Default model name
+    #[serde(default)]
+    pub model: Option<String>,
+
+    /// Full provider endpoint URL
+    #[serde(default)]
+    pub endpoint: Option<String>,
+
+    /// Request timeout in seconds
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
 }
 
 /// Server configuration.
@@ -358,6 +388,20 @@ impl Config {
         if let Ok(path) = std::env::var("R8R_DATABASE_PATH") {
             self.storage.database_path = Some(PathBuf::from(path));
         }
+        if let Ok(provider) = std::env::var("R8R_LLM_PROVIDER") {
+            self.llm.provider = Some(provider);
+        }
+        if let Ok(model) = std::env::var("R8R_LLM_MODEL") {
+            self.llm.model = Some(model);
+        }
+        if let Ok(endpoint) = std::env::var("R8R_LLM_ENDPOINT") {
+            self.llm.endpoint = Some(endpoint);
+        }
+        if let Ok(timeout) = std::env::var("R8R_LLM_TIMEOUT_SECONDS") {
+            if let Ok(parsed) = timeout.parse::<u64>() {
+                self.llm.timeout_seconds = Some(parsed);
+            }
+        }
         #[cfg(feature = "sandbox")]
         {
             if let Ok(backend) = std::env::var("R8R_SANDBOX_BACKEND") {
@@ -393,6 +437,9 @@ impl Config {
         if let Some(storage) = partial.storage {
             self.storage = storage;
         }
+        if let Some(llm) = partial.llm {
+            self.llm = llm;
+        }
         if let Some(agent) = partial.agent {
             self.agent = agent;
         }
@@ -407,6 +454,7 @@ impl Config {
 struct PartialConfig {
     server: Option<ServerConfig>,
     storage: Option<StorageConfig>,
+    llm: Option<LlmSettings>,
     agent: Option<AgentConfig>,
     #[cfg(feature = "sandbox")]
     sandbox: Option<SandboxConfig>,

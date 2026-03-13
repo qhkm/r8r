@@ -14,7 +14,7 @@ Thank you for your interest in contributing to r8r ("Project"), maintained by Ki
 
 You grant to the Maintainer and recipients of software distributed by the Maintainer a perpetual, worldwide, non-exclusive, transferable, royalty-free, irrevocable license to use, reproduce, modify, prepare derivative works of, publicly display, publicly perform, distribute, and sublicense Your Contribution and derivative works under any license chosen by the Maintainer, including:
 
-- Apache-2.0 (open source)
+- AGPL-3.0 (open source)
 - Proprietary or commercial licenses
 - Any future open source license
 

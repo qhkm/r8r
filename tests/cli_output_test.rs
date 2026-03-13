@@ -23,14 +23,18 @@ fn test_output_json_success() {
 fn test_output_json_list() {
     let out = Output::new(OutputMode::Json);
     let items = vec![
-        TestItem { name: "a".into(), count: 1 },
-        TestItem { name: "b".into(), count: 2 },
+        TestItem {
+            name: "a".into(),
+            count: 1,
+        },
+        TestItem {
+            name: "b".into(),
+            count: 2,
+        },
     ];
-    out.list(
-        &["NAME", "COUNT"],
-        &items,
-        |item| vec![item.name.clone(), item.count.to_string()],
-    );
+    out.list(&["NAME", "COUNT"], &items, |item| {
+        vec![item.name.clone(), item.count.to_string()]
+    });
 }
 
 #[test]

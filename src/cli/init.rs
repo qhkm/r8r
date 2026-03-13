@@ -1,14 +1,33 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 // r8r init wizard — service detection and configuration.
 
 use crate::cli::output::Output;
 use crate::config;
+use serde::Serialize;
 use std::io::{self, BufRead, Write};
 
 /// Result of detecting a service or capability.
+#[derive(Debug, Clone, Serialize)]
 pub struct DetectionResult {
     pub name: &'static str,
     pub detected: bool,
     pub detail: String,
+}
+
+#[derive(Serialize)]
+struct InitSummary {
+    ok: bool,
+    config_path: String,
+    overwritten: bool,
+    provider: Option<String>,
+    model: Option<String>,
+    credential_saved: bool,
+    detections: Vec<DetectionResult>,
 }
 
 /// Detect the user's shell from $SHELL.
@@ -101,46 +120,121 @@ pub async fn detect_docker() -> DetectionResult {
     }
 }
 
-fn print_detection(result: &DetectionResult) {
-    let icon = if result.detected { "\u{2713}" } else { "\u{2717}" };
-    println!("  {} {:<14} {}", icon, result.name, result.detail);
+fn print_detection(result: &DetectionResult, to_stderr: bool) {
+    let icon = if result.detected {
+        "\u{2713}"
+    } else {
+        "\u{2717}"
+    };
+    if to_stderr {
+        eprintln!("  {} {:<14} {}", icon, result.name, result.detail);
+    } else {
+        println!("  {} {:<14} {}", icon, result.name, result.detail);
+    }
 }
 
-fn prompt_line(prompt: &str) -> String {
-    print!("{}", prompt);
-    io::stdout().flush().ok();
+fn print_line(line: &str, to_stderr: bool) {
+    if to_stderr {
+        eprintln!("{}", line);
+    } else {
+        println!("{}", line);
+    }
+}
+
+fn prompt_line(prompt: &str, to_stderr: bool) -> String {
+    if to_stderr {
+        eprint!("{}", prompt);
+        io::stderr().flush().ok();
+    } else {
+        print!("{}", prompt);
+        io::stdout().flush().ok();
+    }
     let mut line = String::new();
     io::stdin().lock().read_line(&mut line).ok();
     line.trim().to_string()
+}
+
+fn default_endpoint(provider: &str) -> Option<&'static str> {
+    match provider {
+        "openai" => Some("https://api.openai.com/v1/chat/completions"),
+        "anthropic" => Some("https://api.anthropic.com/v1/messages"),
+        "ollama" => Some("http://localhost:11434/api/chat"),
+        _ => None,
+    }
+}
+
+async fn persist_api_key(provider: &str, value: &str) -> anyhow::Result<()> {
+    use crate::credentials::CredentialStore;
+
+    let mut cred_store = CredentialStore::load().await?;
+    cred_store.set(provider, None, value).await?;
+    Ok(())
 }
 
 /// Run the init wizard.
 pub async fn run_init(output: &Output, yes: bool, force: bool) -> anyhow::Result<()> {
     let config_dir = config::Config::config_dir();
     let config_path = config_dir.join("config.toml");
+    let to_stderr = output.is_json();
+    let mut overwritten = false;
 
     // Guard: existing config
     if config_path.exists() && !force {
         if yes {
-            println!(
-                "Config already exists at {}. Use --force to overwrite.",
-                config_path.display()
-            );
+            if output.is_json() {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": true,
+                        "skipped": true,
+                        "message": format!(
+                            "Config already exists at {}. Use --force to overwrite.",
+                            config_path.display()
+                        ),
+                        "config_path": config_path.display().to_string(),
+                    })
+                );
+            } else {
+                println!(
+                    "Config already exists at {}. Use --force to overwrite.",
+                    config_path.display()
+                );
+            }
             return Ok(());
         }
-        println!("Config already exists at {}.", config_path.display());
-        let answer = prompt_line("Overwrite? [y/N] ");
+        print_line(
+            &format!("Config already exists at {}.", config_path.display()),
+            to_stderr,
+        );
+        let answer = prompt_line("Overwrite? [y/N] ", to_stderr);
         if answer.to_lowercase() != "y" {
-            println!("Aborted.");
+            if output.is_json() {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": true,
+                        "aborted": true,
+                        "config_path": config_path.display().to_string(),
+                    })
+                );
+            } else {
+                println!("Aborted.");
+            }
             return Ok(());
         }
+        overwritten = true;
+    } else if config_path.exists() && force {
+        overwritten = true;
     }
 
-    println!();
-    println!("  Welcome to r8r \u{2014} agent-native workflow engine");
-    println!();
-    println!("  Detecting your environment...");
-    println!();
+    print_line("", to_stderr);
+    print_line(
+        "  Welcome to r8r \u{2014} agent-native workflow engine",
+        to_stderr,
+    );
+    print_line("", to_stderr);
+    print_line("  Detecting your environment...", to_stderr);
+    print_line("", to_stderr);
 
     // Detect services
     let ollama = detect_ollama().await;
@@ -148,27 +242,35 @@ pub async fn run_init(output: &Output, yes: bool, force: bool) -> anyhow::Result
     let anthropic = detect_env_key("ANTHROPIC_API_KEY");
     let docker = detect_docker().await;
     let shell = detect_shell();
+    let detections = vec![
+        ollama.clone(),
+        DetectionResult {
+            name: "OpenAI key",
+            detected: openai.detected,
+            detail: openai.detail.clone(),
+        },
+        DetectionResult {
+            name: "Anthropic key",
+            detected: anthropic.detected,
+            detail: anthropic.detail.clone(),
+        },
+        docker.clone(),
+        shell.clone(),
+    ];
 
-    print_detection(&ollama);
-    println!(
-        "  {} {:<14} {}",
-        if openai.detected { "\u{2713}" } else { "\u{2717}" },
-        "OpenAI key",
-        openai.detail
-    );
-    println!(
-        "  {} {:<14} {}",
-        if anthropic.detected { "\u{2713}" } else { "\u{2717}" },
-        "Anthropic key",
-        anthropic.detail
-    );
-    print_detection(&docker);
-    print_detection(&shell);
+    print_detection(&ollama, to_stderr);
+    print_detection(&detections[1], to_stderr);
+    print_detection(&detections[2], to_stderr);
+    print_detection(&docker, to_stderr);
+    print_detection(&shell, to_stderr);
 
     // Choose LLM provider
-    println!();
-    println!("  \u{2500}\u{2500}\u{2500} LLM Provider \u{2500}\u{2500}\u{2500}");
-    println!();
+    print_line("", to_stderr);
+    print_line(
+        "  \u{2500}\u{2500}\u{2500} LLM Provider \u{2500}\u{2500}\u{2500}",
+        to_stderr,
+    );
+    print_line("", to_stderr);
 
     let provider: String;
     let model: String;
@@ -187,7 +289,10 @@ pub async fn run_init(output: &Output, yes: bool, force: bool) -> anyhow::Result
         } else {
             provider = String::new();
             model = String::new();
-            println!("  No LLM provider detected. You can configure one later.");
+            print_line(
+                "  No LLM provider detected. You can configure one later.",
+                to_stderr,
+            );
         }
     } else {
         // Interactive selection
@@ -198,13 +303,13 @@ pub async fn run_init(output: &Output, yes: bool, force: bool) -> anyhow::Result
         options.push(("openai", "OpenAI (requires API key)"));
         options.push(("anthropic", "Anthropic (requires API key)"));
 
-        println!("  Which provider do you want to use?");
+        print_line("  Which provider do you want to use?", to_stderr);
         for (i, (_, desc)) in options.iter().enumerate() {
-            println!("    [{}] {}", i + 1, desc);
+            print_line(&format!("    [{}] {}", i + 1, desc), to_stderr);
         }
-        println!();
+        print_line("", to_stderr);
 
-        let choice = prompt_line("  > ");
+        let choice = prompt_line("  > ", to_stderr);
         let idx: usize = choice.parse::<usize>().unwrap_or(1).saturating_sub(1);
         let chosen = options.get(idx).unwrap_or(&options[0]);
 
@@ -217,24 +322,35 @@ pub async fn run_init(output: &Output, yes: bool, force: bool) -> anyhow::Result
         };
 
         if !provider.is_empty() {
-            println!("  \u{2713} Using {} with {}", provider, model);
+            print_line(
+                &format!("  \u{2713} Using {} with {}", provider, model),
+                to_stderr,
+            );
         }
     }
 
     // Write config
-    println!();
-    println!("  \u{2500}\u{2500}\u{2500} Config \u{2500}\u{2500}\u{2500}");
-    println!();
+    print_line("", to_stderr);
+    print_line(
+        "  \u{2500}\u{2500}\u{2500} Config \u{2500}\u{2500}\u{2500}",
+        to_stderr,
+    );
+    print_line("", to_stderr);
 
     std::fs::create_dir_all(&config_dir)?;
-
-    let llm_env_hint = match provider.as_str() {
-        "openai" => {
-            "# export OPENAI_API_KEY=<your-key>\n# export R8R_LLM_BASE_URL=https://api.openai.com/v1\n"
-        }
-        "anthropic" => "# export ANTHROPIC_API_KEY=<your-key>\n",
-        "ollama" => "# Ollama detected at localhost:11434 — no key needed\n",
-        _ => "# Set OPENAI_API_KEY or ANTHROPIC_API_KEY, or start Ollama\n",
+    let llm_section = if provider.is_empty() {
+        "# Configure [llm] later with `r8r init --force` or by editing this file.\n".to_string()
+    } else {
+        format!(
+            r#"
+[llm]
+provider = "{provider}"
+model = "{model}"
+endpoint = "{endpoint}"
+timeout_seconds = 60
+"#,
+            endpoint = default_endpoint(&provider).unwrap_or_default(),
+        )
     };
     let config_content = format!(
         r#"# r8r configuration (generated by r8r init)
@@ -242,41 +358,71 @@ pub async fn run_init(output: &Output, yes: bool, force: bool) -> anyhow::Result
 [server]
 port = 8080
 host = "127.0.0.1"
-
-# LLM provider: {provider} / {model}
-# Configure via environment variables:
-{llm_env_hint}
-"#,
+{llm_section}"#,
     );
     std::fs::write(&config_path, &config_content)?;
-    println!("  \u{2713} Wrote {}", config_path.display());
+    print_line(
+        &format!("  \u{2713} Wrote {}", config_path.display()),
+        to_stderr,
+    );
 
-    // If the chosen provider needs an API key and it's not set, prompt
-    if !yes && !provider.is_empty() && provider != "ollama" {
+    let mut credential_saved = false;
+
+    if !provider.is_empty() && provider != "ollama" {
         let env_key = match provider.as_str() {
             "openai" => "OPENAI_API_KEY",
             "anthropic" => "ANTHROPIC_API_KEY",
             _ => "",
         };
-        if !env_key.is_empty() && std::env::var(env_key).is_err() {
-            println!();
-            let key_value = prompt_line(&format!(
-                "  Enter your {} (or press Enter to skip): ",
-                env_key
-            ));
-            if !key_value.is_empty() {
-                // Store via credential system
-                use crate::credentials::CredentialStore;
-                let mut cred_store = CredentialStore::load().await?;
-                cred_store.set(&provider, None, &key_value).await?;
-                println!("  \u{2713} API key stored securely via r8r credentials");
-            } else {
-                println!(
-                    "  Skipped. Set {} later or use: r8r credentials set {}",
-                    env_key, provider
+        if !env_key.is_empty() {
+            if let Ok(key_value) = std::env::var(env_key) {
+                if !key_value.is_empty() {
+                    persist_api_key(&provider, &key_value).await?;
+                    credential_saved = true;
+                    print_line(
+                        &format!("  \u{2713} Stored {} securely via r8r credentials", env_key),
+                        to_stderr,
+                    );
+                }
+            } else if !yes {
+                print_line("", to_stderr);
+                let key_value = prompt_line(
+                    &format!("  Enter your {} (or press Enter to skip): ", env_key),
+                    to_stderr,
                 );
+                if !key_value.is_empty() {
+                    persist_api_key(&provider, &key_value).await?;
+                    credential_saved = true;
+                    print_line(
+                        "  \u{2713} API key stored securely via r8r credentials",
+                        to_stderr,
+                    );
+                } else {
+                    print_line(
+                        &format!(
+                            "  Skipped. Set {} later or use: r8r credentials set {}",
+                            env_key, provider
+                        ),
+                        to_stderr,
+                    );
+                }
             }
         }
+    }
+
+    let summary = InitSummary {
+        ok: true,
+        config_path: config_path.display().to_string(),
+        overwritten,
+        provider: (!provider.is_empty()).then_some(provider.clone()),
+        model: (!model.is_empty()).then_some(model.clone()),
+        credential_saved,
+        detections,
+    };
+
+    if output.is_json() {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+        return Ok(());
     }
 
     // Final suggestions

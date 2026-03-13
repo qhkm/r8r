@@ -3,6 +3,22 @@ title: Installation
 description: How to install r8r on your system.
 ---
 
+## Install Script
+
+Install the latest release:
+
+```bash
+curl -sSf https://r8r.sh/install.sh | sh
+```
+
+Pin a specific release:
+
+```bash
+curl -sSf https://r8r.sh/install.sh | R8R_VERSION=v0.3.1 sh
+```
+
+The installer auto-detects your platform, resolves the latest GitHub release by default, and installs `r8r` plus `r8r-mcp` into `~/.r8r/bin`.
+
 ## Build from Source
 
 r8r requires Rust 1.70 or later.

@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! OpenAPI specification for the r8r API.
 
 use serde_json::{json, Value};
@@ -11,8 +17,8 @@ pub fn generate_openapi_spec() -> Value {
             "description": "Agent-first Rust workflow automation engine API",
             "version": env!("CARGO_PKG_VERSION"),
             "license": {
-                "name": "Apache-2.0",
-                "url": "https://spdx.org/licenses/Apache-2.0.html"
+                "name": "AGPL-3.0",
+                "url": "https://spdx.org/licenses/AGPL-3.0-only.html"
             },
             "contact": {
                 "name": "r8r",

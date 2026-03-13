@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Workflow parameter validation and processing.
 
 use serde_json::Value;
@@ -31,8 +37,12 @@ pub fn validate_parameters(workflow: &Workflow, input: &Value) -> Result<Value> 
 
     if !errors.is_empty() {
         return Err(Error::Validation(format!(
-            "Parameter validation failed:\n  - {}",
-            errors.join("\n  - ")
+            "Parameter validation failed:
+  - {}",
+            errors.join(
+                "
+  - "
+            )
         )));
     }
 

@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Workflow caching for improved performance.
 //!
 //! Caches parsed workflows to avoid repeated YAML parsing.
@@ -184,7 +190,8 @@ mod tests {
     async fn test_cache_hit() {
         let cache = WorkflowCache::new();
 
-        let definition = "name: test\nnodes: []";
+        let definition = "name: test
+nodes: []";
         let mut parse_count = 0;
 
         // First call - should parse
@@ -216,7 +223,8 @@ mod tests {
     async fn test_different_versions() {
         let cache = WorkflowCache::new();
 
-        let definition = "name: test\nnodes: []";
+        let definition = "name: test
+nodes: []";
 
         // Different versions should be cached separately
         let _ = cache
@@ -236,8 +244,10 @@ mod tests {
     async fn test_definition_change_invalidates() {
         let cache = WorkflowCache::new();
 
-        let definition1 = "name: test1\nnodes: []";
-        let definition2 = "name: test2\nnodes: []";
+        let definition1 = "name: test1
+nodes: []";
+        let definition2 = "name: test2
+nodes: []";
 
         // Cache with first definition
         let result1 = cache
@@ -260,7 +270,8 @@ mod tests {
     async fn test_invalidate() {
         let cache = WorkflowCache::new();
 
-        let definition = "name: test\nnodes: []";
+        let definition = "name: test
+nodes: []";
 
         // Cache a workflow
         let _ = cache
@@ -283,7 +294,8 @@ mod tests {
     async fn test_clear() {
         let cache = WorkflowCache::new();
 
-        let definition = "name: test\nnodes: []";
+        let definition = "name: test
+nodes: []";
 
         // Cache several workflows
         for i in 0..5 {
@@ -309,7 +321,8 @@ mod tests {
 
         assert_eq!(cache.stats().await.entry_count, 0);
 
-        let definition = "name: test\nnodes: []";
+        let definition = "name: test
+nodes: []";
         let _ = cache
             .get_or_parse("wf-1", 1, definition, |_| Ok(make_test_workflow("test")))
             .await

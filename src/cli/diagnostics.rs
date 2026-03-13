@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 // Elm-style error diagnostics with fuzzy matching and recovery hints.
 
 use crate::cli::output::OutputMode;
@@ -6,11 +12,20 @@ use crate::error::Error;
 /// Classifies the specific kind of error for targeted hints.
 #[derive(Debug)]
 pub enum DiagnosticKind {
-    WorkflowNotFound { name: String },
+    WorkflowNotFound {
+        name: String,
+    },
     NoLlmConfigured,
-    YamlParseError { line: Option<usize>, column: Option<usize> },
-    CredentialMissing { service: String },
-    ConnectionRefused { url: String },
+    YamlParseError {
+        line: Option<usize>,
+        column: Option<usize>,
+    },
+    CredentialMissing {
+        service: String,
+    },
+    ConnectionRefused {
+        url: String,
+    },
     DbNotInitialized,
     Generic,
 }
@@ -35,7 +50,13 @@ impl Diagnostic {
         let message = err.to_string();
         let kind = classify_error(code, &message);
         let (hints, suggestions) = enrich(&kind, candidates);
-        Self { code, kind, message, hints, suggestions }
+        Self {
+            code,
+            kind,
+            message,
+            hints,
+            suggestions,
+        }
     }
 
     /// Render according to the requested output mode.
@@ -89,21 +110,20 @@ pub fn classify_error(code: &str, message: &str) -> DiagnosticKind {
 
     match code {
         "WORKFLOW_ERROR" if msg_lower.contains("not found") => {
-            let name = extract_quoted_name(message)
-                .unwrap_or_else(|| "unknown".to_string());
+            let name = extract_quoted_name(message).unwrap_or_else(|| "unknown".to_string());
             DiagnosticKind::WorkflowNotFound { name }
         }
 
-        "CONFIG_ERROR" if msg_lower.contains("llm")
-            || msg_lower.contains("provider")
-            || msg_lower.contains("no llm") =>
+        "CONFIG_ERROR"
+            if msg_lower.contains("llm")
+                || msg_lower.contains("provider")
+                || msg_lower.contains("no llm") =>
         {
             DiagnosticKind::NoLlmConfigured
         }
 
         "CONFIG_ERROR" if msg_lower.contains("credential") => {
-            let service = extract_quoted_name(message)
-                .unwrap_or_else(|| "unknown".to_string());
+            let service = extract_quoted_name(message).unwrap_or_else(|| "unknown".to_string());
             DiagnosticKind::CredentialMissing { service }
         }
 
@@ -115,8 +135,7 @@ pub fn classify_error(code: &str, message: &str) -> DiagnosticKind {
         "HTTP_ERROR"
             if msg_lower.contains("connection refused") || msg_lower.contains("connect") =>
         {
-            let url = extract_quoted_name(message)
-                .unwrap_or_else(|| "unknown".to_string());
+            let url = extract_quoted_name(message).unwrap_or_else(|| "unknown".to_string());
             DiagnosticKind::ConnectionRefused { url }
         }
 
@@ -207,10 +226,9 @@ fn enrich(kind: &DiagnosticKind, candidates: &[&str]) -> (Vec<String>, Vec<Strin
             )
         }
 
-        DiagnosticKind::CredentialMissing { service } => (
-            vec![format!("r8r credentials set {}", service)],
-            Vec::new(),
-        ),
+        DiagnosticKind::CredentialMissing { service } => {
+            (vec![format!("r8r credentials set {}", service)], Vec::new())
+        }
 
         DiagnosticKind::ConnectionRefused { url } => (
             vec![
@@ -220,9 +238,7 @@ fn enrich(kind: &DiagnosticKind, candidates: &[&str]) -> (Vec<String>, Vec<Strin
             Vec::new(),
         ),
 
-        DiagnosticKind::DbNotInitialized => {
-            (vec!["r8r doctor".to_string()], Vec::new())
-        }
+        DiagnosticKind::DbNotInitialized => (vec!["r8r doctor".to_string()], Vec::new()),
 
         DiagnosticKind::Generic => (Vec::new(), Vec::new()),
     }

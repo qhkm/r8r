@@ -9,6 +9,7 @@
 set -e
 
 CDN_BASE="https://pub-55a6f9724469496aa4f0bd4214b25331.r2.dev"
+REPO="qhkm/r8r"
 DEFAULT_INSTALL_DIR="${HOME}/.r8r/bin"
 INSTALL_DIR="${R8R_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
 
@@ -54,19 +55,81 @@ resolve_version() {
 
     say "Resolving latest version..."
 
-    if has curl; then
-        VERSION="$(curl -sSf "${CDN_BASE}/latest.txt" 2>/dev/null | tr -d '\r\n')"
-    elif has wget; then
-        VERSION="$(wget -qO- "${CDN_BASE}/latest.txt" 2>/dev/null | tr -d '\r\n')"
-    else
+    if ! has curl && ! has wget; then
         err "curl or wget is required to download r8r"
     fi
 
-    if [ -z "${VERSION}" ]; then
+    VERSION="$(resolve_latest_version || true)"
+
+    if ! is_valid_version "${VERSION}"; then
         err "Could not determine latest version. Set R8R_VERSION manually."
     fi
 
     say "Latest version: ${VERSION}"
+}
+
+resolve_latest_version() {
+    VERSION_CANDIDATE="$(resolve_latest_version_from_cdn)"
+    if is_valid_version "${VERSION_CANDIDATE}"; then
+        printf '%s' "${VERSION_CANDIDATE}"
+        return 0
+    fi
+
+    VERSION_CANDIDATE="$(resolve_latest_version_from_github)"
+    if is_valid_version "${VERSION_CANDIDATE}"; then
+        printf '%s' "${VERSION_CANDIDATE}"
+        return 0
+    fi
+
+    return 1
+}
+
+resolve_latest_version_from_cdn() {
+    if has curl; then
+        curl -sSf "${CDN_BASE}/latest.txt" 2>/dev/null | tr -d '\r\n'
+    elif has wget; then
+        wget -qO- "${CDN_BASE}/latest.txt" 2>/dev/null | tr -d '\r\n'
+    fi
+}
+
+resolve_latest_version_from_github() {
+    LATEST_URL="https://github.com/${REPO}/releases/latest"
+
+    if has curl; then
+        FINAL_URL="$(curl -fsSL -o /dev/null -w '%{url_effective}' "${LATEST_URL}" 2>/dev/null || true)"
+        extract_version_from_url "${FINAL_URL}"
+        return
+    fi
+
+    FINAL_URL="$(wget --server-response --spider "${LATEST_URL}" 2>&1 | awk 'tolower($1) == "location:" {print $2}' | tail -n1 | tr -d '\r\n')"
+    if [ -n "${FINAL_URL}" ]; then
+        extract_version_from_url "${FINAL_URL}"
+        return
+    fi
+
+    wget -qO- "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
+        | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+        | head -n1 \
+        | tr -d '\r\n'
+}
+
+extract_version_from_url() {
+    printf '%s' "$1" \
+        | tr -d '\r\n' \
+        | sed 's/[?#].*$//' \
+        | sed 's:/*$::' \
+        | sed 's:.*/::'
+}
+
+is_valid_version() {
+    case "$1" in
+        v[0-9]*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 download_and_verify() {
@@ -173,4 +236,6 @@ err() {
     exit 1
 }
 
-main
+if [ "${R8R_INSTALLER_SKIP_MAIN:-0}" != "1" ]; then
+    main
+fi

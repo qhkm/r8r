@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Agent node - AI-powered decisions via multiple LLM providers.
 //!
 //! This node allows workflows to invoke an AI agent for tasks that require
@@ -539,7 +545,7 @@ impl Node for AgentNode {
     }
 
     fn description(&self) -> &str {
-        "AI agent node \u{2014} call OpenAI, Anthropic, Ollama, or ZeptoClaw for classification, generation, and reasoning"
+        "AI agent node  {2014} call OpenAI, Anthropic, Ollama, or ZeptoClaw for classification, generation, and reasoning"
     }
 
     async fn execute(&self, config: &Value, ctx: &NodeContext) -> Result<NodeResult> {

@@ -1,3 +1,9 @@
+/*
+ * Copyright: Kitakod Ventures 2026
+ * This file and its contents are licensed under the AGPLv3 License.
+ * Please see the included NOTICE for copyright information and
+ * LICENSE-AGPL for a copy of the license.
+ */
 //! Firecracker microVM sandbox backend.
 //!
 //! Executes code inside lightweight Firecracker microVMs for strong isolation.
@@ -63,7 +69,13 @@ async fn api_put(
 
     let body_str = serde_json::to_string(body).unwrap_or_default();
     let request = format!(
-        "PUT {} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAccept: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        "PUT {} HTTP/1.1
+Host: localhost
+Content-Type: application/json
+Accept: application/json
+Content-Length: {}
+
+{}",
         path,
         body_str.len(),
         body_str
@@ -91,7 +103,11 @@ async fn api_put(
     if !response_str.starts_with("HTTP/1.1 2") {
         // Extract body from response for error details
         let error_body = response_str
-            .split("\r\n\r\n")
+            .split(
+                "
+
+",
+            )
             .nth(1)
             .unwrap_or("")
             .to_string();
@@ -372,14 +388,20 @@ impl SandboxBackend for FirecrackerBackend {
                 let max_per_stream = req.max_output_bytes as usize / 2;
                 let stdout = if resp.stdout.len() > max_per_stream {
                     let mut s = resp.stdout[..max_per_stream].to_string();
-                    s.push_str("\n... [output truncated]");
+                    s.push_str(
+                        "
+... [output truncated]",
+                    );
                     s
                 } else {
                     resp.stdout
                 };
                 let stderr = if resp.stderr.len() > max_per_stream {
                     let mut s = resp.stderr[..max_per_stream].to_string();
-                    s.push_str("\n... [output truncated]");
+                    s.push_str(
+                        "
+... [output truncated]",
+                    );
                     s
                 } else {
                     resp.stderr
