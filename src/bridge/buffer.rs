@@ -6,21 +6,26 @@
  */
 //! Replay buffer for at-least-once delivery of bridge events.
 //!
-//! Buffers events so they can be replayed to newly connected clients.
-//! Placeholder implementation — will be fully fleshed out in Task 2.
+//! Stores unacknowledged outbound events in a `VecDeque` ordered by insertion
+//! time. On reconnect, r8r replays all events that haven't been acknowledged
+//! and haven't expired past the configured TTL.
 
 use std::collections::VecDeque;
-
-use chrono::Utc;
+use std::time::{Duration, Instant};
 
 use super::events::BridgeEventEnvelope;
 
 /// A bounded, TTL-aware replay buffer for bridge events.
 ///
 /// Events beyond `max_events` or older than `ttl_secs` are evicted.
+/// Uses `VecDeque` for O(1) front removal during capacity eviction
+/// and TTL pruning.
 pub struct ReplayBuffer {
-    events: VecDeque<BridgeEventEnvelope>,
+    /// Events paired with their insertion timestamp for TTL tracking.
+    events: VecDeque<(BridgeEventEnvelope, Instant)>,
+    /// Maximum number of events to retain.
     max_events: usize,
+    /// Time-to-live in seconds; events older than this are pruned.
     ttl_secs: u64,
 }
 
@@ -34,27 +39,63 @@ impl ReplayBuffer {
         }
     }
 
-    /// Push an event into the buffer, evicting old entries if needed.
+    /// Push an event into the buffer.
+    ///
+    /// If the buffer is at capacity, the oldest event is dropped and a
+    /// warning is logged via `tracing::warn!`.
     pub fn push(&mut self, event: BridgeEventEnvelope) {
-        // Evict expired events
-        let cutoff = Utc::now() - chrono::Duration::seconds(self.ttl_secs as i64);
+        if self.events.len() >= self.max_events {
+            if let Some(dropped) = self.events.pop_front() {
+                tracing::warn!(
+                    "Bridge: replay buffer full ({}), dropping event {}",
+                    self.max_events,
+                    dropped.0.id
+                );
+            }
+        }
+        self.events.push_back((event, Instant::now()));
+    }
+
+    /// Remove the event with the given ID from the buffer (acknowledge it).
+    ///
+    /// If the ID is not found this is a no-op.
+    pub fn ack(&mut self, event_id: &str) {
+        self.events.retain(|(e, _)| e.id != event_id);
+    }
+
+    /// Return clones of all non-expired events, oldest first.
+    ///
+    /// Expired events are not removed by this call; use [`prune_expired`]
+    /// for that.
+    pub fn unacked_events(&self) -> Vec<BridgeEventEnvelope> {
+        let cutoff = Duration::from_secs(self.ttl_secs);
+        let now = Instant::now();
+        self.events
+            .iter()
+            .filter(|(_, inserted_at)| now.duration_since(*inserted_at) < cutoff)
+            .map(|(e, _)| e.clone())
+            .collect()
+    }
+
+    /// Remove events older than the configured TTL.
+    ///
+    /// Because the deque is ordered by insertion time, this pops from the
+    /// front in O(k) where k is the number of expired events.
+    pub fn prune_expired(&mut self) {
+        let cutoff = Duration::from_secs(self.ttl_secs);
+        let now = Instant::now();
         while self
             .events
             .front()
-            .map_or(false, |e| e.timestamp < cutoff)
+            .map_or(false, |(_, inserted_at)| {
+                now.duration_since(*inserted_at) >= cutoff
+            })
         {
             self.events.pop_front();
         }
-
-        // Evict oldest if at capacity
-        if self.events.len() >= self.max_events {
-            self.events.pop_front();
-        }
-
-        self.events.push_back(event);
     }
 
-    /// Returns the number of buffered events.
+    /// Returns the number of buffered events (including potentially expired ones).
     pub fn len(&self) -> usize {
         self.events.len()
     }
