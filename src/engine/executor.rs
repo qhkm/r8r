@@ -57,6 +57,8 @@ impl PauseRegistry {
     }
 }
 
+use crate::bridge::events::BridgeEvent;
+use crate::bridge::BridgeState;
 use crate::metrics;
 
 use crate::api::Monitor;
@@ -117,6 +119,8 @@ pub struct Executor {
     enable_checkpoints: bool,
     /// Shared registry for per-execution pause signals.
     pause_registry: Option<PauseRegistry>,
+    /// Optional bridge for ZeptoClaw event communication.
+    bridge: Option<Arc<BridgeState>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -145,6 +149,7 @@ impl Executor {
             shutdown: None,
             enable_checkpoints: true, // Default to enabled for safety
             pause_registry: None,
+            bridge: None,
         }
     }
 
@@ -166,6 +171,12 @@ impl Executor {
     /// Attach a live monitor for execution/node lifecycle events.
     pub fn with_monitor(mut self, monitor: Arc<Monitor>) -> Self {
         self.monitor = Some(monitor);
+        self
+    }
+
+    /// Attach a bridge for ZeptoClaw event communication.
+    pub fn with_bridge(mut self, bridge: Arc<BridgeState>) -> Self {
+        self.bridge = Some(bridge);
         self
     }
 
@@ -572,6 +583,7 @@ impl Executor {
                 execution.finished_at = Some(Utc::now());
                 self.storage.save_execution(&execution).await?;
                 emit_execution_finished(self.monitor.as_ref(), &execution);
+                emit_bridge_execution_finished(self.bridge.as_ref(), &execution);
                 emit_audit(
                     &self.storage,
                     AuditEventType::ExecutionPaused,
@@ -1244,6 +1256,13 @@ impl Executor {
                             execution.finished_at = Some(Utc::now());
                             self.storage.save_execution(&execution).await?;
                             emit_execution_finished(self.monitor.as_ref(), &execution);
+                            emit_bridge_execution_finished(self.bridge.as_ref(), &execution);
+                            emit_bridge_approval_requested(
+                                self.bridge.as_ref(),
+                                &execution,
+                                node_id,
+                                &last_output,
+                            );
                             emit_audit(
                                 &self.storage,
                                 AuditEventType::ExecutionPaused,
@@ -1399,6 +1418,7 @@ impl Executor {
 
         self.storage.save_execution(&execution).await?;
         emit_execution_finished(self.monitor.as_ref(), &execution);
+        emit_bridge_execution_finished(self.bridge.as_ref(), &execution);
         if failed {
             emit_audit(
                 &self.storage,
@@ -1722,6 +1742,7 @@ impl Executor {
                 execution.finished_at = Some(Utc::now());
                 self.storage.save_execution(&execution).await?;
                 emit_execution_finished(self.monitor.as_ref(), &execution);
+                emit_bridge_execution_finished(self.bridge.as_ref(), &execution);
                 emit_audit(
                     &self.storage,
                     AuditEventType::ExecutionPaused,
@@ -2120,6 +2141,13 @@ impl Executor {
                             execution.finished_at = Some(Utc::now());
                             self.storage.save_execution(&execution).await?;
                             emit_execution_finished(self.monitor.as_ref(), &execution);
+                            emit_bridge_execution_finished(self.bridge.as_ref(), &execution);
+                            emit_bridge_approval_requested(
+                                self.bridge.as_ref(),
+                                &execution,
+                                node_id,
+                                &last_output,
+                            );
                             emit_audit(
                                 &self.storage,
                                 AuditEventType::ExecutionPaused,
@@ -3240,6 +3268,86 @@ fn emit_execution_finished(monitor: Option<&Arc<Monitor>>, execution: &Execution
             execution.error.as_deref().unwrap_or("Execution failed"),
         ),
         _ => {}
+    }
+}
+
+/// Emit a bridge event when an execution completes or fails.
+fn emit_bridge_execution_finished(
+    bridge: Option<&Arc<BridgeState>>,
+    execution: &Execution,
+) {
+    let Some(bridge) = bridge else { return };
+    let duration_ms = execution
+        .finished_at
+        .map(|f| (f - execution.started_at).num_milliseconds())
+        .unwrap_or(0);
+
+    let event = match execution.status {
+        ExecutionStatus::Completed => BridgeEvent::ExecutionCompleted {
+            workflow: execution.workflow_name.clone(),
+            execution_id: execution.id.clone(),
+            status: "success".to_string(),
+            duration_ms,
+            node_count: 0,
+        },
+        ExecutionStatus::Failed => BridgeEvent::ExecutionFailed {
+            workflow: execution.workflow_name.clone(),
+            execution_id: execution.id.clone(),
+            status: "failed".to_string(),
+            error_code: "EXECUTION_FAILED".to_string(),
+            error_message: execution.error.clone().unwrap_or_default(),
+            failed_node: "unknown".to_string(),
+            duration_ms,
+        },
+        _ => return,
+    };
+
+    let bridge = bridge.clone();
+    let corr_id = Some(execution.id.clone());
+    tokio::spawn(async move {
+        let _ = bridge.send_event(event, corr_id).await;
+    });
+}
+
+/// Emit a bridge event when an approval is requested.
+fn emit_bridge_approval_requested(
+    bridge: Option<&Arc<BridgeState>>,
+    execution: &Execution,
+    node_id: &str,
+    last_output: &Value,
+) {
+    let Some(bridge) = bridge else { return };
+    if let Some(output_obj) = last_output.as_object() {
+        let approval_id = output_obj
+            .get("approval_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let title = output_obj
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Approval required")
+            .to_string();
+        let assignee = output_obj.get("assignee").and_then(|v| v.as_str()).map(String::from);
+
+        let event = BridgeEvent::ApprovalRequested {
+            approval_id,
+            workflow: execution.workflow_name.clone(),
+            execution_id: execution.id.clone(),
+            node_id: node_id.to_string(),
+            message: title,
+            timeout_secs: output_obj
+                .get("expires_at")
+                .and_then(|_| Some(1800u64))
+                .unwrap_or(0),
+            requester: assignee,
+            context: last_output.clone(),
+        };
+        let corr_id = Some(execution.id.clone());
+        let bridge_clone = bridge.clone();
+        tokio::spawn(async move {
+            let _ = bridge_clone.send_event(event, corr_id).await;
+        });
     }
 }
 

@@ -1512,10 +1512,19 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         }
     };
 
+    // Create bridge state for ZeptoClaw communication
+    let bridge = Arc::new(r8r::bridge::BridgeState::new(None));
+    // Give bridge access to storage for approval resolution
+    {
+        let mut storage_guard = bridge.storage.lock().await;
+        *storage_guard = Some(storage.clone());
+    }
+
     // Start approval timeout checker (processes expired approval requests)
     let timeout_executor = {
         let mut exec = r8r::engine::Executor::new((*registry).clone(), storage.clone());
         exec = exec.with_monitor(monitor.clone());
+        exec = exec.with_bridge(bridge.clone());
         exec = exec.with_pause_registry(r8r::engine::PauseRegistry::new());
         Arc::new(exec)
     };
@@ -1568,6 +1577,9 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         app = app.merge(create_dashboard_routes());
     }
 
+    // Add bridge WebSocket routes for ZeptoClaw communication
+    app = app.merge(r8r::bridge::websocket::create_bridge_routes(bridge.clone()));
+
     println!("r8r server running on http://0.0.0.0:{}", port);
     println!();
     println!("Scheduler: {} cron job(s) active", job_count);
@@ -1584,6 +1596,7 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     println!("  POST /api/executions/:id/pause");
     println!("  POST /api/executions/:id/resume");
     println!("  WS   /api/monitor (live execution monitoring)");
+    println!("  WS   /api/ws/events (ZeptoClaw bridge)");
     println!();
     println!("Webhooks: /webhooks/:workflow_name (see workflow definitions)");
     if !_no_ui {

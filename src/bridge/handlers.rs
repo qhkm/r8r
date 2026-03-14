@@ -83,9 +83,9 @@ async fn handle_health_ping(bridge: &BridgeState, client_tx: &mpsc::Sender<Strin
 
 /// Handle an approval decision from ZeptoClaw.
 ///
-/// Currently logs the decision. Will be wired to the approval storage
-/// backend in Task 4 to resolve pending approval gates.
-async fn handle_approval_decision(data: &Value, _bridge: &BridgeState) {
+/// Resolves the pending approval in storage by calling `decide_approval_request`.
+/// Validates that the approval exists and is still pending before updating.
+async fn handle_approval_decision(data: &Value, bridge: &BridgeState) {
     let approval_id = data
         .get("approval_id")
         .and_then(|v| v.as_str())
@@ -98,17 +98,95 @@ async fn handle_approval_decision(data: &Value, _bridge: &BridgeState) {
         .get("decided_by")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
+    let comment = data
+        .get("reason")
+        .and_then(|v| v.as_str());
+    let node_id = data
+        .get("node_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
 
     info!(
         "Bridge: approval decision received — id={}, decision={}, by={}",
         approval_id, decision, decided_by
     );
 
-    // TODO (Task 4): resolve pending approval via storage backend
-    // let storage_guard = bridge.storage.lock().await;
-    // if let Some(storage) = storage_guard.as_ref() {
-    //     storage.resolve_approval(approval_id, decision, decided_by).await;
-    // }
+    // Resolve pending approval via storage backend
+    let storage_guard = bridge.storage.lock().await;
+    let Some(storage) = storage_guard.as_ref() else {
+        warn!("Bridge: no storage backend configured, cannot resolve approval {}", approval_id);
+        return;
+    };
+
+    // Load the approval request and validate it's still pending
+    match storage.get_approval_request(approval_id).await {
+        Ok(Some(approval)) => {
+            if approval.status != "pending" {
+                warn!(
+                    "Bridge: approval {} is no longer pending (status={}), ignoring decision",
+                    approval_id, approval.status
+                );
+                return;
+            }
+
+            // Check if expired
+            if let Some(expires_at) = approval.expires_at {
+                if Utc::now() > expires_at {
+                    warn!(
+                        "Bridge: approval {} has expired, ignoring decision",
+                        approval_id
+                    );
+                    return;
+                }
+            }
+
+            // Map decision string to status
+            let new_status = match decision {
+                "approved" | "approve" => "approved",
+                "rejected" | "reject" | "denied" | "deny" => "rejected",
+                other => {
+                    warn!("Bridge: unknown decision '{}' for approval {}", other, approval_id);
+                    return;
+                }
+            };
+
+            match storage
+                .decide_approval_request(
+                    approval_id,
+                    new_status,
+                    decided_by,
+                    comment,
+                    Utc::now(),
+                    node_id,
+                )
+                .await
+            {
+                Ok(true) => {
+                    info!(
+                        "Bridge: approval {} resolved as '{}' by {}",
+                        approval_id, new_status, decided_by
+                    );
+                    // TODO: Resume execution from checkpoint after approval resolution.
+                    // This requires access to the executor, which will be wired in a future task.
+                }
+                Ok(false) => {
+                    warn!(
+                        "Bridge: failed to resolve approval {} — may have been decided concurrently",
+                        approval_id
+                    );
+                }
+                Err(e) => {
+                    warn!("Bridge: error resolving approval {}: {}", approval_id, e);
+                }
+            }
+        }
+        Ok(None) => {
+            warn!("Bridge: approval {} not found in storage", approval_id);
+        }
+        Err(e) => {
+            warn!("Bridge: error loading approval {}: {}", approval_id, e);
+        }
+    }
 }
 
 /// Handle a workflow trigger request from ZeptoClaw.
