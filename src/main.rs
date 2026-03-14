@@ -2910,7 +2910,24 @@ async fn cmd_doctor(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     .await;
     report!("Credentials", cred_result);
 
-    // 4. Node registry
+    // 4. Bridge
+    let bridge_result: Result<String, String> = {
+        let token_configured = std::env::var("R8R_BRIDGE_TOKEN")
+            .or_else(|_| std::env::var("R8R_API_KEY"))
+            .is_ok();
+        let token_note = if token_configured {
+            "token configured"
+        } else {
+            "no token (set R8R_BRIDGE_TOKEN)"
+        };
+        Ok(format!(
+            "available (connect via WS /api/ws/events when server is running; {})",
+            token_note
+        ))
+    };
+    report!("Bridge", bridge_result);
+
+    // 5. Node registry
     let reg_result = {
         let registry = build_registry();
         // Count registered node types by probing known types
