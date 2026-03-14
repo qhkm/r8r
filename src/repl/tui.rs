@@ -2930,6 +2930,13 @@ pub async fn run_repl_tui(
                     } else if key.code == KeyCode::Esc {
                         if app.quick_actions.is_some() {
                             app.quick_actions = None;
+                            if app.pending_write_confirm.is_some() {
+                                app.pending_write_confirm = None;
+                                app.push_message(
+                                    MessageKind::System,
+                                    "\u{2717} Cancelled. No write operations performed.",
+                                );
+                            }
                         } else {
                             app.should_quit = true;
                         }
@@ -3038,78 +3045,140 @@ pub async fn run_repl_tui(
                         }
                         app.jump_to_latest();
 
-                        // ── Pending write confirmation ─────────────────
-                        if let Some(confirm) = app.pending_write_confirm.take() {
-                            if submitted.trim().eq_ignore_ascii_case("yes")
-                                || submitted.trim() == "y"
-                            {
-                                // User confirmed: arm for this turn, re-submit the original input
-                                app.push_message(
-                                    MessageKind::System,
-                                    "✓ Confirmed. Proceeding with write operations.",
-                                );
-                                // Re-queue the original text as if it was freshly typed
-                                app.input = confirm.original_input.clone();
-                                // The next iteration will pick it up. For now, manually reprocess:
-                                let original = confirm.original_input.clone();
-                                app.turn_outcome = TurnOutcome::default();
-                                app.last_run_id = None;
-                                app.tool_start_times.clear();
-                                app.push_message(MessageKind::User, original.clone());
-                                let _ = storage
-                                    .save_repl_message(
-                                        &app.session_id,
-                                        "user",
-                                        &original,
-                                        None,
-                                        None,
-                                    )
-                                    .await;
-                                let Some(config) = active_llm_config.clone() else {
-                                    app.push_message(MessageKind::Error, "LLM is not configured.");
-                                    continue;
-                                };
-                                app.busy = true;
-                                app.busy_since = Some(Instant::now());
-                                app.assistant_streaming_index = None;
-                                app.quick_actions = None;
-                                app.push_log("Calling LLM (confirmed write)...");
-                                let mut conversation = app.conversation.clone();
-                                let tx_updates = tx.clone();
-                                let storage_cloned = storage.clone();
-                                let executor_cloned = executor.clone();
-                                let client_cloned = llm_client.clone();
-                                let system_prompt_cloned = system_prompt.clone();
-                                let tool_defs_cloned = tool_defs.clone();
-                                let text_cloned = original;
-                                current_turn = Some(tokio::spawn(async move {
-                                    let tx_stream = tx_updates.clone();
-                                    let callback: engine::StreamCallback =
-                                        Box::new(move |update| {
-                                            let _ = tx_stream.send(ReplEvent::Stream(update));
-                                        });
-                                    let result = engine::run_turn(
-                                        &mut conversation,
-                                        &text_cloned,
-                                        &system_prompt_cloned,
-                                        &config,
-                                        &client_cloned,
-                                        &storage_cloned,
-                                        &executor_cloned,
-                                        &tool_defs_cloned,
-                                        &callback,
-                                    )
-                                    .await;
-                                    let _ = tx_updates.send(ReplEvent::TurnComplete {
-                                        conversation,
-                                        result,
-                                    });
-                                }));
-                            } else {
-                                app.push_message(
-                                    MessageKind::System,
-                                    "✗ Cancelled. No write operations performed.",
-                                );
+                        // ── Pending write confirmation (via quick-action bar) ───
+                        if submitted.starts_with("__write_confirm_") {
+                            if let Some(confirm) = app.pending_write_confirm.take() {
+                                match submitted.as_str() {
+                                    "__write_confirm_yes" => {
+                                        app.push_message(
+                                            MessageKind::System,
+                                            "\u{2713} Confirmed. Proceeding with write operations.",
+                                        );
+                                        let original = confirm.original_input.clone();
+                                        app.turn_outcome = TurnOutcome::default();
+                                        app.last_run_id = None;
+                                        app.tool_start_times.clear();
+                                        app.push_message(MessageKind::User, original.clone());
+                                        let _ = storage
+                                            .save_repl_message(
+                                                &app.session_id,
+                                                "user",
+                                                &original,
+                                                None,
+                                                None,
+                                            )
+                                            .await;
+                                        let Some(config) = active_llm_config.clone() else {
+                                            app.push_message(MessageKind::Error, "LLM is not configured.");
+                                            continue;
+                                        };
+                                        app.busy = true;
+                                        app.busy_since = Some(Instant::now());
+                                        app.assistant_streaming_index = None;
+                                        app.quick_actions = None;
+                                        app.push_log("Calling LLM (confirmed write)...");
+                                        let mut conversation = app.conversation.clone();
+                                        let tx_updates = tx.clone();
+                                        let storage_cloned = storage.clone();
+                                        let executor_cloned = executor.clone();
+                                        let client_cloned = llm_client.clone();
+                                        let system_prompt_cloned = system_prompt.clone();
+                                        let tool_defs_cloned = tool_defs.clone();
+                                        let text_cloned = original;
+                                        current_turn = Some(tokio::spawn(async move {
+                                            let tx_stream = tx_updates.clone();
+                                            let callback: engine::StreamCallback =
+                                                Box::new(move |update| {
+                                                    let _ = tx_stream.send(ReplEvent::Stream(update));
+                                                });
+                                            let result = engine::run_turn(
+                                                &mut conversation,
+                                                &text_cloned,
+                                                &system_prompt_cloned,
+                                                &config,
+                                                &client_cloned,
+                                                &storage_cloned,
+                                                &executor_cloned,
+                                                &tool_defs_cloned,
+                                                &callback,
+                                            )
+                                            .await;
+                                            let _ = tx_updates.send(ReplEvent::TurnComplete {
+                                                conversation,
+                                                result,
+                                            });
+                                        }));
+                                    }
+                                    "__write_confirm_arm" => {
+                                        app.writes_armed = true;
+                                        app.push_message(
+                                            MessageKind::System,
+                                            "\u{2713} Writes armed for this session. Proceeding.",
+                                        );
+                                        let original = confirm.original_input.clone();
+                                        app.turn_outcome = TurnOutcome::default();
+                                        app.last_run_id = None;
+                                        app.tool_start_times.clear();
+                                        app.push_message(MessageKind::User, original.clone());
+                                        let _ = storage
+                                            .save_repl_message(
+                                                &app.session_id,
+                                                "user",
+                                                &original,
+                                                None,
+                                                None,
+                                            )
+                                            .await;
+                                        let Some(config) = active_llm_config.clone() else {
+                                            app.push_message(MessageKind::Error, "LLM is not configured.");
+                                            continue;
+                                        };
+                                        app.busy = true;
+                                        app.busy_since = Some(Instant::now());
+                                        app.assistant_streaming_index = None;
+                                        app.quick_actions = None;
+                                        app.push_log("Calling LLM (armed session)...");
+                                        let mut conversation = app.conversation.clone();
+                                        let tx_updates = tx.clone();
+                                        let storage_cloned = storage.clone();
+                                        let executor_cloned = executor.clone();
+                                        let client_cloned = llm_client.clone();
+                                        let system_prompt_cloned = system_prompt.clone();
+                                        let tool_defs_cloned = tool_defs.clone();
+                                        let text_cloned = original;
+                                        current_turn = Some(tokio::spawn(async move {
+                                            let tx_stream = tx_updates.clone();
+                                            let callback: engine::StreamCallback =
+                                                Box::new(move |update| {
+                                                    let _ = tx_stream.send(ReplEvent::Stream(update));
+                                                });
+                                            let result = engine::run_turn(
+                                                &mut conversation,
+                                                &text_cloned,
+                                                &system_prompt_cloned,
+                                                &config,
+                                                &client_cloned,
+                                                &storage_cloned,
+                                                &executor_cloned,
+                                                &tool_defs_cloned,
+                                                &callback,
+                                            )
+                                            .await;
+                                            let _ = tx_updates.send(ReplEvent::TurnComplete {
+                                                conversation,
+                                                result,
+                                            });
+                                        }));
+                                    }
+                                    _ => {
+                                        // __write_confirm_no or unknown
+                                        app.push_message(
+                                            MessageKind::System,
+                                            "\u{2717} Cancelled. No write operations performed.",
+                                        );
+                                        app.quick_actions = None;
+                                    }
+                                }
                             }
                             continue;
                         }
@@ -3147,7 +3216,7 @@ pub async fn run_repl_tui(
 
                                 // ── Write-gate guardrail ──────────────────
                                 // When writes are disarmed, detect write intent and
-                                // show a side-effect summary before executing.
+                                // show a side-effect summary with a pick-to-confirm bar.
                                 if !app.writes_armed && input_has_write_intent(&text) {
                                     app.pending_write_confirm = Some(PendingWriteConfirm {
                                         summary: build_write_summary(&text),
@@ -3156,16 +3225,24 @@ pub async fn run_repl_tui(
                                     app.push_message(
                                         MessageKind::System,
                                         format!(
-                                            "⚠ This request may trigger write operations:\n{}\n\nType 'yes' to confirm, or anything else to cancel.\nOr use /arm to permanently enable writes for this session.",
+                                            "\u{26a0} This request may trigger write operations:\n{}",
                                             build_write_summary(&text)
                                         ),
                                     );
-                                    // Remove the user message we just added — it will be re-added after confirmation
-                                    if let Some(last) = app.messages.last() {
-                                        if matches!(last.kind, MessageKind::System) {
-                                            // message already added above; the user message is second-to-last
-                                        }
-                                    }
+                                    app.quick_actions = Some(QuickActionBar::new(vec![
+                                        QuickAction {
+                                            label: "Yes, proceed".to_string(),
+                                            command: QuickActionCommand::Slash("__write_confirm_yes".to_string()),
+                                        },
+                                        QuickAction {
+                                            label: "Cancel".to_string(),
+                                            command: QuickActionCommand::Slash("__write_confirm_no".to_string()),
+                                        },
+                                        QuickAction {
+                                            label: "Arm session".to_string(),
+                                            command: QuickActionCommand::Slash("__write_confirm_arm".to_string()),
+                                        },
+                                    ]));
                                     continue;
                                 }
 
