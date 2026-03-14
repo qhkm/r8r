@@ -20,10 +20,20 @@ use chrono::{DateTime, Utc};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
+use crate::api::Monitor;
+use crate::engine::{Executor, PauseRegistry};
+use crate::nodes::NodeRegistry;
 use crate::storage::Storage;
 
 use self::buffer::ReplayBuffer;
 use self::events::{BridgeEvent, BridgeEventEnvelope};
+
+#[derive(Clone)]
+struct BridgeExecutionContext {
+    registry: Arc<NodeRegistry>,
+    monitor: Option<Arc<Monitor>>,
+    pause_registry: PauseRegistry,
+}
 
 /// Shared state for the bridge subsystem.
 ///
@@ -45,6 +55,9 @@ pub struct BridgeState {
 
     /// Optional storage backend for approval resolution.
     pub storage: Arc<Mutex<Option<Arc<dyn Storage>>>>,
+
+    /// Executor dependencies for bridge-triggered workflow control.
+    execution_context: Arc<Mutex<Option<BridgeExecutionContext>>>,
 }
 
 impl BridgeState {
@@ -66,7 +79,23 @@ impl BridgeState {
             last_ping: Arc::new(Mutex::new(None)),
             token: resolved_token,
             storage: Arc::new(Mutex::new(None)),
+            execution_context: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Attach runtime dependencies so bridge handlers can execute workflows.
+    pub async fn configure_execution_context(
+        &self,
+        registry: Arc<NodeRegistry>,
+        monitor: Option<Arc<Monitor>>,
+        pause_registry: PauseRegistry,
+    ) {
+        let mut guard = self.execution_context.lock().await;
+        *guard = Some(BridgeExecutionContext {
+            registry,
+            monitor,
+            pause_registry,
+        });
     }
 
     /// Returns `true` if a WebSocket client is currently connected.
@@ -115,5 +144,27 @@ impl BridgeState {
         }
 
         Ok(())
+    }
+
+    /// Clone the configured storage backend, if available.
+    pub async fn storage_backend(&self) -> Option<Arc<dyn Storage>> {
+        self.storage.lock().await.as_ref().cloned()
+    }
+
+    /// Build an executor configured the same way as the API-triggered paths.
+    pub async fn create_executor(self: &Arc<Self>) -> Option<Executor> {
+        let storage = self.storage_backend().await?;
+        let execution_context = self.execution_context.lock().await.clone()?;
+
+        let mut executor = Executor::new((*execution_context.registry).clone(), storage);
+        if let Some(monitor) = execution_context.monitor {
+            executor = executor.with_monitor(monitor);
+        }
+
+        Some(
+            executor
+                .with_pause_registry(execution_context.pause_registry)
+                .with_bridge(self.clone()),
+        )
     }
 }

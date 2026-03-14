@@ -3272,10 +3272,7 @@ fn emit_execution_finished(monitor: Option<&Arc<Monitor>>, execution: &Execution
 }
 
 /// Emit a bridge event when an execution completes or fails.
-fn emit_bridge_execution_finished(
-    bridge: Option<&Arc<BridgeState>>,
-    execution: &Execution,
-) {
+fn emit_bridge_execution_finished(bridge: Option<&Arc<BridgeState>>, execution: &Execution) {
     let Some(bridge) = bridge else { return };
     let duration_ms = execution
         .finished_at
@@ -3328,7 +3325,10 @@ fn emit_bridge_approval_requested(
             .and_then(|v| v.as_str())
             .unwrap_or("Approval required")
             .to_string();
-        let assignee = output_obj.get("assignee").and_then(|v| v.as_str()).map(String::from);
+        let assignee = output_obj
+            .get("assignee")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         let event = BridgeEvent::ApprovalRequested {
             approval_id,
@@ -3336,10 +3336,7 @@ fn emit_bridge_approval_requested(
             execution_id: execution.id.clone(),
             node_id: node_id.to_string(),
             message: title,
-            timeout_secs: output_obj
-                .get("expires_at")
-                .and_then(|_| Some(1800u64))
-                .unwrap_or(0),
+            timeout_secs: output_obj.get("expires_at").map(|_| 1800u64).unwrap_or(0),
             requester: assignee,
             context: last_output.clone(),
         };

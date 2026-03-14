@@ -1446,11 +1446,25 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
 
     // Create monitor for live WebSocket updates
     let monitor = Arc::new(Monitor::new());
+    let pause_registry = r8r::engine::PauseRegistry::new();
+    let bridge = Arc::new(r8r::bridge::BridgeState::new(None));
+    {
+        let mut storage_guard = bridge.storage.lock().await;
+        *storage_guard = Some(storage.clone());
+    }
+    bridge
+        .configure_execution_context(
+            registry.clone(),
+            Some(monitor.clone()),
+            pause_registry.clone(),
+        )
+        .await;
 
     // Create and start the scheduler for cron triggers
     let scheduler = Scheduler::new(storage.clone(), registry.clone())
         .await?
-        .with_monitor(monitor.clone());
+        .with_monitor(monitor.clone())
+        .with_bridge(bridge.clone());
     scheduler.start().await?;
 
     let job_count = scheduler.job_count().await;
@@ -1486,18 +1500,23 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     // Create delayed event processor (polls SQLite, re-publishes via backend)
     let mut delayed_processor =
         DelayedEventProcessor::new(storage.clone(), registry.clone(), event_backend.clone())
-            .with_monitor(monitor.clone());
+            .with_monitor(monitor.clone())
+            .with_bridge(bridge.clone());
     delayed_processor.start().await?;
 
     // Create and start the event subscriber
     let mut event_subscriber =
         EventSubscriber::new(storage.clone(), registry.clone(), event_backend.clone())
             .with_monitor(monitor.clone())
-            .with_delayed_processor(Arc::new(DelayedEventProcessor::new(
-                storage.clone(),
-                registry.clone(),
-                event_backend.clone(),
-            )));
+            .with_bridge(bridge.clone())
+            .with_delayed_processor(Arc::new(
+                DelayedEventProcessor::new(
+                    storage.clone(),
+                    registry.clone(),
+                    event_backend.clone(),
+                )
+                .with_bridge(bridge.clone()),
+            ));
     let event_status = match event_subscriber.start().await {
         Ok(()) => {
             if event_subscriber.is_running() {
@@ -1512,20 +1531,12 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         }
     };
 
-    // Create bridge state for ZeptoClaw communication
-    let bridge = Arc::new(r8r::bridge::BridgeState::new(None));
-    // Give bridge access to storage for approval resolution
-    {
-        let mut storage_guard = bridge.storage.lock().await;
-        *storage_guard = Some(storage.clone());
-    }
-
     // Start approval timeout checker (processes expired approval requests)
     let timeout_executor = {
         let mut exec = r8r::engine::Executor::new((*registry).clone(), storage.clone());
         exec = exec.with_monitor(monitor.clone());
         exec = exec.with_bridge(bridge.clone());
-        exec = exec.with_pause_registry(r8r::engine::PauseRegistry::new());
+        exec = exec.with_pause_registry(pause_registry.clone());
         Arc::new(exec)
     };
     let mut approval_timeout_checker =
@@ -1547,8 +1558,9 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         registry: registry.clone(),
         monitor: Some(monitor.clone()),
         shutdown: shutdown.clone(),
-        pause_registry: r8r::engine::PauseRegistry::new(),
+        pause_registry: pause_registry.clone(),
         event_backend: Some(event_backend.clone()),
+        bridge: Some(bridge.clone()),
     };
 
     let monitored_state = MonitoredAppState {

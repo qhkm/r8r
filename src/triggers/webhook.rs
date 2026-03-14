@@ -22,7 +22,6 @@ use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use crate::api::AppState;
-use crate::engine::Executor;
 use crate::nodes::NodeRegistry;
 use crate::storage::Storage;
 use crate::workflow::{parse_workflow, DebounceConfig, HeaderFilter, Trigger};
@@ -443,10 +442,7 @@ async fn execute_webhook_workflow(
     });
 
     // Execute workflow
-    let mut executor = Executor::new((*state.registry).clone(), state.storage.clone());
-    if let Some(monitor) = state.monitor.clone() {
-        executor = executor.with_monitor(monitor);
-    }
+    let executor = state.create_executor();
 
     match executor
         .execute(&workflow, workflow_id, "webhook", input)

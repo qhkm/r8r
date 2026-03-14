@@ -73,18 +73,15 @@ async fn test_bridge_connection_and_health_ping() {
         .expect("Failed to send health ping");
 
     // Read the response — should be a HealthStatus event
-    let response = tokio::time::timeout(
-        tokio::time::Duration::from_secs(5),
-        ws_stream.next(),
-    )
-    .await
-    .expect("Timed out waiting for health status response")
-    .expect("Stream ended unexpectedly")
-    .expect("WebSocket error reading response");
+    let response = tokio::time::timeout(tokio::time::Duration::from_secs(5), ws_stream.next())
+        .await
+        .expect("Timed out waiting for health status response")
+        .expect("Stream ended unexpectedly")
+        .expect("WebSocket error reading response");
 
     if let tungstenite::Message::Text(text) = response {
-        let parsed: serde_json::Value = serde_json::from_str(&text)
-            .expect("Failed to parse health status response as JSON");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&text).expect("Failed to parse health status response as JSON");
 
         assert_eq!(
             parsed["type"], "r8r.health.status",
@@ -104,10 +101,7 @@ async fn test_bridge_connection_and_health_ping() {
     }
 
     // Clean up
-    ws_stream
-        .close(None)
-        .await
-        .ok();
+    ws_stream.close(None).await.ok();
 }
 
 #[tokio::test]

@@ -116,14 +116,16 @@ fn validate_bridge_token(expected: Option<&str>, provided: Option<&str>) -> bool
 /// 7. On disconnect, clear `client_tx`.
 async fn handle_bridge_socket(socket: WebSocket, bridge: Arc<BridgeState>) {
     // Step 1: Displace any existing client
-    {
+    let old_tx = {
         let mut tx_guard = bridge.client_tx.lock().await;
-        if let Some(old_tx) = tx_guard.take() {
-            info!("Bridge: displacing existing client (close 4002)");
-            let _ = old_tx.send(CLOSE_SENTINEL.to_string()).await;
-            // Brief pause to let the old sender task process the close
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-        }
+        tx_guard.take()
+    };
+
+    if let Some(old_tx) = old_tx {
+        info!("Bridge: displacing existing client (close 4002)");
+        let _ = old_tx.send(CLOSE_SENTINEL.to_string()).await;
+        // Brief pause to let the old sender task process the close
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
 
     // Step 2: Create new channel
@@ -150,11 +152,9 @@ async fn handle_bridge_socket(socket: WebSocket, bridge: Arc<BridgeState>) {
                     debug!("Bridge: failed to send ping: {}", e);
                     break;
                 }
-            } else {
-                if let Err(e) = ws_sender.send(Message::Text(msg.into())).await {
-                    error!("Bridge: failed to send message: {}", e);
-                    break;
-                }
+            } else if let Err(e) = ws_sender.send(Message::Text(msg.into())).await {
+                error!("Bridge: failed to send message: {}", e);
+                break;
             }
         }
     });
@@ -212,6 +212,7 @@ async fn handle_bridge_socket(socket: WebSocket, bridge: Arc<BridgeState>) {
                     handle_incoming_event(
                         &envelope.event_type,
                         &envelope.data,
+                        envelope.correlation_id.as_deref(),
                         &bridge,
                         &client_tx,
                     )
@@ -252,7 +253,12 @@ async fn handle_bridge_socket(socket: WebSocket, bridge: Arc<BridgeState>) {
     // Clear client_tx
     {
         let mut tx_guard = bridge.client_tx.lock().await;
-        *tx_guard = None;
+        if tx_guard
+            .as_ref()
+            .is_some_and(|current| current.same_channel(&client_tx))
+        {
+            *tx_guard = None;
+        }
     }
 }
 

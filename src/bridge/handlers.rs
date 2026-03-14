@@ -13,7 +13,11 @@
 use chrono::Utc;
 use serde_json::Value;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
+
+use crate::engine::ExecutionMetadata;
+use crate::mcp::tools::inject_approval_decision_into_checkpoint;
+use crate::workflow::parse_workflow;
 
 use super::events::{BridgeEvent, BridgeEventEnvelope};
 use super::BridgeState;
@@ -28,7 +32,8 @@ use super::BridgeState;
 pub async fn handle_incoming_event(
     event_type: &str,
     data: &Value,
-    bridge: &BridgeState,
+    correlation_id: Option<&str>,
+    bridge: &std::sync::Arc<BridgeState>,
     client_tx: &mpsc::Sender<String>,
 ) {
     match event_type {
@@ -39,7 +44,7 @@ pub async fn handle_incoming_event(
             handle_approval_decision(data, bridge).await;
         }
         "zeptoclaw.workflow.trigger" => {
-            handle_workflow_trigger(data).await;
+            handle_workflow_trigger(data, correlation_id, bridge).await;
         }
         unknown => {
             warn!("Bridge: unknown incoming event type: {}", unknown);
@@ -85,7 +90,7 @@ async fn handle_health_ping(bridge: &BridgeState, client_tx: &mpsc::Sender<Strin
 ///
 /// Resolves the pending approval in storage by calling `decide_approval_request`.
 /// Validates that the approval exists and is still pending before updating.
-async fn handle_approval_decision(data: &Value, bridge: &BridgeState) {
+async fn handle_approval_decision(data: &Value, bridge: &std::sync::Arc<BridgeState>) {
     let approval_id = data
         .get("approval_id")
         .and_then(|v| v.as_str())
@@ -98,27 +103,20 @@ async fn handle_approval_decision(data: &Value, bridge: &BridgeState) {
         .get("decided_by")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
-    let comment = data
-        .get("reason")
-        .and_then(|v| v.as_str());
-    let node_id = data
-        .get("node_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-
+    let comment = data.get("reason").and_then(|v| v.as_str());
     info!(
         "Bridge: approval decision received — id={}, decision={}, by={}",
         approval_id, decision, decided_by
     );
 
-    // Resolve pending approval via storage backend
-    let storage_guard = bridge.storage.lock().await;
-    let Some(storage) = storage_guard.as_ref() else {
-        warn!("Bridge: no storage backend configured, cannot resolve approval {}", approval_id);
+    let Some(storage) = bridge.storage_backend().await else {
+        warn!(
+            "Bridge: no storage backend configured, cannot resolve approval {}",
+            approval_id
+        );
         return;
     };
 
-    // Load the approval request and validate it's still pending
     match storage.get_approval_request(approval_id).await {
         Ok(Some(approval)) => {
             if approval.status != "pending" {
@@ -140,15 +138,73 @@ async fn handle_approval_decision(data: &Value, bridge: &BridgeState) {
                 }
             }
 
-            // Map decision string to status
-            let new_status = match decision {
-                "approved" | "approve" => "approved",
-                "rejected" | "reject" | "denied" | "deny" => "rejected",
+            let normalized_decision = match decision {
+                "approved" | "approve" => "approve",
+                "rejected" | "reject" | "denied" | "deny" => "reject",
                 other => {
-                    warn!("Bridge: unknown decision '{}' for approval {}", other, approval_id);
+                    warn!(
+                        "Bridge: unknown decision '{}' for approval {}",
+                        other, approval_id
+                    );
                     return;
                 }
             };
+            let new_status = if normalized_decision == "approve" {
+                "approved"
+            } else {
+                "rejected"
+            };
+
+            let mut checkpoint = match storage.get_latest_checkpoint(&approval.execution_id).await {
+                Ok(Some(checkpoint)) => checkpoint,
+                Ok(None) => {
+                    warn!(
+                        "Bridge: no checkpoint found for execution {}, cannot resume approval {}",
+                        approval.execution_id, approval_id
+                    );
+                    return;
+                }
+                Err(e) => {
+                    warn!(
+                        "Bridge: error loading checkpoint for execution {}: {}",
+                        approval.execution_id, e
+                    );
+                    return;
+                }
+            };
+
+            let mut outputs = checkpoint
+                .node_outputs
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            let resolved_node = inject_approval_decision_into_checkpoint(
+                &mut outputs,
+                &approval.id,
+                if approval.node_id.is_empty() {
+                    None
+                } else {
+                    Some(approval.node_id.as_str())
+                },
+                normalized_decision,
+                comment,
+            );
+            let Some(node_id) = resolved_node else {
+                warn!(
+                    "Bridge: approval {} not found in latest checkpoint outputs",
+                    approval.id
+                );
+                return;
+            };
+
+            checkpoint.node_outputs = Value::Object(outputs);
+            if let Err(e) = storage.save_checkpoint(&checkpoint).await {
+                warn!(
+                    "Bridge: failed to persist checkpoint for approval {}: {}",
+                    approval_id, e
+                );
+                return;
+            }
 
             match storage
                 .decide_approval_request(
@@ -157,7 +213,7 @@ async fn handle_approval_decision(data: &Value, bridge: &BridgeState) {
                     decided_by,
                     comment,
                     Utc::now(),
-                    node_id,
+                    &node_id,
                 )
                 .await
             {
@@ -166,8 +222,24 @@ async fn handle_approval_decision(data: &Value, bridge: &BridgeState) {
                         "Bridge: approval {} resolved as '{}' by {}",
                         approval_id, new_status, decided_by
                     );
-                    // TODO: Resume execution from checkpoint after approval resolution.
-                    // This requires access to the executor, which will be wired in a future task.
+                    let bridge = bridge.clone();
+                    let execution_id = approval.execution_id.clone();
+                    tokio::spawn(async move {
+                        let Some(executor) = bridge.create_executor().await else {
+                            warn!(
+                                "Bridge: executor context not configured, cannot resume execution {}",
+                                execution_id
+                            );
+                            return;
+                        };
+
+                        if let Err(e) = executor.resume_from_checkpoint(&execution_id).await {
+                            error!(
+                                "Bridge: approval resolved but failed to resume execution {}: {}",
+                                execution_id, e
+                            );
+                        }
+                    });
                 }
                 Ok(false) => {
                     warn!(
@@ -191,9 +263,12 @@ async fn handle_approval_decision(data: &Value, bridge: &BridgeState) {
 
 /// Handle a workflow trigger request from ZeptoClaw.
 ///
-/// Currently logs the trigger. Will be wired to the workflow executor
-/// in Task 4 to actually start the workflow.
-async fn handle_workflow_trigger(data: &Value) {
+/// Loads the referenced workflow and executes it asynchronously.
+async fn handle_workflow_trigger(
+    data: &Value,
+    correlation_id: Option<&str>,
+    bridge: &std::sync::Arc<BridgeState>,
+) {
     let workflow = data
         .get("workflow")
         .and_then(|v| v.as_str())
@@ -211,7 +286,77 @@ async fn handle_workflow_trigger(data: &Value) {
         "Bridge: workflow trigger received — workflow={}, by={}, channel={}",
         workflow, triggered_by, channel
     );
+    let workflow_name = workflow.to_string();
+    let triggered_by = triggered_by.to_string();
+    let channel = channel.to_string();
+    let params = data
+        .get("params")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+    let correlation_id = correlation_id.map(str::to_string);
+    let bridge = bridge.clone();
 
-    // TODO (Task 4): wire to executor to start the workflow
-    // executor.trigger_workflow(workflow, data["params"].clone(), triggered_by).await;
+    tokio::spawn(async move {
+        let Some(storage) = bridge.storage_backend().await else {
+            warn!(
+                "Bridge: no storage backend configured, cannot trigger workflow {}",
+                workflow_name
+            );
+            return;
+        };
+        let Some(executor) = bridge.create_executor().await else {
+            warn!(
+                "Bridge: executor context not configured, cannot trigger workflow {}",
+                workflow_name
+            );
+            return;
+        };
+
+        let stored = match storage.get_workflow(&workflow_name).await {
+            Ok(Some(stored)) => stored,
+            Ok(None) => {
+                warn!("Bridge: workflow '{}' not found", workflow_name);
+                return;
+            }
+            Err(e) => {
+                warn!("Bridge: failed to load workflow '{}': {}", workflow_name, e);
+                return;
+            }
+        };
+
+        let workflow = match parse_workflow(&stored.definition) {
+            Ok(workflow) => workflow,
+            Err(e) => {
+                warn!(
+                    "Bridge: failed to parse workflow '{}': {}",
+                    workflow_name, e
+                );
+                return;
+            }
+        };
+
+        let metadata = ExecutionMetadata {
+            correlation_id,
+            idempotency_key: None,
+            origin: Some(format!("bridge:{}", channel)),
+        };
+
+        match executor
+            .execute_with_metadata(&workflow, &stored.id, "bridge", params, metadata)
+            .await
+        {
+            Ok(execution) => {
+                info!(
+                    "Bridge: triggered workflow '{}' as execution {} by {}",
+                    workflow_name, execution.id, triggered_by
+                );
+            }
+            Err(e) => {
+                error!(
+                    "Bridge: failed to trigger workflow '{}' by {}: {}",
+                    workflow_name, triggered_by, e
+                );
+            }
+        }
+    });
 }

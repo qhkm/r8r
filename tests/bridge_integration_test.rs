@@ -13,10 +13,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
 use r8r::bridge::events::{BridgeEvent, BridgeEventEnvelope};
 use r8r::bridge::websocket::create_bridge_routes;
 use r8r::bridge::BridgeState;
+use r8r::engine::PauseRegistry;
+use r8r::nodes::NodeRegistry;
+use r8r::storage::{Execution, Storage, StoredWorkflow};
+use r8r::workflow::parse_workflow;
 use serde_json::json;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite;
@@ -36,12 +41,102 @@ async fn start_test_server_with_bridge(bridge: Arc<BridgeState>) -> String {
     addr.to_string()
 }
 
+async fn build_runtime_bridge() -> (Arc<BridgeState>, Arc<dyn Storage>) {
+    let storage: Arc<dyn Storage> =
+        Arc::new(r8r::storage::SqliteStorage::open_in_memory().unwrap());
+    let registry = Arc::new(NodeRegistry::new());
+    let bridge = Arc::new(BridgeState::new(Some(TEST_TOKEN.to_string())));
+
+    {
+        let mut storage_guard = bridge.storage.lock().await;
+        *storage_guard = Some(storage.clone());
+    }
+
+    bridge
+        .configure_execution_context(registry, None, PauseRegistry::new())
+        .await;
+
+    (bridge, storage)
+}
+
+async fn save_workflow(storage: &Arc<dyn Storage>, id: &str, name: &str, definition: &str) {
+    let now = Utc::now();
+    storage
+        .save_workflow(&StoredWorkflow {
+            id: id.to_string(),
+            name: name.to_string(),
+            definition: definition.to_string(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+}
+
+async fn wait_for_execution_status_by_workflow(
+    storage: &Arc<dyn Storage>,
+    workflow_name: &str,
+    expected_status: &str,
+) -> Execution {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+
+    loop {
+        let executions = storage.list_executions(workflow_name, 10).await.unwrap();
+        let last_statuses = executions
+            .iter()
+            .map(|execution| execution.status.to_string())
+            .collect::<Vec<_>>();
+        if let Some(execution) = executions
+            .into_iter()
+            .find(|execution| execution.status.to_string() == expected_status)
+        {
+            return execution;
+        }
+
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for workflow {} to reach status {} (seen statuses: {:?})",
+            workflow_name,
+            expected_status,
+            last_statuses
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn wait_for_approval_status(
+    storage: &Arc<dyn Storage>,
+    approval_id: &str,
+    expected_status: &str,
+) -> r8r::storage::ApprovalRequest {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+
+    loop {
+        let approval = storage
+            .get_approval_request(approval_id)
+            .await
+            .unwrap()
+            .unwrap_or_else(|| panic!("approval {} disappeared", approval_id));
+        if approval.status == expected_status {
+            return approval;
+        }
+
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for approval {} to reach status {} (last status: {})",
+            approval_id,
+            expected_status,
+            approval.status
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// Connect to the bridge WebSocket with a valid bearer token.
 async fn connect_ws(
     addr: &str,
-) -> tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-> {
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
     let url = format!("ws://{}/api/ws/events", addr);
     let request = tungstenite::http::Request::builder()
         .uri(&url)
@@ -85,7 +180,24 @@ async fn read_next_text(
 /// -> client sends decision -> verify ack removed event from buffer.
 #[tokio::test]
 async fn test_full_approval_roundtrip() {
-    let bridge = Arc::new(BridgeState::new(Some(TEST_TOKEN.to_string())));
+    let (bridge, storage) = build_runtime_bridge().await;
+    let definition = r#"
+name: bridge-approval
+nodes:
+  - id: gate
+    type: approval
+    config:
+      title: Approve bridge action
+  - id: finalize
+    type: set
+    depends_on: [gate]
+    config:
+      fields:
+        - name: approved_via
+          value: bridge
+"#;
+    save_workflow(&storage, "wf-approval", "bridge-approval", definition).await;
+
     let addr = start_test_server_with_bridge(bridge.clone()).await;
 
     // Connect as mock ZeptoClaw client
@@ -94,25 +206,20 @@ async fn test_full_approval_roundtrip() {
     // Small delay to let the server register the client
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Push an approval event through bridge.send_event()
-    bridge
-        .send_event(
-            BridgeEvent::ApprovalRequested {
-                approval_id: "appr_test_001".to_string(),
-                workflow: "test-workflow".to_string(),
-                execution_id: "exec_test_001".to_string(),
-                node_id: "approve-step".to_string(),
-                message: "Approve this test?".to_string(),
-                timeout_secs: 300,
-                requester: Some("test-user".to_string()),
-                context: json!({"env": "test"}),
-            },
-            Some("corr_test_001".to_string()),
+    let workflow = parse_workflow(definition).unwrap();
+    let executor = bridge.create_executor().await.unwrap();
+    let execution = executor
+        .execute(
+            &workflow,
+            "wf-approval",
+            "manual",
+            json!({"source": "bridge-test"}),
         )
         .await
-        .expect("Failed to send approval event");
+        .expect("Failed to execute approval workflow");
+    assert_eq!(execution.status.to_string(), "waiting_for_approval");
 
-    // Client should receive the approval event
+    // Client should receive the emitted approval request event.
     let msg = read_next_text(&mut ws).await;
     let envelope: BridgeEventEnvelope =
         serde_json::from_str(&msg).expect("Failed to parse received event");
@@ -122,9 +229,9 @@ async fn test_full_approval_roundtrip() {
         "Expected approval.requested event type"
     );
     assert_eq!(
-        envelope.correlation_id,
-        Some("corr_test_001".to_string()),
-        "Correlation ID should be preserved"
+        envelope.correlation_id.as_deref(),
+        Some(execution.id.as_str()),
+        "Correlation ID should use the execution ID"
     );
     assert!(
         envelope.id.starts_with("evt_"),
@@ -132,10 +239,9 @@ async fn test_full_approval_roundtrip() {
     );
 
     // Verify the payload data
-    assert_eq!(envelope.data["approval_id"], "appr_test_001");
-    assert_eq!(envelope.data["workflow"], "test-workflow");
-    assert_eq!(envelope.data["message"], "Approve this test?");
-    assert_eq!(envelope.data["timeout_secs"], 300);
+    let approval_id = envelope.data["approval_id"].as_str().unwrap().to_string();
+    assert_eq!(envelope.data["workflow"], "bridge-approval");
+    assert_eq!(envelope.data["message"], "Approve bridge action");
 
     // Buffer should have 1 event (not yet acked)
     {
@@ -169,9 +275,9 @@ async fn test_full_approval_roundtrip() {
     // Now send an approval decision from the client (ZeptoClaw -> r8r)
     let decision_envelope = BridgeEventEnvelope::new(
         BridgeEvent::ApprovalDecision {
-            approval_id: "appr_test_001".to_string(),
-            execution_id: "exec_test_001".to_string(),
-            node_id: "approve-step".to_string(),
+            approval_id: approval_id.clone(),
+            execution_id: execution.id.clone(),
+            node_id: "gate".to_string(),
             decision: "approved".to_string(),
             reason: "Looks good".to_string(),
             decided_by: "reviewer@example.com".to_string(),
@@ -185,16 +291,25 @@ async fn test_full_approval_roundtrip() {
     .await
     .expect("Failed to send approval decision");
 
-    // Small delay for the server to process the decision
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    let approval = wait_for_approval_status(&storage, &approval_id, "approved").await;
+    assert_eq!(approval.decided_by.as_deref(), Some("reviewer@example.com"));
 
-    // The decision handler logs and attempts storage resolution.
-    // Without storage configured, the handler logs a warning and returns.
-    // Verify the bridge is still operational by confirming client is connected.
-    assert!(
-        bridge.is_connected().await,
-        "Bridge client should still be connected after decision"
-    );
+    let completed =
+        wait_for_execution_status_by_workflow(&storage, "bridge-approval", "completed").await;
+    assert_ne!(completed.id, execution.id);
+    assert_eq!(completed.trigger_type, "resume");
+    assert_eq!(completed.output.unwrap()["approved_via"], "bridge");
+
+    let original = storage.get_execution(&execution.id).await.unwrap().unwrap();
+    assert_eq!(original.status.to_string(), "waiting_for_approval");
+
+    let checkpoint = storage
+        .get_latest_checkpoint(&execution.id)
+        .await
+        .unwrap()
+        .expect("checkpoint should exist");
+    assert_eq!(checkpoint.node_outputs["gate"]["status"], "approved");
+    assert_eq!(checkpoint.node_outputs["gate"]["decision"], "approve");
 
     // Clean up
     ws.close(None).await.ok();
@@ -239,7 +354,10 @@ async fn test_replay_on_reconnect() {
         .unwrap();
 
     // Verify buffer has 2 events and no client is connected
-    assert!(!bridge.is_connected().await, "No client should be connected yet");
+    assert!(
+        !bridge.is_connected().await,
+        "No client should be connected yet"
+    );
     {
         let buf = bridge.buffer.lock().await;
         assert_eq!(buf.len(), 2, "Buffer should have 2 events before connect");
@@ -410,4 +528,86 @@ async fn test_multiple_events_ack_drains_buffer() {
 
     // Clean up
     ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_workflow_trigger_executes_workflow() {
+    let (bridge, storage) = build_runtime_bridge().await;
+    let definition = r#"
+name: bridge-trigger
+nodes:
+  - id: finish
+    type: set
+    config:
+      fields:
+        - name: triggered_by_bridge
+          value: true
+"#;
+    save_workflow(&storage, "wf-trigger", "bridge-trigger", definition).await;
+
+    let addr = start_test_server_with_bridge(bridge.clone()).await;
+    let mut ws = connect_ws(&addr).await;
+
+    let trigger = BridgeEventEnvelope::new(
+        BridgeEvent::WorkflowTrigger {
+            workflow: "bridge-trigger".to_string(),
+            params: json!({"payload": "ok"}),
+            triggered_by: "zeptoclaw".to_string(),
+            channel: "bridge-test".to_string(),
+        },
+        Some("corr_bridge_trigger".to_string()),
+    );
+    ws.send(tungstenite::Message::Text(
+        serde_json::to_string(&trigger).unwrap(),
+    ))
+    .await
+    .expect("failed to send workflow trigger");
+
+    let execution =
+        wait_for_execution_status_by_workflow(&storage, "bridge-trigger", "completed").await;
+    assert_eq!(execution.output.unwrap()["triggered_by_bridge"], true);
+
+    ws.close(None).await.ok();
+}
+
+#[tokio::test]
+async fn test_new_connection_does_not_clear_current_client() {
+    let bridge = Arc::new(BridgeState::new(Some(TEST_TOKEN.to_string())));
+    let addr = start_test_server_with_bridge(bridge.clone()).await;
+
+    let mut ws1 = connect_ws(&addr).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut ws2 = connect_ws(&addr).await;
+
+    match tokio::time::timeout(Duration::from_secs(2), ws1.next()).await {
+        Ok(Some(Ok(tungstenite::Message::Close(_)))) | Ok(None) => {}
+        other => panic!("expected first client to be displaced, got {:?}", other),
+    }
+
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(
+        bridge.is_connected().await,
+        "second client should remain registered after displacing the first"
+    );
+
+    bridge
+        .send_event(
+            BridgeEvent::ExecutionCompleted {
+                workflow: "wf-race".to_string(),
+                execution_id: "exec-race-001".to_string(),
+                status: "completed".to_string(),
+                duration_ms: 42,
+                node_count: 1,
+            },
+            Some("corr_race".to_string()),
+        )
+        .await
+        .unwrap();
+
+    let msg = read_next_text(&mut ws2).await;
+    let envelope: BridgeEventEnvelope = serde_json::from_str(&msg).unwrap();
+    assert_eq!(envelope.event_type, "r8r.execution.completed");
+
+    ws2.close(None).await.ok();
 }
