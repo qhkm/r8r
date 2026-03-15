@@ -33,6 +33,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{error, warn};
 
+use crate::bridge::BridgeState;
 use crate::engine::executor::emit_audit;
 use crate::engine::{ExecutionMetadata, Executor, PauseRegistry};
 use crate::error::{ApiErrorCode, ApiErrorEnvelope, Error};
@@ -196,6 +197,7 @@ pub struct AppState {
     pub shutdown: Arc<ShutdownCoordinator>,
     pub pause_registry: PauseRegistry,
     pub event_backend: Option<Arc<dyn EventBackend>>,
+    pub bridge: Option<Arc<BridgeState>>,
 }
 
 impl AppState {
@@ -206,6 +208,9 @@ impl AppState {
             executor = executor.with_monitor(monitor);
         }
         executor = executor.with_pause_registry(self.pause_registry.clone());
+        if let Some(bridge) = self.bridge.clone() {
+            executor = executor.with_bridge(bridge);
+        }
         executor
     }
 }
@@ -1420,6 +1425,7 @@ mod tests {
             shutdown: Arc::new(ShutdownCoordinator::new()),
             pause_registry: PauseRegistry::new(),
             event_backend: None,
+            bridge: None,
         }
     }
 

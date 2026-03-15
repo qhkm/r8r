@@ -19,6 +19,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::api::Monitor;
+use crate::bridge::BridgeState;
 use crate::engine::Executor;
 use crate::nodes::NodeRegistry;
 use crate::storage::Storage;
@@ -121,6 +122,7 @@ pub struct EventSubscriber {
     registry: Arc<NodeRegistry>,
     backend: Arc<dyn EventBackend>,
     monitor: Option<Arc<Monitor>>,
+    bridge: Option<Arc<BridgeState>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     handle: Option<JoinHandle<()>>,
     fan_out_configs: Vec<EventFanOut>,
@@ -139,6 +141,7 @@ impl EventSubscriber {
             registry,
             backend,
             monitor: None,
+            bridge: None,
             shutdown_tx: None,
             handle: None,
             fan_out_configs: Vec::new(),
@@ -149,6 +152,12 @@ impl EventSubscriber {
     /// Attach a live execution monitor for event-triggered runs.
     pub fn with_monitor(mut self, monitor: Arc<Monitor>) -> Self {
         self.monitor = Some(monitor);
+        self
+    }
+
+    /// Attach the bridge for event-triggered runs.
+    pub fn with_bridge(mut self, bridge: Arc<BridgeState>) -> Self {
+        self.bridge = Some(bridge);
         self
     }
 
@@ -238,6 +247,7 @@ impl EventSubscriber {
         let storage = self.storage.clone();
         let registry = self.registry.clone();
         let monitor = self.monitor.clone();
+        let bridge = self.bridge.clone();
         let delayed_processor = self.delayed_processor.clone();
 
         // Spawn message processing task
@@ -302,6 +312,7 @@ impl EventSubscriber {
                                                 &target,
                                                 &event,
                                                 monitor.clone(),
+                                                bridge.clone(),
                                             )
                                             .await
                                             {
@@ -322,6 +333,7 @@ impl EventSubscriber {
                                         &sub.workflow_name,
                                         &event,
                                         monitor.clone(),
+                                        bridge.clone(),
                                     )
                                     .await
                                     {
@@ -341,6 +353,7 @@ impl EventSubscriber {
                                             fan_out,
                                             &event,
                                             monitor.clone(),
+                                            bridge.clone(),
                                         )
                                         .await;
                                     }
@@ -457,6 +470,7 @@ async fn handle_fan_out(
     fan_out: &EventFanOut,
     event: &EventMessage,
     monitor: Option<Arc<Monitor>>,
+    bridge: Option<Arc<BridgeState>>,
 ) {
     info!(
         "Fanning out event '{}' to {} workflow(s) (parallel={})",
@@ -474,6 +488,7 @@ async fn handle_fan_out(
             let event = event.clone();
             let workflow_name = workflow_name.clone();
             let monitor = monitor.clone();
+            let bridge = bridge.clone();
 
             let handle = tokio::spawn(async move {
                 match storage.get_workflow(&workflow_name).await {
@@ -485,6 +500,7 @@ async fn handle_fan_out(
                             &workflow_name,
                             &event,
                             monitor,
+                            bridge,
                         )
                         .await
                         {
@@ -517,6 +533,7 @@ async fn handle_fan_out(
                         workflow_name,
                         event,
                         monitor.clone(),
+                        bridge.clone(),
                     )
                     .await
                     {
@@ -641,6 +658,7 @@ async fn trigger_workflow(
     workflow_name: &str,
     event: &EventMessage,
     monitor: Option<Arc<Monitor>>,
+    bridge: Option<Arc<BridgeState>>,
 ) -> Result<(), EventError> {
     let stored = storage
         .get_workflow(workflow_name)
@@ -661,6 +679,9 @@ async fn trigger_workflow(
     let mut executor = Executor::new((**registry).clone(), storage.clone());
     if let Some(monitor) = monitor {
         executor = executor.with_monitor(monitor);
+    }
+    if let Some(bridge) = bridge {
+        executor = executor.with_bridge(bridge);
     }
     let trigger_type = format!("event:{}", event.event);
 

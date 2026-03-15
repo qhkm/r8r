@@ -21,6 +21,7 @@ use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
 use crate::api::Monitor;
+use crate::bridge::BridgeState;
 use crate::engine::Executor;
 use crate::nodes::NodeRegistry;
 use crate::storage::Storage;
@@ -134,6 +135,7 @@ pub struct DelayedEventProcessor {
     registry: Arc<NodeRegistry>,
     backend: Arc<dyn EventBackend>,
     monitor: Option<Arc<Monitor>>,
+    bridge: Option<Arc<BridgeState>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     handle: Option<JoinHandle<()>>,
     poll_interval_ms: u64,
@@ -151,6 +153,7 @@ impl DelayedEventProcessor {
             registry,
             backend,
             monitor: None,
+            bridge: None,
             shutdown_tx: None,
             handle: None,
             poll_interval_ms: POLL_INTERVAL_MS,
@@ -169,6 +172,12 @@ impl DelayedEventProcessor {
         self
     }
 
+    /// Attach the bridge for delayed-event-triggered runs.
+    pub fn with_bridge(mut self, bridge: Arc<BridgeState>) -> Self {
+        self.bridge = Some(bridge);
+        self
+    }
+
     /// Start the background polling task.
     pub async fn start(&mut self) -> Result<(), EventError> {
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
@@ -178,6 +187,7 @@ impl DelayedEventProcessor {
         let registry = self.registry.clone();
         let backend = self.backend.clone();
         let monitor = self.monitor.clone();
+        let bridge = self.bridge.clone();
         let poll_interval = self.poll_interval_ms;
 
         let handle = tokio::spawn(async move {
@@ -195,6 +205,7 @@ impl DelayedEventProcessor {
                             &registry,
                             &backend,
                             monitor.clone(),
+                            bridge.clone(),
                         ).await {
                             error!("Error processing delayed events: {}", e);
                         }
@@ -239,6 +250,7 @@ async fn process_due_events(
     registry: &Arc<NodeRegistry>,
     backend: &Arc<dyn EventBackend>,
     monitor: Option<Arc<Monitor>>,
+    bridge: Option<Arc<BridgeState>>,
 ) -> Result<usize, EventError> {
     let due_events = storage
         .get_due_delayed_events()
@@ -272,6 +284,7 @@ async fn process_due_events(
             registry,
             backend,
             monitor.clone(),
+            bridge.clone(),
         )
         .await
         {
@@ -325,6 +338,7 @@ async fn process_single_event(
     registry: &Arc<NodeRegistry>,
     backend: &Arc<dyn EventBackend>,
     monitor: Option<Arc<Monitor>>,
+    bridge: Option<Arc<BridgeState>>,
 ) -> Result<(), EventError> {
     info!(
         "Processing delayed event '{}' (id: {}, waited {}s)",
@@ -357,6 +371,9 @@ async fn process_single_event(
         let mut executor = Executor::new((**registry).clone(), storage.clone());
         if let Some(m) = monitor {
             executor = executor.with_monitor(m);
+        }
+        if let Some(bridge) = bridge {
+            executor = executor.with_bridge(bridge);
         }
 
         let trigger_type = format!("delayed_event:{}", event.event);

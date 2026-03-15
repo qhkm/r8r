@@ -87,9 +87,7 @@ impl ReplayBuffer {
         while self
             .events
             .front()
-            .map_or(false, |(_, inserted_at)| {
-                now.duration_since(*inserted_at) >= cutoff
-            })
+            .is_some_and(|(_, inserted_at)| now.duration_since(*inserted_at) >= cutoff)
         {
             self.events.pop_front();
         }

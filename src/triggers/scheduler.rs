@@ -18,6 +18,7 @@ use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::{error, info, warn};
 
 use crate::api::Monitor;
+use crate::bridge::BridgeState;
 use crate::engine::Executor;
 use crate::nodes::NodeRegistry;
 use crate::storage::Storage;
@@ -36,6 +37,8 @@ pub struct Scheduler {
     registry: Arc<NodeRegistry>,
     /// Optional monitor for broadcasting execution lifecycle events
     monitor: Option<Arc<Monitor>>,
+    /// Optional bridge for outbound execution events.
+    bridge: Option<Arc<BridgeState>>,
 }
 
 impl Scheduler {
@@ -51,12 +54,19 @@ impl Scheduler {
             storage,
             registry,
             monitor: None,
+            bridge: None,
         })
     }
 
     /// Attach a live execution monitor for scheduler-triggered runs.
     pub fn with_monitor(mut self, monitor: Arc<Monitor>) -> Self {
         self.monitor = Some(monitor);
+        self
+    }
+
+    /// Attach the bridge for scheduler-triggered runs.
+    pub fn with_bridge(mut self, bridge: Arc<BridgeState>) -> Self {
+        self.bridge = Some(bridge);
         self
     }
 
@@ -172,25 +182,26 @@ impl Scheduler {
         schedule: &str,
         timezone: Option<&str>,
     ) -> Result<uuid::Uuid> {
-        let storage = self.storage.clone();
-        let registry = self.registry.clone();
-        let monitor = self.monitor.clone();
-        let wf_id = workflow_id.to_string();
-        let wf_name = workflow_name.to_string();
+        let job_context = CronJobContext {
+            storage: self.storage.clone(),
+            registry: self.registry.clone(),
+            workflow_id: workflow_id.to_string(),
+            workflow_name: workflow_name.to_string(),
+            monitor: self.monitor.clone(),
+            bridge: self.bridge.clone(),
+        };
 
         let job = match timezone {
             Some(raw_timezone) => match parse_timezone(raw_timezone)? {
-                CronTimezone::Utc => {
-                    create_cron_job(schedule, Utc, storage, registry, wf_id, wf_name, monitor)?
-                }
+                CronTimezone::Utc => create_cron_job(schedule, Utc, job_context.clone())?,
                 CronTimezone::FixedOffset(offset) => {
-                    create_cron_job(schedule, offset, storage, registry, wf_id, wf_name, monitor)?
+                    create_cron_job(schedule, offset, job_context.clone())?
                 }
-                CronTimezone::Named(timezone) => create_cron_job(
-                    schedule, timezone, storage, registry, wf_id, wf_name, monitor,
-                )?,
+                CronTimezone::Named(timezone) => {
+                    create_cron_job(schedule, timezone, job_context.clone())?
+                }
             },
-            None => create_cron_job(schedule, Utc, storage, registry, wf_id, wf_name, monitor)?,
+            None => create_cron_job(schedule, Utc, job_context)?,
         };
 
         let job_id = job.guid();
@@ -233,6 +244,16 @@ enum CronTimezone {
     Utc,
     FixedOffset(FixedOffset),
     Named(Tz),
+}
+
+#[derive(Clone)]
+struct CronJobContext {
+    storage: Arc<dyn Storage>,
+    registry: Arc<NodeRegistry>,
+    workflow_id: String,
+    workflow_name: String,
+    monitor: Option<Arc<Monitor>>,
+    bridge: Option<Arc<BridgeState>>,
 }
 
 fn parse_timezone(raw: &str) -> Result<CronTimezone> {
@@ -284,20 +305,21 @@ fn parse_fixed_offset(raw: &str) -> Option<FixedOffset> {
 fn create_cron_job<TZ: TimeZone + Send + Sync + 'static>(
     schedule: &str,
     timezone: TZ,
-    storage: Arc<dyn Storage>,
-    registry: Arc<NodeRegistry>,
-    workflow_id: String,
-    workflow_name: String,
-    monitor: Option<Arc<Monitor>>,
+    context: CronJobContext,
 ) -> Result<Job> {
     Job::new_async_tz(schedule, timezone, move |_uuid, _lock| {
-        let storage = storage.clone();
-        let registry = registry.clone();
-        let workflow_id = workflow_id.clone();
-        let workflow_name = workflow_name.clone();
-        let monitor = monitor.clone();
+        let context = context.clone();
 
         Box::pin(async move {
+            let CronJobContext {
+                storage,
+                registry,
+                workflow_id,
+                workflow_name,
+                monitor,
+                bridge,
+            } = context;
+
             info!("Cron trigger firing for workflow '{}'", workflow_name);
 
             let stored = match storage.get_workflow(&workflow_name).await {
@@ -326,6 +348,9 @@ fn create_cron_job<TZ: TimeZone + Send + Sync + 'static>(
             let mut executor = Executor::new((*registry).clone(), storage.clone());
             if let Some(monitor) = monitor {
                 executor = executor.with_monitor(monitor);
+            }
+            if let Some(bridge) = bridge {
+                executor = executor.with_bridge(bridge);
             }
 
             match executor

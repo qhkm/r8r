@@ -1446,11 +1446,25 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
 
     // Create monitor for live WebSocket updates
     let monitor = Arc::new(Monitor::new());
+    let pause_registry = r8r::engine::PauseRegistry::new();
+    let bridge = Arc::new(r8r::bridge::BridgeState::new(None));
+    {
+        let mut storage_guard = bridge.storage.lock().await;
+        *storage_guard = Some(storage.clone());
+    }
+    bridge
+        .configure_execution_context(
+            registry.clone(),
+            Some(monitor.clone()),
+            pause_registry.clone(),
+        )
+        .await;
 
     // Create and start the scheduler for cron triggers
     let scheduler = Scheduler::new(storage.clone(), registry.clone())
         .await?
-        .with_monitor(monitor.clone());
+        .with_monitor(monitor.clone())
+        .with_bridge(bridge.clone());
     scheduler.start().await?;
 
     let job_count = scheduler.job_count().await;
@@ -1486,18 +1500,23 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     // Create delayed event processor (polls SQLite, re-publishes via backend)
     let mut delayed_processor =
         DelayedEventProcessor::new(storage.clone(), registry.clone(), event_backend.clone())
-            .with_monitor(monitor.clone());
+            .with_monitor(monitor.clone())
+            .with_bridge(bridge.clone());
     delayed_processor.start().await?;
 
     // Create and start the event subscriber
     let mut event_subscriber =
         EventSubscriber::new(storage.clone(), registry.clone(), event_backend.clone())
             .with_monitor(monitor.clone())
-            .with_delayed_processor(Arc::new(DelayedEventProcessor::new(
-                storage.clone(),
-                registry.clone(),
-                event_backend.clone(),
-            )));
+            .with_bridge(bridge.clone())
+            .with_delayed_processor(Arc::new(
+                DelayedEventProcessor::new(
+                    storage.clone(),
+                    registry.clone(),
+                    event_backend.clone(),
+                )
+                .with_bridge(bridge.clone()),
+            ));
     let event_status = match event_subscriber.start().await {
         Ok(()) => {
             if event_subscriber.is_running() {
@@ -1516,7 +1535,8 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     let timeout_executor = {
         let mut exec = r8r::engine::Executor::new((*registry).clone(), storage.clone());
         exec = exec.with_monitor(monitor.clone());
-        exec = exec.with_pause_registry(r8r::engine::PauseRegistry::new());
+        exec = exec.with_bridge(bridge.clone());
+        exec = exec.with_pause_registry(pause_registry.clone());
         Arc::new(exec)
     };
     let mut approval_timeout_checker =
@@ -1538,8 +1558,9 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         registry: registry.clone(),
         monitor: Some(monitor.clone()),
         shutdown: shutdown.clone(),
-        pause_registry: r8r::engine::PauseRegistry::new(),
+        pause_registry: pause_registry.clone(),
         event_backend: Some(event_backend.clone()),
+        bridge: Some(bridge.clone()),
     };
 
     let monitored_state = MonitoredAppState {
@@ -1568,6 +1589,9 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
         app = app.merge(create_dashboard_routes());
     }
 
+    // Add bridge WebSocket routes for ZeptoClaw communication
+    app = app.merge(r8r::bridge::websocket::create_bridge_routes(bridge.clone()));
+
     println!("r8r server running on http://0.0.0.0:{}", port);
     println!();
     println!("Scheduler: {} cron job(s) active", job_count);
@@ -1584,6 +1608,7 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     println!("  POST /api/executions/:id/pause");
     println!("  POST /api/executions/:id/resume");
     println!("  WS   /api/monitor (live execution monitoring)");
+    println!("  WS   /api/ws/events (ZeptoClaw bridge)");
     println!();
     println!("Webhooks: /webhooks/:workflow_name (see workflow definitions)");
     if !_no_ui {
@@ -2897,7 +2922,24 @@ async fn cmd_doctor(output: &r8r::cli::output::Output) -> anyhow::Result<()> {
     .await;
     report!("Credentials", cred_result);
 
-    // 4. Node registry
+    // 4. Bridge
+    let bridge_result: Result<String, String> = {
+        let token_configured = std::env::var("R8R_BRIDGE_TOKEN")
+            .or_else(|_| std::env::var("R8R_API_KEY"))
+            .is_ok();
+        let token_note = if token_configured {
+            "token configured"
+        } else {
+            "no token (set R8R_BRIDGE_TOKEN)"
+        };
+        Ok(format!(
+            "available (connect via WS /api/ws/events when server is running; {})",
+            token_note
+        ))
+    };
+    report!("Bridge", bridge_result);
+
+    // 5. Node registry
     let reg_result = {
         let registry = build_registry();
         // Count registered node types by probing known types
