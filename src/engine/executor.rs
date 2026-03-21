@@ -505,7 +505,9 @@ impl Executor {
             .with_correlation_id(&correlation_id)
             .with_credentials(credentials)
             .with_oauth2_credentials(
-                load_workflow_oauth2_credentials(workflow).await.unwrap_or_default()
+                load_workflow_oauth2_credentials(workflow)
+                    .await
+                    .unwrap_or_default(),
             )
             .with_variables(variables)
             .with_storage(self.storage.clone())
@@ -1689,7 +1691,9 @@ impl Executor {
             .with_input(input)
             .with_credentials(credentials)
             .with_oauth2_credentials(
-                load_workflow_oauth2_credentials(workflow).await.unwrap_or_default()
+                load_workflow_oauth2_credentials(workflow)
+                    .await
+                    .unwrap_or_default(),
             )
             .with_variables(variables)
             .with_storage(self.storage.clone())

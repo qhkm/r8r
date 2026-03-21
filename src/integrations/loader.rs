@@ -194,16 +194,17 @@ impl IntegrationLoader {
 
             for path in new_mtimes.keys() {
                 match std::fs::read_to_string(path) {
-                    Ok(contents) => match serde_yaml::from_str::<IntegrationDefinition>(&contents)
-                    {
-                        Ok(def) => {
-                            debug!(name = %def.name, path = %path.display(), "loaded user integration");
-                            definitions.insert(def.name.clone(), def);
+                    Ok(contents) => {
+                        match serde_yaml::from_str::<IntegrationDefinition>(&contents) {
+                            Ok(def) => {
+                                debug!(name = %def.name, path = %path.display(), "loaded user integration");
+                                definitions.insert(def.name.clone(), def);
+                            }
+                            Err(e) => {
+                                warn!(path = %path.display(), error = %e, "failed to parse user integration YAML");
+                            }
                         }
-                        Err(e) => {
-                            warn!(path = %path.display(), error = %e, "failed to parse user integration YAML");
-                        }
-                    },
+                    }
                     Err(e) => {
                         warn!(path = %path.display(), error = %e, "failed to read user integration file");
                     }
@@ -242,10 +243,7 @@ mod tests {
 
         assert_eq!(github.name, "github");
         assert_eq!(github.base_url, "https://api.github.com");
-        assert_eq!(
-            github.display_name.as_deref(),
-            Some("GitHub")
-        );
+        assert_eq!(github.display_name.as_deref(), Some("GitHub"));
         assert_eq!(
             github.docs_url.as_deref(),
             Some("https://docs.github.com/en/rest")

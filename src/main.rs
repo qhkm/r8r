@@ -4265,10 +4265,7 @@ fn cmd_integrations_show(service: &str) -> anyhow::Result<()> {
     let mut ops: Vec<_> = def.operations.iter().collect();
     ops.sort_by_key(|(name, _)| (*name).clone());
     for (op_name, op_def) in &ops {
-        println!(
-            "  {:<16}{:<6}{}",
-            op_name, op_def.method, op_def.path
-        );
+        println!("  {:<16}{:<6}{}", op_name, op_def.method, op_def.path);
     }
 
     Ok(())
@@ -4309,21 +4306,18 @@ fn cmd_integrations_test(service: &str, operation: &str, params_json: &str) -> a
         .get(service)
         .ok_or_else(|| anyhow::anyhow!("Unknown integration service '{}'", service))?;
 
-    let op = def
-        .operations
-        .get(operation)
-        .ok_or_else(|| {
-            let available: Vec<_> = def.operations.keys().collect();
-            anyhow::anyhow!(
-                "Unknown operation '{}' for service '{}'. Available: {:?}",
-                operation,
-                service,
-                available
-            )
-        })?;
+    let op = def.operations.get(operation).ok_or_else(|| {
+        let available: Vec<_> = def.operations.keys().collect();
+        anyhow::anyhow!(
+            "Unknown operation '{}' for service '{}'. Available: {:?}",
+            operation,
+            service,
+            available
+        )
+    })?;
 
-    let params_value: serde_json::Value =
-        serde_json::from_str(params_json).map_err(|e| anyhow::anyhow!("Invalid --params JSON: {}", e))?;
+    let params_value: serde_json::Value = serde_json::from_str(params_json)
+        .map_err(|e| anyhow::anyhow!("Invalid --params JSON: {}", e))?;
 
     let resolved = validate_and_resolve_params(&op.params, &params_value)
         .map_err(|e| anyhow::anyhow!("Parameter validation failed: {}", e))?;

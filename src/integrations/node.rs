@@ -112,10 +112,7 @@ pub fn extract_param_ref(template: &str) -> Option<String> {
 /// - For mixed/compound templates, do string substitution. If the result still
 ///   contains unresolved template markers, omit the field.
 /// - For non-string values, pass through as-is.
-pub fn build_typed_body(
-    body_template: &Value,
-    resolved: &HashMap<String, Value>,
-) -> Value {
+pub fn build_typed_body(body_template: &Value, resolved: &HashMap<String, Value>) -> Value {
     match body_template {
         Value::Object(map) => {
             let mut out = Map::new();
@@ -132,7 +129,9 @@ pub fn build_typed_body(
                             // Mixed template — do string substitution
                             let substituted = substitute_params_in_string(s, resolved);
                             // If the result still has unresolved {{ params.* }}, omit
-                            if !substituted.contains("{{ params.") && !substituted.contains("{{params.") {
+                            if !substituted.contains("{{ params.")
+                                && !substituted.contains("{{params.")
+                            {
                                 out.insert(key.clone(), Value::String(substituted));
                             }
                         }
@@ -215,7 +214,10 @@ pub fn build_http_config(
     }
 
     // --- Body ---
-    let body = op.body.as_ref().map(|tmpl| build_typed_body(tmpl, resolved));
+    let body = op
+        .body
+        .as_ref()
+        .map(|tmpl| build_typed_body(tmpl, resolved));
 
     // --- Assemble ---
     let mut config = json!({
@@ -243,8 +245,7 @@ pub fn build_http_config(
                     }
                     crate::integrations::definition::AuthMethod::ApiKey { header_name, .. } => {
                         if let Some(hdr) = header_name {
-                            config["auth_type"] =
-                                Value::String(format!("header:{}", hdr));
+                            config["auth_type"] = Value::String(format!("header:{}", hdr));
                         } else {
                             config["auth_type"] = Value::String("api_key".to_string());
                         }
@@ -512,8 +513,16 @@ mod tests {
             "URL should start with base + path, got: {}",
             url
         );
-        assert!(url.contains("state=open"), "URL should contain state=open, got: {}", url);
-        assert!(url.contains("per_page=30"), "URL should contain per_page=30, got: {}", url);
+        assert!(
+            url.contains("state=open"),
+            "URL should contain state=open, got: {}",
+            url
+        );
+        assert!(
+            url.contains("per_page=30"),
+            "URL should contain per_page=30, got: {}",
+            url
+        );
         assert_eq!(config["method"], "GET");
         // No credential
         assert!(config.get("credential").is_none());
@@ -543,8 +552,14 @@ mod tests {
         assert!(body["labels"].is_array(), "labels should be an array");
         assert_eq!(body["labels"], json!(["bug", "urgent"]));
         // absent optional body and assignees should be omitted
-        assert!(body.get("body").is_none(), "absent optional 'body' should be omitted");
-        assert!(body.get("assignees").is_none(), "absent optional 'assignees' should be omitted");
+        assert!(
+            body.get("body").is_none(),
+            "absent optional 'body' should be omitted"
+        );
+        assert!(
+            body.get("assignees").is_none(),
+            "absent optional 'assignees' should be omitted"
+        );
     }
 
     // ------------------------------------------------------------------
@@ -566,10 +581,7 @@ mod tests {
         assert_eq!(config["credential"], "github");
         assert_eq!(config["auth_type"], "bearer");
         // Service-level headers present
-        assert_eq!(
-            config["headers"]["Accept"],
-            "application/vnd.github+json"
-        );
+        assert_eq!(config["headers"]["Accept"], "application/vnd.github+json");
     }
 
     // ------------------------------------------------------------------
@@ -611,8 +623,16 @@ mod tests {
         let url = config["url"].as_str().unwrap();
 
         // Defaults should be applied: state=open, per_page=30
-        assert!(url.contains("state=open"), "default state should appear: {}", url);
-        assert!(url.contains("per_page=30"), "default per_page should appear: {}", url);
+        assert!(
+            url.contains("state=open"),
+            "default state should appear: {}",
+            url
+        );
+        assert!(
+            url.contains("per_page=30"),
+            "default per_page should appear: {}",
+            url
+        );
     }
 
     // ------------------------------------------------------------------

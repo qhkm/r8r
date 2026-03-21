@@ -150,11 +150,7 @@ mod tests {
                 true,
                 Some("string"),
                 None,
-                Some(vec![
-                    "active".into(),
-                    "inactive".into(),
-                    "pending".into(),
-                ]),
+                Some(vec!["active".into(), "inactive".into(), "pending".into()]),
             ),
         );
 

@@ -25,7 +25,10 @@ fn test_full_pipeline_github_create_issue() {
     });
     let resolved = validate_and_resolve_params(&op.params, &params).unwrap();
     let config = build_http_config(&def, op, &resolved, Some("my_token"));
-    assert_eq!(config["url"], "https://api.github.com/repos/octocat/hello-world/issues");
+    assert_eq!(
+        config["url"],
+        "https://api.github.com/repos/octocat/hello-world/issues"
+    );
     assert_eq!(config["method"], "POST");
     assert_eq!(config["body"]["title"], "Test issue");
     assert!(config["body"]["labels"].is_array());
@@ -76,8 +79,16 @@ fn test_all_builtin_definitions_parse() {
     assert!(services.contains(&"notion".to_string()));
     for service in &services {
         let def = loader.get(service).unwrap();
-        assert!(!def.operations.is_empty(), "Service '{}' has no operations", service);
-        assert!(!def.base_url.is_empty(), "Service '{}' has no base_url", service);
+        assert!(
+            !def.operations.is_empty(),
+            "Service '{}' has no operations",
+            service
+        );
+        assert!(
+            !def.base_url.is_empty(),
+            "Service '{}' has no base_url",
+            service
+        );
     }
 }
 

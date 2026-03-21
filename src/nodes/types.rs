@@ -87,7 +87,8 @@ pub struct NodeContext {
     /// Resolved OAuth2 credentials (keyed by service name).
     /// SECURITY: Never log or trace this field!
     /// Wrapped in Arc for cheap cloning.
-    pub oauth2_credentials: Arc<std::collections::HashMap<String, crate::integrations::oauth2::OAuth2Credential>>,
+    pub oauth2_credentials:
+        Arc<std::collections::HashMap<String, crate::integrations::oauth2::OAuth2Credential>>,
 
     /// Storage for sub-workflow execution (optional)
     pub storage: Option<Arc<dyn Storage>>,
@@ -162,7 +163,10 @@ impl NodeContext {
     /// Set OAuth2 credentials.
     pub fn with_oauth2_credentials(
         mut self,
-        oauth2_credentials: std::collections::HashMap<String, crate::integrations::oauth2::OAuth2Credential>,
+        oauth2_credentials: std::collections::HashMap<
+            String,
+            crate::integrations::oauth2::OAuth2Credential,
+        >,
     ) -> Self {
         self.oauth2_credentials = Arc::new(oauth2_credentials);
         self

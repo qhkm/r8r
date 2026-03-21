@@ -128,7 +128,10 @@ operations:
         assert!(def.auth.is_none());
         assert!(def.headers.is_none());
 
-        let op = def.operations.get("get_ip").expect("get_ip operation missing");
+        let op = def
+            .operations
+            .get("get_ip")
+            .expect("get_ip operation missing");
         assert_eq!(op.method, "GET");
         assert_eq!(op.path, "/ip");
         assert_eq!(op.description, "Returns the requester's IP address");
@@ -193,7 +196,10 @@ operations:
         assert_eq!(def.name, "github");
         assert_eq!(def.display_name.as_deref(), Some("GitHub API"));
         assert_eq!(def.description.as_deref(), Some("GitHub REST API v3"));
-        assert_eq!(def.docs_url.as_deref(), Some("https://docs.github.com/en/rest"));
+        assert_eq!(
+            def.docs_url.as_deref(),
+            Some("https://docs.github.com/en/rest")
+        );
 
         // Auth
         let auth = def.auth.as_ref().expect("auth should be present");
@@ -206,7 +212,10 @@ operations:
                 scopes,
                 flows,
             } => {
-                assert_eq!(authorization_url, "https://github.com/login/oauth/authorize");
+                assert_eq!(
+                    authorization_url,
+                    "https://github.com/login/oauth/authorize"
+                );
                 assert_eq!(token_url, "https://github.com/login/oauth/access_token");
                 assert_eq!(scopes, &["repo", "user"]);
                 assert_eq!(flows, &["authorization_code"]);
@@ -223,23 +232,35 @@ operations:
 
         // Global headers
         let headers = def.headers.as_ref().expect("headers should be present");
-        assert_eq!(headers.get("Accept").unwrap(), "application/vnd.github.v3+json");
+        assert_eq!(
+            headers.get("Accept").unwrap(),
+            "application/vnd.github.v3+json"
+        );
         assert_eq!(headers.get("X-GitHub-Api-Version").unwrap(), "2022-11-28");
 
         // Operations
         assert_eq!(def.operations.len(), 2);
 
-        let list_repos = def.operations.get("list_repos").expect("list_repos missing");
+        let list_repos = def
+            .operations
+            .get("list_repos")
+            .expect("list_repos missing");
         assert_eq!(list_repos.method, "GET");
         assert_eq!(list_repos.path, "/user/repos");
         let query = list_repos.query.as_ref().expect("query should be present");
         assert_eq!(query.get("sort").unwrap(), "updated");
         assert_eq!(query.get("per_page").unwrap(), "30");
 
-        let create_issue = def.operations.get("create_issue").expect("create_issue missing");
+        let create_issue = def
+            .operations
+            .get("create_issue")
+            .expect("create_issue missing");
         assert_eq!(create_issue.method, "POST");
         assert!(create_issue.body.is_some());
-        let op_headers = create_issue.headers.as_ref().expect("operation headers missing");
+        let op_headers = create_issue
+            .headers
+            .as_ref()
+            .expect("operation headers missing");
         assert_eq!(op_headers.get("Content-Type").unwrap(), "application/json");
     }
 
@@ -283,7 +304,10 @@ operations:
 "#;
 
         let def: IntegrationDefinition = serde_yaml::from_str(yaml).unwrap();
-        let op = def.operations.get("search").expect("search operation missing");
+        let op = def
+            .operations
+            .get("search")
+            .expect("search operation missing");
         assert_eq!(op.params.len(), 5);
 
         // String param
@@ -304,7 +328,10 @@ operations:
         assert_eq!(tags.param_type.as_deref(), Some("array"));
 
         // Boolean param with default
-        let include_archived = op.params.get("include_archived").expect("include_archived param missing");
+        let include_archived = op
+            .params
+            .get("include_archived")
+            .expect("include_archived param missing");
         assert_eq!(include_archived.param_type.as_deref(), Some("boolean"));
         assert_eq!(
             include_archived.default.as_ref().unwrap(),

@@ -359,12 +359,16 @@ impl CredentialStore {
         credential.value.starts_with("enc:")
     }
 
-    pub fn get_oauth2(&self, service: &str) -> Option<&crate::integrations::oauth2::OAuth2Credential> {
+    pub fn get_oauth2(
+        &self,
+        service: &str,
+    ) -> Option<&crate::integrations::oauth2::OAuth2Credential> {
         self.oauth2_credentials.get(service)
     }
 
     pub fn set_oauth2(&mut self, credential: crate::integrations::oauth2::OAuth2Credential) {
-        self.oauth2_credentials.insert(credential.service.clone(), credential);
+        self.oauth2_credentials
+            .insert(credential.service.clone(), credential);
     }
 
     pub fn list_oauth2(&self) -> Vec<&str> {

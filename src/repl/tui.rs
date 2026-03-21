@@ -3069,7 +3069,10 @@ pub async fn run_repl_tui(
                                             )
                                             .await;
                                         let Some(config) = active_llm_config.clone() else {
-                                            app.push_message(MessageKind::Error, "LLM is not configured.");
+                                            app.push_message(
+                                                MessageKind::Error,
+                                                "LLM is not configured.",
+                                            );
                                             continue;
                                         };
                                         app.busy = true;
@@ -3089,7 +3092,8 @@ pub async fn run_repl_tui(
                                             let tx_stream = tx_updates.clone();
                                             let callback: engine::StreamCallback =
                                                 Box::new(move |update| {
-                                                    let _ = tx_stream.send(ReplEvent::Stream(update));
+                                                    let _ =
+                                                        tx_stream.send(ReplEvent::Stream(update));
                                                 });
                                             let result = engine::run_turn(
                                                 &mut conversation,
@@ -3130,7 +3134,10 @@ pub async fn run_repl_tui(
                                             )
                                             .await;
                                         let Some(config) = active_llm_config.clone() else {
-                                            app.push_message(MessageKind::Error, "LLM is not configured.");
+                                            app.push_message(
+                                                MessageKind::Error,
+                                                "LLM is not configured.",
+                                            );
                                             continue;
                                         };
                                         app.busy = true;
@@ -3150,7 +3157,8 @@ pub async fn run_repl_tui(
                                             let tx_stream = tx_updates.clone();
                                             let callback: engine::StreamCallback =
                                                 Box::new(move |update| {
-                                                    let _ = tx_stream.send(ReplEvent::Stream(update));
+                                                    let _ =
+                                                        tx_stream.send(ReplEvent::Stream(update));
                                                 });
                                             let result = engine::run_turn(
                                                 &mut conversation,
@@ -3232,15 +3240,21 @@ pub async fn run_repl_tui(
                                     app.quick_actions = Some(QuickActionBar::new(vec![
                                         QuickAction {
                                             label: "Yes, proceed".to_string(),
-                                            command: QuickActionCommand::Slash("__write_confirm_yes".to_string()),
+                                            command: QuickActionCommand::Slash(
+                                                "__write_confirm_yes".to_string(),
+                                            ),
                                         },
                                         QuickAction {
                                             label: "Cancel".to_string(),
-                                            command: QuickActionCommand::Slash("__write_confirm_no".to_string()),
+                                            command: QuickActionCommand::Slash(
+                                                "__write_confirm_no".to_string(),
+                                            ),
                                         },
                                         QuickAction {
                                             label: "Arm session".to_string(),
-                                            command: QuickActionCommand::Slash("__write_confirm_arm".to_string()),
+                                            command: QuickActionCommand::Slash(
+                                                "__write_confirm_arm".to_string(),
+                                            ),
                                         },
                                     ]));
                                     continue;
