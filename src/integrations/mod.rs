@@ -7,7 +7,9 @@
 
 pub mod definition;
 pub mod loader;
+pub mod oauth2;
 pub mod validator;
 
 pub use definition::IntegrationDefinition;
 pub use loader::IntegrationLoader;
+pub use oauth2::OAuth2Credential;
