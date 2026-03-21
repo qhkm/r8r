@@ -6,5 +6,6 @@
  */
 
 pub mod definition;
+pub mod validator;
 
 pub use definition::IntegrationDefinition;
