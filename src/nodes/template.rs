@@ -238,6 +238,7 @@ mod tests {
             correlation_id: None,
             item_index: None,
             credentials: Arc::new(HashMap::new()),
+            oauth2_credentials: Arc::new(HashMap::new()),
             storage: None,
             registry: None,
         }

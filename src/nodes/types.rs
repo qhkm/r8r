@@ -84,6 +84,11 @@ pub struct NodeContext {
     /// Wrapped in Arc for cheap cloning.
     pub credentials: Arc<std::collections::HashMap<String, String>>,
 
+    /// Resolved OAuth2 credentials (keyed by service name).
+    /// SECURITY: Never log or trace this field!
+    /// Wrapped in Arc for cheap cloning.
+    pub oauth2_credentials: Arc<std::collections::HashMap<String, crate::integrations::oauth2::OAuth2Credential>>,
+
     /// Storage for sub-workflow execution (optional)
     pub storage: Option<Arc<dyn Storage>>,
 
@@ -102,6 +107,7 @@ impl std::fmt::Debug for NodeContext {
             .field("correlation_id", &self.correlation_id)
             .field("item_index", &self.item_index)
             .field("credentials", &"[REDACTED]")
+            .field("oauth2_credentials", &"[REDACTED]")
             .field("storage", &self.storage.as_ref().map(|_| "[Storage]"))
             .field("registry", &self.registry.as_ref().map(|_| "[Registry]"))
             .finish()
@@ -120,6 +126,7 @@ impl NodeContext {
             correlation_id: None,
             item_index: None,
             credentials: Arc::new(std::collections::HashMap::new()),
+            oauth2_credentials: Arc::new(std::collections::HashMap::new()),
             storage: None,
             registry: None,
         }
@@ -152,6 +159,15 @@ impl NodeContext {
         self
     }
 
+    /// Set OAuth2 credentials.
+    pub fn with_oauth2_credentials(
+        mut self,
+        oauth2_credentials: std::collections::HashMap<String, crate::integrations::oauth2::OAuth2Credential>,
+    ) -> Self {
+        self.oauth2_credentials = Arc::new(oauth2_credentials);
+        self
+    }
+
     /// Get a credential by service name.
     pub fn get_credential(&self, service: &str) -> Option<&String> {
         self.credentials.get(service)
@@ -178,6 +194,7 @@ impl NodeContext {
             correlation_id: self.correlation_id.clone(),
             item_index: Some(index),
             credentials: self.credentials.clone(),
+            oauth2_credentials: self.oauth2_credentials.clone(),
             storage: self.storage.clone(),
             registry: self.registry.clone(),
         }

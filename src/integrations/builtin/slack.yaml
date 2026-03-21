@@ -1,0 +1,50 @@
+version: 1
+name: slack
+display_name: Slack
+description: Slack Web API integration
+base_url: https://slack.com/api
+docs_url: https://api.slack.com/methods
+
+auth:
+  methods:
+    - type: oauth2
+      authorization_url: https://slack.com/oauth/v2/authorize
+      token_url: https://slack.com/api/oauth.v2.access
+      scopes: [chat:write, channels:read, users:read]
+      flows: [local_callback]
+    - type: bearer
+      description: Bot token (xoxb-...)
+
+operations:
+  send_message:
+    description: Send a message to a channel
+    method: POST
+    path: /chat.postMessage
+    params:
+      channel: { required: true, type: string, description: "Channel ID or name" }
+      text: { required: false, type: string, description: "Message text" }
+      blocks: { required: false, type: array, description: "Block Kit blocks" }
+    body:
+      channel: "{{ params.channel }}"
+      text: "{{ params.text }}"
+      blocks: "{{ params.blocks }}"
+
+  list_channels:
+    description: List channels
+    method: GET
+    path: /conversations.list
+    params:
+      limit: { required: false, type: integer, default: 100 }
+      types: { required: false, type: string, default: "public_channel" }
+    query:
+      limit: "{{ params.limit }}"
+      types: "{{ params.types }}"
+
+  get_user:
+    description: Get user info
+    method: GET
+    path: /users.info
+    params:
+      user: { required: true, type: string, description: "User ID" }
+    query:
+      user: "{{ params.user }}"

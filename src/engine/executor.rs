@@ -504,6 +504,9 @@ impl Executor {
             .with_input(input)
             .with_correlation_id(&correlation_id)
             .with_credentials(credentials)
+            .with_oauth2_credentials(
+                load_workflow_oauth2_credentials(workflow).await.unwrap_or_default()
+            )
             .with_variables(variables)
             .with_storage(self.storage.clone())
             .with_registry(Arc::new(self.registry.clone()));
@@ -756,6 +759,7 @@ impl Executor {
                             correlation_id: ctx.correlation_id.clone(),
                             item_index: None,
                             credentials: ctx.credentials.clone(),
+                            oauth2_credentials: ctx.oauth2_credentials.clone(),
                             storage: ctx.storage.clone(),
                             registry: ctx.registry.clone(),
                         };
@@ -1197,6 +1201,7 @@ impl Executor {
                     correlation_id: ctx.correlation_id.clone(),
                     item_index: None,
                     credentials: ctx.credentials.clone(),
+                    oauth2_credentials: ctx.oauth2_credentials.clone(),
                     storage: ctx.storage.clone(),
                     registry: ctx.registry.clone(),
                 };
@@ -1683,6 +1688,9 @@ impl Executor {
         let mut ctx = NodeContext::new(&execution_id, &workflow.name)
             .with_input(input)
             .with_credentials(credentials)
+            .with_oauth2_credentials(
+                load_workflow_oauth2_credentials(workflow).await.unwrap_or_default()
+            )
             .with_variables(variables)
             .with_storage(self.storage.clone())
             .with_registry(Arc::new(self.registry.clone()));
@@ -2082,6 +2090,7 @@ impl Executor {
                     correlation_id: ctx.correlation_id.clone(),
                     item_index: None,
                     credentials: ctx.credentials.clone(),
+                    oauth2_credentials: ctx.oauth2_credentials.clone(),
                     storage: ctx.storage.clone(),
                     registry: ctx.registry.clone(),
                 };
@@ -2688,6 +2697,7 @@ impl Executor {
             node_outputs: parent_ctx.node_outputs.clone(),
             variables: parent_ctx.variables.clone(),
             credentials: parent_ctx.credentials.clone(),
+            oauth2_credentials: parent_ctx.oauth2_credentials.clone(),
             correlation_id: parent_ctx.correlation_id.clone(),
             item_index: None,
             storage: parent_ctx.storage.clone(),
@@ -3439,6 +3449,36 @@ async fn load_workflow_credentials(workflow: &Workflow) -> Result<HashMap<String
     }
 
     Ok(credentials)
+}
+
+/// Load OAuth2 credentials for integration nodes in a workflow.
+async fn load_workflow_oauth2_credentials(
+    workflow: &Workflow,
+) -> Result<HashMap<String, crate::integrations::oauth2::OAuth2Credential>> {
+    let mut oauth2_creds = HashMap::new();
+
+    for node in &workflow.nodes {
+        if node.node_type != "integration" {
+            continue;
+        }
+        if let Some(credential_name) = node.config.get("credential").and_then(|v| v.as_str()) {
+            if oauth2_creds.contains_key(credential_name) {
+                continue;
+            }
+            let store = match CredentialStore::load().await {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            if let Some(oauth2_cred) = store.get_oauth2(credential_name) {
+                debug!(
+                    "Loaded OAuth2 credential '{}' for workflow '{}'",
+                    credential_name, workflow.name
+                );
+                oauth2_creds.insert(credential_name.to_string(), oauth2_cred.clone());
+            }
+        }
+    }
+    Ok(oauth2_creds)
 }
 
 #[cfg(test)]

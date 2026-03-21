@@ -50,15 +50,27 @@ impl IntegrationLoader {
     pub fn new() -> Self {
         let mut builtin = HashMap::new();
 
-        // Load built-in GitHub integration
-        let github_yaml = include_str!("builtin/github.yaml");
-        match serde_yaml::from_str::<IntegrationDefinition>(github_yaml) {
-            Ok(def) => {
-                debug!(name = %def.name, "loaded built-in integration");
-                builtin.insert(def.name.clone(), def);
-            }
-            Err(e) => {
-                warn!(error = %e, "failed to parse built-in github.yaml");
+        const BUILTIN_GITHUB: &str = include_str!("builtin/github.yaml");
+        const BUILTIN_SLACK: &str = include_str!("builtin/slack.yaml");
+        const BUILTIN_OPENAI: &str = include_str!("builtin/openai.yaml");
+        const BUILTIN_STRIPE: &str = include_str!("builtin/stripe.yaml");
+        const BUILTIN_NOTION: &str = include_str!("builtin/notion.yaml");
+
+        for (name, yaml) in [
+            ("github", BUILTIN_GITHUB),
+            ("slack", BUILTIN_SLACK),
+            ("openai", BUILTIN_OPENAI),
+            ("stripe", BUILTIN_STRIPE),
+            ("notion", BUILTIN_NOTION),
+        ] {
+            match serde_yaml::from_str::<IntegrationDefinition>(yaml) {
+                Ok(def) => {
+                    debug!(name = %def.name, "loaded built-in integration");
+                    builtin.insert(def.name.clone(), def);
+                }
+                Err(e) => {
+                    warn!(builtin_name = name, error = %e, "failed to parse built-in YAML");
+                }
             }
         }
 
@@ -252,11 +264,81 @@ mod tests {
         let loader = IntegrationLoader::new();
         let names = loader.list_all();
 
-        assert!(
-            names.contains(&"github".to_string()),
-            "list should contain github, got: {:?}",
-            names
-        );
+        for expected in &["github", "slack", "openai", "stripe", "notion"] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "list should contain {}, got: {:?}",
+                expected,
+                names
+            );
+        }
+        assert_eq!(names.len(), 5, "expected 5 built-ins, got: {:?}", names);
+    }
+
+    #[test]
+    fn test_load_builtin_slack() {
+        let loader = IntegrationLoader::new();
+        let slack = loader
+            .get_builtin("slack")
+            .expect("slack built-in should exist");
+
+        assert_eq!(slack.name, "slack");
+        assert_eq!(slack.base_url, "https://slack.com/api");
+        assert_eq!(slack.display_name.as_deref(), Some("Slack"));
+        assert!(slack.operations.contains_key("send_message"));
+        assert!(slack.operations.contains_key("list_channels"));
+        assert!(slack.operations.contains_key("get_user"));
+        assert_eq!(slack.operations.len(), 3);
+    }
+
+    #[test]
+    fn test_load_builtin_openai() {
+        let loader = IntegrationLoader::new();
+        let openai = loader
+            .get_builtin("openai")
+            .expect("openai built-in should exist");
+
+        assert_eq!(openai.name, "openai");
+        assert_eq!(openai.base_url, "https://api.openai.com/v1");
+        assert_eq!(openai.display_name.as_deref(), Some("OpenAI"));
+        assert!(openai.operations.contains_key("chat_completion"));
+        assert!(openai.operations.contains_key("create_embedding"));
+        assert!(openai.operations.contains_key("list_models"));
+        assert_eq!(openai.operations.len(), 3);
+    }
+
+    #[test]
+    fn test_load_builtin_stripe() {
+        let loader = IntegrationLoader::new();
+        let stripe = loader
+            .get_builtin("stripe")
+            .expect("stripe built-in should exist");
+
+        assert_eq!(stripe.name, "stripe");
+        assert_eq!(stripe.base_url, "https://api.stripe.com/v1");
+        assert_eq!(stripe.display_name.as_deref(), Some("Stripe"));
+        assert!(stripe.operations.contains_key("get_customer"));
+        assert!(stripe.operations.contains_key("list_customers"));
+        assert!(stripe.operations.contains_key("list_charges"));
+        assert!(stripe.operations.contains_key("get_balance"));
+        assert_eq!(stripe.operations.len(), 4);
+    }
+
+    #[test]
+    fn test_load_builtin_notion() {
+        let loader = IntegrationLoader::new();
+        let notion = loader
+            .get_builtin("notion")
+            .expect("notion built-in should exist");
+
+        assert_eq!(notion.name, "notion");
+        assert_eq!(notion.base_url, "https://api.notion.com/v1");
+        assert_eq!(notion.display_name.as_deref(), Some("Notion"));
+        assert!(notion.operations.contains_key("query_database"));
+        assert!(notion.operations.contains_key("create_page"));
+        assert!(notion.operations.contains_key("get_page"));
+        assert!(notion.operations.contains_key("search"));
+        assert_eq!(notion.operations.len(), 4);
     }
 
     #[test]
