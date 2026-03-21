@@ -6,6 +6,8 @@
  */
 
 pub mod definition;
+pub mod loader;
 pub mod validator;
 
 pub use definition::IntegrationDefinition;
+pub use loader::IntegrationLoader;
