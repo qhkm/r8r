@@ -155,7 +155,7 @@ pub fn workflow_schema() -> Value {
                     "type": {
                         "type": "string",
                         "minLength": 1,
-                        "description": "Node type (e.g., http, agent, transform)"
+                        "description": "Node type (e.g., http, agent, transform, integration)"
                     },
                     "config": {
                         "type": "object",
@@ -188,7 +188,20 @@ pub fn workflow_schema() -> Value {
                         "maximum": 3600
                     }
                 },
-                "additionalProperties": false
+                "additionalProperties": false,
+                "if": {
+                    "properties": {
+                        "type": { "const": "integration" }
+                    }
+                },
+                "then": {
+                    "properties": {
+                        "config": {
+                            "$ref": "#/$defs/integration_config"
+                        }
+                    },
+                    "required": ["config"]
+                }
             },
             "retry": {
                 "type": "object",
@@ -231,6 +244,31 @@ pub fn workflow_schema() -> Value {
                     }
                 },
                 "additionalProperties": false
+            },
+            "integration_config": {
+                "type": "object",
+                "required": ["service", "operation"],
+                "properties": {
+                    "service": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Integration service name (e.g., github, slack, jira)"
+                    },
+                    "operation": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Service operation to perform (e.g., create_issue, send_message)"
+                    },
+                    "credential": {
+                        "type": "string",
+                        "description": "Optional credential name for authentication"
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "Operation-specific parameters"
+                    }
+                },
+                "additionalProperties": true
             }
         }
     })
@@ -566,5 +604,121 @@ nodes: "not an array"
 
         let validator = WorkflowSchemaValidator::new().unwrap();
         assert!(validator.validate(&workflow).is_err());
+    }
+
+    #[test]
+    fn test_valid_integration_node() {
+        let workflow = json!({
+            "name": "integration-test",
+            "nodes": [
+                {
+                    "id": "notify",
+                    "type": "integration",
+                    "config": {
+                        "service": "slack",
+                        "operation": "send_message",
+                        "credential": "slack-bot-token",
+                        "params": {
+                            "channel": "#alerts",
+                            "text": "Hello from r8r"
+                        }
+                    }
+                }
+            ]
+        });
+
+        let validator = WorkflowSchemaValidator::new().unwrap();
+        assert!(validator.validate(&workflow).is_ok());
+    }
+
+    #[test]
+    fn test_valid_integration_node_minimal() {
+        let workflow = json!({
+            "name": "integration-minimal",
+            "nodes": [
+                {
+                    "id": "create-issue",
+                    "type": "integration",
+                    "config": {
+                        "service": "github",
+                        "operation": "create_issue"
+                    }
+                }
+            ]
+        });
+
+        let validator = WorkflowSchemaValidator::new().unwrap();
+        assert!(validator.validate(&workflow).is_ok());
+    }
+
+    #[test]
+    fn test_integration_node_missing_service() {
+        let workflow = json!({
+            "name": "integration-bad",
+            "nodes": [
+                {
+                    "id": "bad-node",
+                    "type": "integration",
+                    "config": {
+                        "operation": "send_message"
+                    }
+                }
+            ]
+        });
+
+        let validator = WorkflowSchemaValidator::new().unwrap();
+        assert!(validator.validate(&workflow).is_err());
+    }
+
+    #[test]
+    fn test_integration_node_missing_operation() {
+        let workflow = json!({
+            "name": "integration-bad",
+            "nodes": [
+                {
+                    "id": "bad-node",
+                    "type": "integration",
+                    "config": {
+                        "service": "slack"
+                    }
+                }
+            ]
+        });
+
+        let validator = WorkflowSchemaValidator::new().unwrap();
+        assert!(validator.validate(&workflow).is_err());
+    }
+
+    #[test]
+    fn test_integration_node_missing_config() {
+        let workflow = json!({
+            "name": "integration-bad",
+            "nodes": [
+                {
+                    "id": "bad-node",
+                    "type": "integration"
+                }
+            ]
+        });
+
+        let validator = WorkflowSchemaValidator::new().unwrap();
+        assert!(validator.validate(&workflow).is_err());
+    }
+
+    #[test]
+    fn test_non_integration_node_unaffected() {
+        // Ensure existing node types still work without config
+        let workflow = json!({
+            "name": "http-test",
+            "nodes": [
+                {
+                    "id": "step1",
+                    "type": "http"
+                }
+            ]
+        });
+
+        let validator = WorkflowSchemaValidator::new().unwrap();
+        assert!(validator.validate(&workflow).is_ok());
     }
 }
