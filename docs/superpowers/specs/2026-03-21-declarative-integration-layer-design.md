@@ -317,8 +317,8 @@ src/
 
 ### Changes to Existing Files
 
-- `credentials.rs` — add `OAuth2Credential` struct, `oauth2_credentials: HashMap<String, OAuth2Credential>` to `CredentialStore`, encryption/decryption for OAuth2 tokens
-- `nodes/types.rs` — add `oauth2_credentials: Arc<HashMap<String, OAuth2Credential>>` to `NodeContext`
+- `credentials.rs` — add `OAuth2Credential` struct, `oauth2_credentials: HashMap<String, OAuth2Credential>` to `CredentialStore` (with `#[serde(default)]` for backward-compatible deserialization of existing credential files), encryption/decryption for OAuth2 tokens
+- `nodes/types.rs` — add `oauth2_credentials: Arc<HashMap<String, OAuth2Credential>>` to `NodeContext`; update `for_item()` to propagate the new field; update `Debug` impl to redact it
 - `engine/executor.rs` — extend `load_workflow_credentials()` to also load OAuth2 credentials into the new `NodeContext` field
 - `nodes/registry.rs` — register `IntegrationNode`
 - `main.rs` — add `r8r auth` and `r8r integrations` CLI subcommands
