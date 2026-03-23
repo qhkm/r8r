@@ -1,7 +1,7 @@
 # n8n Migration Converter + JSON Workflow Support
 
 **Date**: 2026-03-24
-**Status**: Approved
+**Status**: In Review
 **Scope**: `r8r migrate n8n` CLI command, JS-to-Rhai transpiler, JSON workflow support
 
 ## Problem
@@ -128,25 +128,43 @@ Nodes without a known mapping get converted to a placeholder HTTP node:
 
 n8n IF nodes use JavaScript expressions for conditions (e.g., `{{ $json.status === "active" }}`). r8r IF nodes expect `{field, operator, value}` tuples. The converter handles this in two tiers:
 
-**Simple conditions** — pattern-match n8n expressions into r8r tuples:
+**Simple conditions** — pattern-match n8n expressions into r8r tuples (using actual r8r operator names from `if_node.rs`):
 - `$json.field === "value"` → `{ field: "input.field", operator: "equals", value: "value" }`
-- `$json.field > 100` → `{ field: "input.field", operator: "greater_than", value: 100 }`
+- `$json.field !== "value"` → `{ field: "input.field", operator: "not_equals", value: "value" }`
+- `$json.field > 100` → `{ field: "input.field", operator: "gt", value: 100 }`
+- `$json.field < 100` → `{ field: "input.field", operator: "lt", value: 100 }`
+- `$json.field >= 100` → `{ field: "input.field", operator: "gte", value: 100 }`
+- `$json.field <= 100` → `{ field: "input.field", operator: "lte", value: 100 }`
 - `$json.field.includes("sub")` → `{ field: "input.field", operator: "contains", value: "sub" }`
-- `$json.tags.length > 0` → `{ field: "input.tags", operator: "not_empty", value: null }`
+- `$json.field.match(/pattern/)` → `{ field: "input.field", operator: "regex", value: "pattern" }`
 
-**Complex conditions** — when the expression cannot be decomposed into tuples (e.g., compound logic, function calls), fall back to r8r's `condition` field (Rhai expression on the node itself) instead of the structured IF node:
+**Complex conditions** — when the expression cannot be decomposed into tuples (e.g., compound logic, function calls, `array.length > 0`), the converter uses a **transform + if** pattern instead of the IF node's `condition` field (which is a gate, not a branch selector):
 
 ```yaml
+# Pre-evaluate complex condition into a boolean field
+- id: complex-check-eval
+  type: transform
+  config:
+    expression: |
+      let data = from_json(input);
+      let result = data.amount > 100 && data.status == "active";
+      to_json(#{ passed: result, data: data })
+  depends_on: [previous-node]
+
+# Branch based on the boolean result
 - id: complex-check
   type: if
   config:
-    conditions: []
+    conditions:
+      - field: "input.passed"
+        operator: "equals"
+        value: true
     true_branch: success-node
     false_branch: failure-node
-  condition: "input.amount > 100 && input.status == \"active\""
+  depends_on: [complex-check-eval]
 ```
 
-This uses r8r's node-level `condition` field as a Rhai expression. The IF node's `conditions` array is left empty, and the branching is controlled by the Rhai expression. The transpiler converts the n8n JS to Rhai, producing `Approximate` result with a warning.
+This avoids the issue where r8r's IF node rejects empty conditions arrays. The transform node evaluates the complex Rhai expression and produces a boolean, which the IF node can check with a simple `equals` condition. The converter emits an `Approximate` warning for these cases.
 
 ### Switch Node Translation
 
@@ -156,7 +174,9 @@ Structural mismatch: n8n Switch *routes*, r8r Switch *produces output*. The conv
 
 1. **Extract the switch expression** — n8n Switch typically tests a single field (e.g., `$json.type`). Convert to Rhai: `input.type`.
 2. **Map output indices to cases** — n8n output 0 → case value from rule 0, output 1 → case value from rule 1, etc.
-3. **Wire downstream nodes** — each downstream node gets `condition: "nodes.switch_id.output.matched_case == \"case_value\""` to filter by which case matched.
+3. **Wire downstream nodes** — each downstream node gets a `condition` that parses the switch output (which is a JSON string in Rhai scope) and checks `matched_case`.
+
+**Important runtime detail:** The executor pushes node outputs into Rhai scope as JSON strings, not parsed objects. So `route_by_type` in Rhai is a string like `"{\"matched_case\":\"order\"}"`, not a structured object. Conditions must parse first.
 
 Example conversion:
 
@@ -177,10 +197,28 @@ Example conversion:
   type: http
   config: { ... }
   depends_on: [route-by-type]
-  condition: "nodes.route_by_type.output.matched_case == \"order\""
+  condition: |
+    let sw = from_json(route_by_type);
+    sw.matched_case == "order"
 ```
 
-This preserves the routing semantics via conditional execution. The converter emits `Approximate` warnings for all switch translations.
+Each downstream node parses the switch output with `from_json()` and checks `matched_case`. The converter emits `Approximate` warnings for all switch translations, noting the `from_json` pattern.
+
+**Alternative approach (if `from_json` is not available in condition evaluation):** The converter can instead decompose the switch into multiple IF nodes — one per branch — each checking the original field directly:
+
+```yaml
+- id: is-order
+  type: if
+  config:
+    conditions:
+      - field: "input.type"
+        operator: "equals"
+        value: "order"
+    true_branch: process-order
+    false_branch: check-invoice
+```
+
+The converter should attempt the `from_json` pattern first. If testing reveals `from_json` is not available in condition scope, fall back to the IF-chain decomposition.
 
 ### Name Sanitization and Deduplication
 
