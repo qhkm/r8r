@@ -30,8 +30,16 @@ pub fn parse_workflow(yaml: &str) -> Result<Workflow> {
 
 /// Parse a workflow from a file path.
 pub fn parse_workflow_file(path: &Path) -> Result<Workflow> {
-    let content = std::fs::read_to_string(path)?;
-    parse_workflow(&content)
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| Error::Parse(format!("Failed to read {:?}: {}", path, e)))?;
+
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("json") => {
+            serde_json::from_str(&content)
+                .map_err(|e| Error::Parse(format!("Failed to parse JSON workflow {:?}: {}", path, e)))
+        }
+        _ => parse_workflow(&content),
+    }
 }
 
 fn extract_missing_field(error_message: &str) -> Option<&str> {
