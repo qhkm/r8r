@@ -55,6 +55,7 @@ pub mod generator;
 pub mod integrations;
 pub mod llm;
 pub mod mcp;
+pub mod migrate;
 pub mod metrics;
 pub mod nodes;
 pub mod notifications;
