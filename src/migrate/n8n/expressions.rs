@@ -193,7 +193,10 @@ pub fn transpile_expression(js: &str) -> TranspileResult {
         (r"\.indexOf\(", "Array.indexOf() not supported in Rhai"),
         (r"\bnew Date\(", "new Date() not supported in Rhai"),
         (r"\btypeof\s", "typeof operator not supported in Rhai"),
-        (r"\binstanceof\s", "instanceof operator not supported in Rhai"),
+        (
+            r"\binstanceof\s",
+            "instanceof operator not supported in Rhai",
+        ),
     ];
 
     for (pat, reason) in unsupported {
@@ -312,10 +315,7 @@ mod tests {
         assert!(!r.is_exact());
         assert!(!r.is_failed());
         assert!(r.warning().is_some());
-        assert_eq!(
-            r.rhai(),
-            "if input.active { \"yes\" } else { \"no\" }"
-        );
+        assert_eq!(r.rhai(), "if input.active { \"yes\" } else { \"no\" }");
     }
 
     #[test]

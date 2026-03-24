@@ -87,8 +87,7 @@ pub fn convert_n8n_workflow(input: &[u8]) -> Result<MigrateResult> {
         warnings.extend(map_result.warnings);
 
         // ── 5. Transpile expressions in config ──────────────────────
-        let (transpiled_config, expr_warnings) =
-            transpile_value_expressions(&map_result.config);
+        let (transpiled_config, expr_warnings) = transpile_value_expressions(&map_result.config);
 
         warnings.extend(expr_warnings.into_iter().map(|w| MigrateWarning {
             node_name: Some(r8r_id.clone()),
@@ -269,9 +268,7 @@ fn build_depends_on(
                     None => continue,
                 };
 
-                deps.entry(target_id)
-                    .or_default()
-                    .push(source_id.clone());
+                deps.entry(target_id).or_default().push(source_id.clone());
             }
         }
     }
@@ -426,8 +423,18 @@ mod tests {
         // Two non-trigger nodes
         assert_eq!(result.workflow.nodes.len(), 2);
 
-        let node_a = result.workflow.nodes.iter().find(|n| n.id == "node-a").unwrap();
-        let node_b = result.workflow.nodes.iter().find(|n| n.id == "node-b").unwrap();
+        let node_a = result
+            .workflow
+            .nodes
+            .iter()
+            .find(|n| n.id == "node-a")
+            .unwrap();
+        let node_b = result
+            .workflow
+            .nodes
+            .iter()
+            .find(|n| n.id == "node-b")
+            .unwrap();
 
         // Node A: root node (trigger's target → no depends_on)
         assert!(node_a.depends_on.is_empty());

@@ -34,10 +34,8 @@ pub fn parse_workflow_file(path: &Path) -> Result<Workflow> {
         .map_err(|e| Error::Parse(format!("Failed to read {:?}: {}", path, e)))?;
 
     match path.extension().and_then(|e| e.to_str()) {
-        Some("json") => {
-            serde_json::from_str(&content)
-                .map_err(|e| Error::Parse(format!("Failed to parse JSON workflow {:?}: {}", path, e)))
-        }
+        Some("json") => serde_json::from_str(&content)
+            .map_err(|e| Error::Parse(format!("Failed to parse JSON workflow {:?}: {}", path, e))),
         _ => parse_workflow(&content),
     }
 }

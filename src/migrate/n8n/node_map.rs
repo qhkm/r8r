@@ -67,19 +67,10 @@ pub fn map_node(n8n_type: &str, params: &Value) -> NodeMapResult {
             let (runtime, code) = if language == "python" {
                 (
                     "python3",
-                    params
-                        .get("pythonCode")
-                        .cloned()
-                        .unwrap_or(Value::Null),
+                    params.get("pythonCode").cloned().unwrap_or(Value::Null),
                 )
             } else {
-                (
-                    "node",
-                    params
-                        .get("jsCode")
-                        .cloned()
-                        .unwrap_or(Value::Null),
-                )
+                ("node", params.get("jsCode").cloned().unwrap_or(Value::Null))
             };
 
             NodeMapResult {
@@ -98,10 +89,7 @@ pub fn map_node(n8n_type: &str, params: &Value) -> NodeMapResult {
 
         // ── Wait / delay ───────────────────────────────────────────────
         "wait" => {
-            let amount = params
-                .get("amount")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
+            let amount = params.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
             let unit = params
                 .get("unit")
@@ -265,10 +253,7 @@ mod tests {
 
         assert_eq!(result.r8r_type, "sandbox");
         assert_eq!(result.config["runtime"], "python3");
-        assert_eq!(
-            result.config["code"],
-            "return [{'json': x} for x in items]"
-        );
+        assert_eq!(result.config["code"], "return [{'json': x} for x in items]");
         assert_eq!(result.warnings.len(), 1);
         assert_eq!(result.warnings[0].category, WarningCategory::FeatureGate);
     }
