@@ -5,3 +5,5 @@
  * LICENSE-AGPL for a copy of the license.
  */
 //! n8n workflow migration.
+
+pub mod parser;
