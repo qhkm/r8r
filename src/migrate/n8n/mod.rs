@@ -6,5 +6,6 @@
  */
 //! n8n workflow migration.
 
+pub mod expressions;
 pub mod node_map;
 pub mod parser;
