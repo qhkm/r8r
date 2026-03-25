@@ -85,6 +85,9 @@ pub struct OperationDef {
     pub body: Option<Value>,
     #[serde(default)]
     pub query: Option<HashMap<String, String>>,
+    /// How to encode the body: "json" (default) or "form" (application/x-www-form-urlencoded)
+    #[serde(default)]
+    pub body_type: Option<String>,
 }
 
 /// Definition of a single parameter within an operation.

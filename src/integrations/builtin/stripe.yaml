@@ -1,7 +1,7 @@
 version: 1
 name: stripe
 display_name: Stripe
-description: Stripe API integration (GET operations only - POST requires form-encoding support, planned for follow-up)
+description: Stripe API integration
 base_url: https://api.stripe.com/v1
 docs_url: https://docs.stripe.com/api
 
@@ -45,3 +45,33 @@ operations:
     method: GET
     path: /balance
     params: {}
+
+  create_customer:
+    description: Create a customer
+    method: POST
+    path: /customers
+    body_type: form
+    params:
+      email: { required: false, type: string }
+      name: { required: false, type: string }
+      description: { required: false, type: string }
+    body:
+      email: "{{ params.email }}"
+      name: "{{ params.name }}"
+      description: "{{ params.description }}"
+
+  create_charge:
+    description: Create a charge
+    method: POST
+    path: /charges
+    body_type: form
+    params:
+      amount: { required: true, type: integer, description: "Amount in cents" }
+      currency: { required: true, type: string, description: "Three-letter ISO currency code" }
+      customer: { required: false, type: string }
+      description: { required: false, type: string }
+    body:
+      amount: "{{ params.amount }}"
+      currency: "{{ params.currency }}"
+      customer: "{{ params.customer }}"
+      description: "{{ params.description }}"

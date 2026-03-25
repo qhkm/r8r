@@ -319,7 +319,9 @@ mod tests {
         assert!(stripe.operations.contains_key("list_customers"));
         assert!(stripe.operations.contains_key("list_charges"));
         assert!(stripe.operations.contains_key("get_balance"));
-        assert_eq!(stripe.operations.len(), 4);
+        assert!(stripe.operations.contains_key("create_customer"));
+        assert!(stripe.operations.contains_key("create_charge"));
+        assert_eq!(stripe.operations.len(), 6);
     }
 
     #[test]

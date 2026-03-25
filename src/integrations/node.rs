@@ -233,6 +233,11 @@ pub fn build_http_config(
         config["body"] = body_val;
     }
 
+    // Set body_type if specified (e.g. "form" for application/x-www-form-urlencoded)
+    if let Some(body_type) = &op.body_type {
+        config["body_type"] = json!(body_type);
+    }
+
     if let Some(cred) = credential {
         config["credential"] = Value::String(cred.to_string());
         // Derive auth_type from the integration definition
@@ -404,6 +409,7 @@ mod tests {
                 q.insert("per_page".into(), "{{ params.per_page }}".into());
                 q
             }),
+            body_type: None,
         }
     }
 
@@ -488,6 +494,7 @@ mod tests {
                 "assignees": "{{ params.assignees }}"
             })),
             query: None,
+            body_type: None,
         }
     }
 
