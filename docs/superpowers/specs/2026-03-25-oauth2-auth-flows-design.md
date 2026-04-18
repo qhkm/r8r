@@ -1,7 +1,7 @@
 # OAuth2 Auth Flows
 
 **Date**: 2026-03-25
-**Status**: In Review (revised after spec review)
+**Status**: Approved
 **Scope**: `r8r auth login/logout/status` CLI commands, device code flow, local callback flow, runtime token refresh
 
 ## Problem
