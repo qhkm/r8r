@@ -1,0 +1,12 @@
+{
+  "name": "Simple HTTP Workflow",
+  "nodes": [
+    {"id": "1", "name": "Manual Trigger", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [250, 300], "parameters": {}},
+    {"id": "2", "name": "Fetch Data", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4, "position": [450, 300], "parameters": {"url": "https://api.example.com/data", "method": "GET"}},
+    {"id": "3", "name": "Transform", "type": "n8n-nodes-base.set", "typeVersion": 3, "position": [650, 300], "parameters": {"assignments": {"assignments": [{"name": "result", "value": "={{ $json.data }}"}]}}}
+  ],
+  "connections": {
+    "Manual Trigger": {"main": [[{"node": "Fetch Data", "type": "main", "index": 0}]]},
+    "Fetch Data": {"main": [[{"node": "Transform", "type": "main", "index": 0}]]}
+  }
+}

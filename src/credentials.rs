@@ -71,6 +71,8 @@ struct MasterKeyFile {
 #[derive(Default, Serialize, Deserialize)]
 pub struct CredentialStore {
     credentials: HashMap<String, Credential>,
+    #[serde(default)]
+    oauth2_credentials: HashMap<String, crate::integrations::oauth2::OAuth2Credential>,
     /// Master key for encryption (not serialized, zeroized on drop)
     #[serde(skip)]
     master_key: Option<SecureMasterKey>,
@@ -355,6 +357,22 @@ impl CredentialStore {
     /// Check if this credential is encrypted.
     pub fn is_encrypted(credential: &Credential) -> bool {
         credential.value.starts_with("enc:")
+    }
+
+    pub fn get_oauth2(
+        &self,
+        service: &str,
+    ) -> Option<&crate::integrations::oauth2::OAuth2Credential> {
+        self.oauth2_credentials.get(service)
+    }
+
+    pub fn set_oauth2(&mut self, credential: crate::integrations::oauth2::OAuth2Credential) {
+        self.oauth2_credentials
+            .insert(credential.service.clone(), credential);
+    }
+
+    pub fn list_oauth2(&self) -> Vec<&str> {
+        self.oauth2_credentials.keys().map(|s| s.as_str()).collect()
     }
 }
 

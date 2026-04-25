@@ -1,0 +1,47 @@
+version: 1
+name: openai
+display_name: OpenAI
+description: OpenAI API integration
+base_url: https://api.openai.com/v1
+docs_url: https://platform.openai.com/docs/api-reference
+
+auth:
+  methods:
+    - type: bearer
+      description: API key
+
+headers:
+  Content-Type: application/json
+
+operations:
+  chat_completion:
+    description: Create a chat completion
+    method: POST
+    path: /chat/completions
+    params:
+      model: { required: true, type: string, description: "Model ID (e.g. gpt-4)" }
+      messages: { required: true, type: array, description: "Chat messages" }
+      temperature: { required: false, type: number, default: 1.0 }
+      max_tokens: { required: false, type: integer }
+    body:
+      model: "{{ params.model }}"
+      messages: "{{ params.messages }}"
+      temperature: "{{ params.temperature }}"
+      max_tokens: "{{ params.max_tokens }}"
+
+  create_embedding:
+    description: Create embeddings
+    method: POST
+    path: /embeddings
+    params:
+      model: { required: true, type: string }
+      input: { required: true, type: string }
+    body:
+      model: "{{ params.model }}"
+      input: "{{ params.input }}"
+
+  list_models:
+    description: List available models
+    method: GET
+    path: /models
+    params: {}

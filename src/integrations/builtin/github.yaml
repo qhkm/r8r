@@ -1,0 +1,75 @@
+version: 1
+name: github
+display_name: GitHub
+description: GitHub REST API integration
+base_url: https://api.github.com
+docs_url: https://docs.github.com/en/rest
+
+auth:
+  methods:
+    - type: oauth2
+      authorization_url: https://github.com/login/oauth/authorize
+      token_url: https://github.com/login/oauth/access_token
+      scopes: [repo, read:org, read:user]
+      flows: [device_code, local_callback]
+    - type: bearer
+      description: Personal access token
+
+headers:
+  Accept: application/vnd.github+json
+  X-GitHub-Api-Version: "2022-11-28"
+
+operations:
+  create_issue:
+    description: Create a new issue in a repository
+    method: POST
+    path: /repos/{{ params.owner }}/{{ params.repo }}/issues
+    params:
+      owner: { required: true, type: string, description: "Repository owner" }
+      repo: { required: true, type: string, description: "Repository name" }
+      title: { required: true, type: string, description: "Issue title" }
+      body: { required: false, type: string, description: "Issue body markdown" }
+      labels: { required: false, type: array, description: "Label names" }
+      assignees: { required: false, type: array, description: "Usernames to assign" }
+    body:
+      title: "{{ params.title }}"
+      body: "{{ params.body }}"
+      labels: "{{ params.labels }}"
+      assignees: "{{ params.assignees }}"
+
+  get_issue:
+    description: Get a single issue by number
+    method: GET
+    path: /repos/{{ params.owner }}/{{ params.repo }}/issues/{{ params.number }}
+    params:
+      owner: { required: true, type: string }
+      repo: { required: true, type: string }
+      number: { required: true, type: integer }
+
+  list_issues:
+    description: List repository issues
+    method: GET
+    path: /repos/{{ params.owner }}/{{ params.repo }}/issues
+    params:
+      owner: { required: true, type: string }
+      repo: { required: true, type: string }
+      state: { required: false, type: string, default: open, enum: [open, closed, all] }
+      per_page: { required: false, type: integer, default: 30 }
+      page: { required: false, type: integer, default: 1 }
+    query:
+      state: "{{ params.state }}"
+      per_page: "{{ params.per_page }}"
+      page: "{{ params.page }}"
+
+  create_repo:
+    description: Create a repository for the authenticated user
+    method: POST
+    path: /user/repos
+    params:
+      name: { required: true, type: string, description: "Repository name" }
+      description: { required: false, type: string }
+      private: { required: false, type: boolean, default: false }
+    body:
+      name: "{{ params.name }}"
+      description: "{{ params.description }}"
+      private: "{{ params.private }}"

@@ -2698,6 +2698,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "percent-encoding",
  "predicates",
  "r2d2",
  "r2d2_sqlite",

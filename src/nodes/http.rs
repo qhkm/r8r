@@ -6,6 +6,7 @@
  */
 //! HTTP node - make HTTP requests.
 
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -76,6 +77,9 @@ struct HttpConfig {
     headers: Option<Value>,
     #[serde(default)]
     body: Option<Value>,
+    /// How to encode the body: "json" (default) or "form" (application/x-www-form-urlencoded)
+    #[serde(default = "default_body_type")]
+    body_type: String,
     #[serde(default)]
     timeout_seconds: Option<u64>,
     /// Return raw text instead of parsing JSON
@@ -96,6 +100,10 @@ struct HttpConfig {
 
 fn default_method() -> String {
     "GET".to_string()
+}
+
+fn default_body_type() -> String {
+    "json".to_string()
 }
 
 fn default_auth_type() -> String {
@@ -217,7 +225,30 @@ impl Node for HttpNode {
         if let Some(body) = &config.body {
             // Render template variables in body
             let rendered_body = render_body(body, ctx, RenderMode::Compact);
-            request = request.json(&rendered_body);
+            match config.body_type.as_str() {
+                "form" => {
+                    // Convert JSON object to form key-value pairs
+                    if let Some(obj) = rendered_body.as_object() {
+                        let form_data: HashMap<String, String> = obj
+                            .iter()
+                            .filter_map(|(k, v)| {
+                                let val = match v {
+                                    Value::String(s) => s.clone(),
+                                    Value::Null => return None,
+                                    other => other.to_string().trim_matches('"').to_string(),
+                                };
+                                Some((k.clone(), val))
+                            })
+                            .collect();
+                        request = request.form(&form_data);
+                    } else {
+                        request = request.json(&rendered_body);
+                    }
+                }
+                _ => {
+                    request = request.json(&rendered_body);
+                }
+            }
         }
 
         // Set timeout
@@ -425,5 +456,28 @@ mod tests {
 
         let result = validate_url("https://httpbin.org/get");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_http_config_body_type_default() {
+        let config: HttpConfig = serde_json::from_value(json!({
+            "url": "https://example.com",
+            "method": "POST",
+            "body": {"key": "value"}
+        }))
+        .unwrap();
+        assert_eq!(config.body_type, "json");
+    }
+
+    #[test]
+    fn test_http_config_body_type_form() {
+        let config: HttpConfig = serde_json::from_value(json!({
+            "url": "https://example.com",
+            "method": "POST",
+            "body": {"key": "value"},
+            "body_type": "form"
+        }))
+        .unwrap();
+        assert_eq!(config.body_type, "form");
     }
 }

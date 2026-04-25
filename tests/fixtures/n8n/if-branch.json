@@ -1,0 +1,16 @@
+{
+  "name": "IF Branch Workflow",
+  "nodes": [
+    {"id": "1", "name": "Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [250, 300], "parameters": {"path": "/test", "method": "POST"}},
+    {"id": "2", "name": "Check Status", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [450, 300], "parameters": {"conditions": {"boolean": [{"value1": "={{ $json.active }}", "value2": true}]}}},
+    {"id": "3", "name": "Process Active", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4, "position": [650, 200], "parameters": {"url": "https://api.example.com/active", "method": "POST"}},
+    {"id": "4", "name": "Log Inactive", "type": "n8n-nodes-base.noOp", "typeVersion": 1, "position": [650, 400], "parameters": {}}
+  ],
+  "connections": {
+    "Webhook": {"main": [[{"node": "Check Status", "type": "main", "index": 0}]]},
+    "Check Status": {"main": [
+      [{"node": "Process Active", "type": "main", "index": 0}],
+      [{"node": "Log Inactive", "type": "main", "index": 0}]
+    ]}
+  }
+}

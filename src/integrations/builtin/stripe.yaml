@@ -1,0 +1,77 @@
+version: 1
+name: stripe
+display_name: Stripe
+description: Stripe API integration
+base_url: https://api.stripe.com/v1
+docs_url: https://docs.stripe.com/api
+
+auth:
+  methods:
+    - type: bearer
+      description: Secret key (sk_...)
+
+operations:
+  get_customer:
+    description: Get a customer
+    method: GET
+    path: /customers/{{ params.id }}
+    params:
+      id: { required: true, type: string, description: "Customer ID" }
+
+  list_customers:
+    description: List customers
+    method: GET
+    path: /customers
+    params:
+      limit: { required: false, type: integer, default: 10 }
+      email: { required: false, type: string }
+    query:
+      limit: "{{ params.limit }}"
+      email: "{{ params.email }}"
+
+  list_charges:
+    description: List charges
+    method: GET
+    path: /charges
+    params:
+      limit: { required: false, type: integer, default: 10 }
+      customer: { required: false, type: string }
+    query:
+      limit: "{{ params.limit }}"
+      customer: "{{ params.customer }}"
+
+  get_balance:
+    description: Get current balance
+    method: GET
+    path: /balance
+    params: {}
+
+  create_customer:
+    description: Create a customer
+    method: POST
+    path: /customers
+    body_type: form
+    params:
+      email: { required: false, type: string }
+      name: { required: false, type: string }
+      description: { required: false, type: string }
+    body:
+      email: "{{ params.email }}"
+      name: "{{ params.name }}"
+      description: "{{ params.description }}"
+
+  create_charge:
+    description: Create a charge
+    method: POST
+    path: /charges
+    body_type: form
+    params:
+      amount: { required: true, type: integer, description: "Amount in cents" }
+      currency: { required: true, type: string, description: "Three-letter ISO currency code" }
+      customer: { required: false, type: string }
+      description: { required: false, type: string }
+    body:
+      amount: "{{ params.amount }}"
+      currency: "{{ params.currency }}"
+      customer: "{{ params.customer }}"
+      description: "{{ params.description }}"

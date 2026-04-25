@@ -19,6 +19,7 @@ use super::{
     VariablesNode, WaitNode,
 };
 use crate::error::{Error, Result};
+use crate::integrations::node::IntegrationNode;
 
 /// Registry of available node types.
 #[derive(Clone)]
@@ -59,6 +60,7 @@ impl NodeRegistry {
         registry.register(Arc::new(DatabaseNode::new()));
         registry.register(Arc::new(S3Node::new()));
         registry.register(Arc::new(ApprovalNode::new()));
+        registry.register(Arc::new(IntegrationNode::new()));
 
         registry
     }
@@ -152,6 +154,7 @@ mod tests {
         assert!(registry.has("database"));
         assert!(registry.has("s3"));
         assert!(registry.has("approval"));
+        assert!(registry.has("integration"));
         assert!(!registry.has("nonexistent"));
     }
 
@@ -185,5 +188,6 @@ mod tests {
         assert!(types.contains(&"database"));
         assert!(types.contains(&"s3"));
         assert!(types.contains(&"approval"));
+        assert!(types.contains(&"integration"));
     }
 }

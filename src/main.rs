@@ -230,6 +230,16 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Manage integration definitions
+    Integrations {
+        #[command(subcommand)]
+        command: IntegrationsCommand,
+    },
+    /// Migrate workflows from other platforms
+    Migrate {
+        #[command(subcommand)]
+        command: MigrateCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -485,6 +495,47 @@ enum PolicyActions {
     },
 }
 
+#[derive(Subcommand)]
+enum IntegrationsCommand {
+    /// List all available integration services
+    List,
+    /// Show details of an integration service
+    Show {
+        /// Integration service name (e.g. github, slack)
+        service: String,
+    },
+    /// Validate a YAML integration definition file
+    Validate {
+        /// Path to integration YAML file
+        file: std::path::PathBuf,
+    },
+    /// Dry-run: construct an HTTP request without sending it
+    Test {
+        /// Integration service name
+        service: String,
+        /// Operation name (e.g. create_issue, send_message)
+        operation: String,
+        /// JSON string of parameter values
+        #[arg(long, default_value = "{}")]
+        params: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MigrateCommand {
+    /// Migrate an n8n workflow to r8r format
+    N8n {
+        /// Path to n8n workflow JSON export
+        file: std::path::PathBuf,
+        /// Output file (default: stdout)
+        #[arg(long, short)]
+        output: Option<std::path::PathBuf>,
+        /// Output format (yaml or json)
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+}
+
 fn parse_var(s: &str) -> std::result::Result<(String, String), String> {
     let pos = s
         .find('=')
@@ -702,6 +753,25 @@ async fn run_command(
         }) => cmd_lint(&files, errors_only, json).await?,
         Some(Commands::Schema { output }) => cmd_schema(output.as_deref()).await?,
         Some(Commands::Init { yes, force }) => cmd_init(output, yes, force).await?,
+        Some(Commands::Integrations { command }) => match command {
+            IntegrationsCommand::List => cmd_integrations_list(),
+            IntegrationsCommand::Show { service } => cmd_integrations_show(&service)?,
+            IntegrationsCommand::Validate { file } => cmd_integrations_validate(&file)?,
+            IntegrationsCommand::Test {
+                service,
+                operation,
+                params,
+            } => cmd_integrations_test(&service, &operation, &params)?,
+        },
+        Some(Commands::Migrate { command }) => match command {
+            MigrateCommand::N8n {
+                file,
+                output,
+                format,
+            } => {
+                cmd_migrate_n8n(&file, output.as_deref(), &format)?;
+            }
+        },
     }
 
     Ok(())
@@ -4172,4 +4242,221 @@ async fn cmd_policy_validate(file: &str) -> anyhow::Result<()> {
 
 async fn cmd_init(output: &r8r::cli::output::Output, yes: bool, force: bool) -> anyhow::Result<()> {
     r8r::cli::init::run_init(output, yes, force).await
+}
+
+// ============================================================================
+// Integration Commands
+// ============================================================================
+
+fn cmd_integrations_list() {
+    use r8r::integrations::loader::IntegrationLoader;
+
+    let loader = IntegrationLoader::new();
+    let names = loader.list_all();
+
+    println!("Available integrations:");
+    for name in &names {
+        if let Some(def) = loader.get(name) {
+            let display = def.display_name.as_deref().unwrap_or(&def.name);
+            let op_count = def.operations.len();
+            println!(
+                "  {:<10}{:<20}({} operation{})",
+                name,
+                display,
+                op_count,
+                if op_count == 1 { "" } else { "s" }
+            );
+        }
+    }
+}
+
+fn cmd_integrations_show(service: &str) -> anyhow::Result<()> {
+    use r8r::integrations::loader::IntegrationLoader;
+
+    let loader = IntegrationLoader::new();
+    let def = loader
+        .get(service)
+        .ok_or_else(|| anyhow::anyhow!("Unknown integration service '{}'", service))?;
+
+    let display = def.display_name.as_deref().unwrap_or(&def.name);
+    let desc = def
+        .description
+        .as_deref()
+        .unwrap_or("No description available");
+    println!("{} - {}", display, desc);
+    println!("Base URL: {}", def.base_url);
+    if let Some(docs) = &def.docs_url {
+        println!("Docs: {}", docs);
+    }
+
+    println!();
+    println!("Operations:");
+    let mut ops: Vec<_> = def.operations.iter().collect();
+    ops.sort_by_key(|(name, _)| (*name).clone());
+    for (op_name, op_def) in &ops {
+        println!("  {:<16}{:<6}{}", op_name, op_def.method, op_def.path);
+    }
+
+    Ok(())
+}
+
+fn cmd_integrations_validate(file: &std::path::Path) -> anyhow::Result<()> {
+    use r8r::integrations::definition::IntegrationDefinition;
+
+    if !file.exists() {
+        anyhow::bail!("File not found: {}", file.display());
+    }
+
+    let contents = std::fs::read_to_string(file)?;
+    match serde_yaml::from_str::<IntegrationDefinition>(&contents) {
+        Ok(def) => {
+            println!(
+                "\u{2713} Valid integration definition: {} ({} operation{})",
+                def.name,
+                def.operations.len(),
+                if def.operations.len() == 1 { "" } else { "s" }
+            );
+            Ok(())
+        }
+        Err(e) => {
+            println!("\u{2717} Invalid integration definition: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_integrations_test(service: &str, operation: &str, params_json: &str) -> anyhow::Result<()> {
+    use r8r::integrations::loader::IntegrationLoader;
+    use r8r::integrations::node::build_http_config;
+    use r8r::integrations::validator::validate_and_resolve_params;
+
+    let loader = IntegrationLoader::new();
+    let def = loader
+        .get(service)
+        .ok_or_else(|| anyhow::anyhow!("Unknown integration service '{}'", service))?;
+
+    let op = def.operations.get(operation).ok_or_else(|| {
+        let available: Vec<_> = def.operations.keys().collect();
+        anyhow::anyhow!(
+            "Unknown operation '{}' for service '{}'. Available: {:?}",
+            operation,
+            service,
+            available
+        )
+    })?;
+
+    let params_value: serde_json::Value = serde_json::from_str(params_json)
+        .map_err(|e| anyhow::anyhow!("Invalid --params JSON: {}", e))?;
+
+    let resolved = validate_and_resolve_params(&op.params, &params_value)
+        .map_err(|e| anyhow::anyhow!("Parameter validation failed: {}", e))?;
+
+    let config = build_http_config(&def, op, &resolved, Some("MOCK_CREDENTIAL"));
+
+    println!("Dry-run request for {}.{}:", service, operation);
+    println!();
+    println!(
+        "  {} {}",
+        config["method"].as_str().unwrap_or("?"),
+        config["url"].as_str().unwrap_or("?")
+    );
+
+    if let Some(headers) = config.get("headers") {
+        if let Some(obj) = headers.as_object() {
+            for (k, v) in obj {
+                println!("  {}: {}", k, v.as_str().unwrap_or(&v.to_string()));
+            }
+        }
+    }
+
+    if let Some(auth_type) = config.get("auth_type") {
+        println!(
+            "  Authorization: {} (credential=MOCK_CREDENTIAL)",
+            auth_type.as_str().unwrap_or("?")
+        );
+    }
+
+    if let Some(body) = config.get("body") {
+        println!();
+        println!(
+            "  Body: {}",
+            serde_json::to_string_pretty(body).unwrap_or_else(|_| body.to_string())
+        );
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Migrate Commands
+// ============================================================================
+
+fn cmd_migrate_n8n(
+    file: &std::path::Path,
+    output: Option<&std::path::Path>,
+    format: &str,
+) -> anyhow::Result<()> {
+    use r8r::migrate::n8n::convert_n8n_workflow;
+
+    let input =
+        std::fs::read(file).map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", file, e))?;
+
+    let result = convert_n8n_workflow(&input)?;
+
+    // Print progress to stderr
+    let total_nodes = result.workflow.nodes.len();
+    let warning_count = result.warnings.len();
+
+    eprintln!(
+        "Migrating n8n workflow: \"{}\" ({} nodes)\n",
+        result.workflow.name, total_nodes
+    );
+
+    for warning in &result.warnings {
+        eprintln!("  ⚠ {}", warning);
+    }
+
+    if warning_count > 0 {
+        eprintln!("\nResult: {} warnings\n", warning_count);
+    } else {
+        eprintln!("Result: all nodes converted exactly\n");
+    }
+
+    // Build header comment
+    let header = format!(
+        "# Migrated from n8n workflow: \"{}\"\n# Generated by: r8r migrate n8n\n",
+        result.workflow.name,
+    );
+
+    // Warning comments
+    let warning_comments = if result.warnings.is_empty() {
+        String::new()
+    } else {
+        let mut s = "#\n# Migration warnings:\n".to_string();
+        for w in &result.warnings {
+            s.push_str(&format!("#   - {}\n", w));
+        }
+        s
+    };
+
+    // Serialize
+    let body = match format {
+        "json" => serde_json::to_string_pretty(&result.workflow)
+            .map_err(|e| anyhow::anyhow!("JSON serialization failed: {}", e))?,
+        _ => serde_yaml::to_string(&result.workflow)
+            .map_err(|e| anyhow::anyhow!("YAML serialization failed: {}", e))?,
+    };
+
+    let full_output = format!("{}{}\n{}", header, warning_comments, body);
+
+    match output {
+        Some(path) => {
+            std::fs::write(path, &full_output)
+                .map_err(|e| anyhow::anyhow!("Failed to write {:?}: {}", path, e))?;
+            eprintln!("Written to {:?}", path);
+        }
+        None => print!("{}", full_output),
+    }
+
+    Ok(())
 }
