@@ -3452,6 +3452,22 @@ async fn load_workflow_credentials(workflow: &Workflow) -> Result<HashMap<String
         }
     }
 
+    // Also preload provider-default LLM credentials so agent nodes can fall back to them
+    // without requiring an explicit `credential:` field in the workflow YAML.
+    // See `nodes::agent::resolve_credential` for the lookup order.
+    for default_name in ["openai", "anthropic", "llm"] {
+        if credentials.contains_key(default_name) {
+            continue;
+        }
+        if let Ok(Some(value)) = store.get(default_name) {
+            debug!(
+                "Preloaded LLM-default credential '{}' for workflow '{}'",
+                default_name, workflow.name
+            );
+            credentials.insert(default_name.to_string(), value);
+        }
+    }
+
     Ok(credentials)
 }
 
