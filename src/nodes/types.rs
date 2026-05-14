@@ -237,4 +237,18 @@ pub trait Node: Send + Sync {
     fn description(&self) -> &str {
         "A workflow node"
     }
+
+    /// Validate the workflow YAML config for this node at create-time, before runtime.
+    ///
+    /// Default implementation is a no-op — nodes that have not opted in continue to
+    /// surface config errors only at execution time. Override per-node by attempting
+    /// to deserialize the config into the node's typed config struct and converting
+    /// the error into a user-facing message including the node ID where possible.
+    ///
+    /// This is the hook used by `validate_workflow` to catch hallucinated configs
+    /// (e.g. an LLM generating a `limit` node without the required `field` key)
+    /// before they reach runtime.
+    fn validate_config(&self, _config: &Value) -> Result<()> {
+        Ok(())
+    }
 }

@@ -155,6 +155,12 @@ impl Node for HttpNode {
         "Make HTTP requests (GET, POST, PUT, DELETE, PATCH)"
     }
 
+    fn validate_config(&self, config: &Value) -> Result<()> {
+        let _: HttpConfig = serde_json::from_value(config.clone())
+            .map_err(|e| Error::Node(format!("Invalid http config: {}", e)))?;
+        Ok(())
+    }
+
     async fn execute(&self, config: &Value, ctx: &NodeContext) -> Result<NodeResult> {
         let config: HttpConfig = serde_json::from_value(config.clone())
             .map_err(|e| Error::Node(format!("Invalid HTTP config: {}", e)))?;

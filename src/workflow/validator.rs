@@ -181,6 +181,39 @@ pub fn validate_workflow(workflow: &Workflow) -> Result<()> {
     Ok(())
 }
 
+/// Validate a workflow + per-node config against the node registry.
+///
+/// Calls `validate_workflow` first for structural checks, then dispatches each
+/// node's config to the registry's `validate_config(...)` hook. Catches LLM
+/// hallucinations (e.g. a `limit` node missing the required `field` key)
+/// at create time instead of at runtime.
+///
+/// Nodes whose type is not registered are reported as an unknown-type error.
+pub fn validate_workflow_with_registry(
+    workflow: &Workflow,
+    registry: &crate::nodes::NodeRegistry,
+) -> Result<()> {
+    validate_workflow(workflow)?;
+
+    for node in &workflow.nodes {
+        let entry = registry.get(&node.node_type).ok_or_else(|| {
+            Error::Validation(format!(
+                "Node '{}' uses unknown type '{}'. Run `r8r doctor` to see registered types.",
+                node.id, node.node_type
+            ))
+        })?;
+
+        if let Err(e) = entry.validate_config(&node.config) {
+            return Err(Error::Validation(format!(
+                "Node '{}' ({}): {}",
+                node.id, node.node_type, e
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 fn has_cycle(workflow: &Workflow) -> bool {
     let mut visited = HashSet::new();
     let mut rec_stack = HashSet::new();

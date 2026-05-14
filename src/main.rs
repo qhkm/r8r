@@ -878,8 +878,9 @@ async fn cmd_workflows_list(output: &r8r::cli::output::Output) -> anyhow::Result
 }
 
 async fn cmd_workflows_create(file: &str, output: &r8r::cli::output::Output) -> anyhow::Result<()> {
+    use r8r::nodes::NodeRegistry;
     use r8r::storage::StoredWorkflow;
-    use r8r::workflow::{parse_workflow_file, validate_workflow};
+    use r8r::workflow::{parse_workflow_file, validate_workflow_with_registry};
     use serde::Serialize;
     use std::path::Path;
 
@@ -888,9 +889,11 @@ async fn cmd_workflows_create(file: &str, output: &r8r::cli::output::Output) -> 
         anyhow::bail!("File not found: {}", file);
     }
 
-    // Parse and validate
+    // Parse and validate against the node registry — catches per-node config
+    // hallucinations (e.g. missing required fields) at create time.
     let workflow = parse_workflow_file(path)?;
-    validate_workflow(&workflow)?;
+    let registry = NodeRegistry::new();
+    validate_workflow_with_registry(&workflow, &registry)?;
 
     // Read raw YAML
     let definition = std::fs::read_to_string(path)?;
@@ -1330,7 +1333,8 @@ async fn cmd_workflows_delete(name: &str) -> anyhow::Result<()> {
 }
 
 async fn cmd_workflows_validate(file: &str) -> anyhow::Result<()> {
-    use r8r::workflow::{parse_workflow_file, validate_workflow};
+    use r8r::nodes::NodeRegistry;
+    use r8r::workflow::{parse_workflow_file, validate_workflow_with_registry};
     use std::path::Path;
 
     let path = Path::new(file);
@@ -1339,7 +1343,8 @@ async fn cmd_workflows_validate(file: &str) -> anyhow::Result<()> {
     }
 
     let workflow = parse_workflow_file(path)?;
-    validate_workflow(&workflow)?;
+    let registry = NodeRegistry::new();
+    validate_workflow_with_registry(&workflow, &registry)?;
 
     println!("✓ Workflow '{}' is valid", workflow.name);
     println!();

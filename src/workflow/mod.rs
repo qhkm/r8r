@@ -30,4 +30,4 @@ pub use schema::{
     WorkflowSchemaValidator,
 };
 pub use types::*;
-pub use validator::validate_workflow;
+pub use validator::{validate_workflow, validate_workflow_with_registry};

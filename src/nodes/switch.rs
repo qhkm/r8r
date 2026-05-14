@@ -73,6 +73,12 @@ impl Node for SwitchNode {
         "Route execution based on conditions"
     }
 
+    fn validate_config(&self, config: &Value) -> Result<()> {
+        let _: SwitchConfig = serde_json::from_value(config.clone())
+            .map_err(|e| Error::Node(format!("Invalid switch config: {}", e)))?;
+        Ok(())
+    }
+
     async fn execute(&self, config: &Value, ctx: &NodeContext) -> Result<NodeResult> {
         let config: SwitchConfig = serde_json::from_value(config.clone())
             .map_err(|e| Error::Node(format!("Invalid switch config: {}", e)))?;
