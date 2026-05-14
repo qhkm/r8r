@@ -146,6 +146,7 @@ pub trait Storage: Send + Sync + 'static {
     async fn list_repl_messages(&self, session_id: &str, limit: usize) -> Result<Vec<ReplMessage>>;
     async fn save_repl_llm_config(&self, config: &LlmConfig) -> Result<()>;
     async fn get_repl_llm_config(&self) -> Result<Option<LlmConfig>>;
+    async fn delete_repl_llm_config(&self) -> Result<()>;
 
     // -------------------------------------------------------------------------
     // Delayed events
@@ -362,6 +363,9 @@ impl<S: Storage + ?Sized> Storage for std::sync::Arc<S> {
     }
     async fn get_repl_llm_config(&self) -> Result<Option<LlmConfig>> {
         (**self).get_repl_llm_config().await
+    }
+    async fn delete_repl_llm_config(&self) -> Result<()> {
+        (**self).delete_repl_llm_config().await
     }
     async fn store_delayed_event(
         &self,

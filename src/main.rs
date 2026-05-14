@@ -91,6 +91,10 @@ enum Commands {
         /// Resume a previous session
         #[arg(long, num_args = 0..=1, default_missing_value = "")]
         resume: Option<String>,
+        /// Clear persisted REPL LLM config and exit. Use after editing config.toml
+        /// so the next `r8r chat` picks up the new [llm] settings.
+        #[arg(long, conflicts_with = "resume")]
+        reset: bool,
     },
     /// Generate or refine a workflow from a natural language description (shorthand)
     Prompt {
@@ -593,8 +597,8 @@ async fn run_command(
     output: &r8r::cli::output::Output,
 ) -> anyhow::Result<()> {
     match command {
-        None => cmd_chat(None).await?,
-        Some(Commands::Chat { resume }) => cmd_chat(resume).await?,
+        None => cmd_chat(None, false).await?,
+        Some(Commands::Chat { resume, reset }) => cmd_chat(resume, reset).await?,
         Some(Commands::Workflows { action }) => match action {
             WorkflowActions::List => cmd_workflows_list(output).await?,
             WorkflowActions::Create { file } => cmd_workflows_create(&file, output).await?,
@@ -831,7 +835,15 @@ fn cmd_completions(shell: CompletionShell) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_chat(resume: Option<String>) -> anyhow::Result<()> {
+async fn cmd_chat(resume: Option<String>, reset: bool) -> anyhow::Result<()> {
+    if reset {
+        let storage = get_storage()?;
+        storage.delete_repl_llm_config().await?;
+        eprintln!(
+            "✓ Cleared persisted REPL LLM config. Next `r8r chat` will load from config.toml."
+        );
+        return Ok(());
+    }
     r8r::repl::run_repl(resume).await
 }
 
