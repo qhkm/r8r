@@ -90,11 +90,16 @@ impl TokenBucket {
         let max_tokens = (config.burst_size as u64) * 1000;
         // Calculate refill rate: tokens per window / window_millis
         let window_millis = config.window.as_millis() as u64;
-        let refill_rate = if window_millis > 0 {
-            ((config.requests_per_window as u64) * 1000) / window_millis
-        } else {
-            config.requests_per_window as u64 * 1000
-        };
+        let refill_rate = (config.requests_per_window as u64)
+            .checked_mul(1000)
+            .and_then(|total| {
+                if window_millis > 0 {
+                    total.checked_div(window_millis)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(config.requests_per_window as u64 * 1000);
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -1,0 +1,73 @@
+version: 1
+name: apify
+display_name: Apify
+description: Apify — cloud scraping platform, actors & datasets
+base_url: https://api.apify.com/v2
+docs_url: https://docs.apify.com/api/v2
+
+auth:
+  methods:
+    - type: bearer
+      description: "Apify API token (from https://console.apify.com/account#/integrations) — sent as `Authorization: Bearer <token>`"
+
+operations:
+  get_actor:
+    description: Get actor information by ID or owner~name
+    method: GET
+    path: /actors/{{ params.actor_id }}
+    params:
+      actor_id: { required: true, type: string, description: "Actor ID or `owner~name`, e.g. compass~google-maps-extractor" }
+
+  run_actor:
+    description: Start an actor run (raw POST body = actor input JSON)
+    method: POST
+    path: /actors/{{ params.actor_id }}/runs
+    params:
+      actor_id: { required: true, type: string, description: "Actor ID or `owner~name`" }
+      input: { required: false, type: object, description: "Actor input — whole POST body dihantar terus (tanpa wrapper)" }
+      timeout: { required: false, type: integer, description: "Timeout (seconds)" }
+      memory: { required: false, type: integer, description: "Memory (MB)" }
+      build: { required: false, type: string, description: "Build number/tag" }
+      wait_for_finish: { required: false, type: integer, description: "Secs to wait for finish (0 = async)" }
+    body: "{{ params.input }}"
+    query:
+      timeout: "{{ params.timeout }}"
+      memory: "{{ params.memory }}"
+      build: "{{ params.build }}"
+      waitForFinish: "{{ params.wait_for_finish }}"
+
+  get_run:
+    description: Get actor run status & result
+    method: GET
+    path: /actors/{{ params.actor_id }}/runs/{{ params.run_id }}
+    params:
+      actor_id: { required: true, type: string }
+      run_id: { required: true, type: string }
+
+  list_runs:
+    description: List runs for an actor
+    method: GET
+    path: /actors/{{ params.actor_id }}/runs
+    params:
+      actor_id: { required: true, type: string }
+      limit: { required: false, type: integer, default: 100, description: "Max 1000" }
+      offset: { required: false, type: integer, default: 0 }
+      desc: { required: false, type: boolean, default: true }
+    query:
+      limit: "{{ params.limit }}"
+      offset: "{{ params.offset }}"
+      desc: "{{ params.desc }}"
+
+  get_dataset_items:
+    description: Get items from a dataset (actor run results)
+    method: GET
+    path: /datasets/{{ params.dataset_id }}/items
+    params:
+      dataset_id: { required: true, type: string, description: "Dataset ID (run response: defaultDatasetId)" }
+      limit: { required: false, type: integer, default: 100 }
+      offset: { required: false, type: integer, default: 0 }
+      format: { required: false, type: string, default: json, enum: [json, jsonl, csv, xlsx, html] }
+    query:
+      limit: "{{ params.limit }}"
+      offset: "{{ params.offset }}"
+      format: "{{ params.format }}"

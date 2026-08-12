@@ -1,0 +1,72 @@
+version: 1
+name: apollo
+display_name: Apollo.io
+description: Apollo.io — B2B people & company enrichment, search, intent data
+base_url: https://api.apollo.io/v1
+docs_url: https://apolloio.github.io/apollo-api-docs
+
+auth:
+  methods:
+    - type: api_key
+      header_name: X-Api-Key
+      description: Apollo API key (from https://app.apollo.io/api-keys) — sent as `X-Api-Key` header
+
+operations:
+  match_person:
+    description: Match a person by email/first/last name (most precise enrichment)
+    method: POST
+    path: /people/match
+    params:
+      first_name: { required: false, type: string }
+      last_name: { required: false, type: string }
+      name: { required: false, type: string, description: "Full name (alternative to first/last)" }
+      email: { required: false, type: string }
+      organization_name: { required: false, type: string }
+      linkedin_url: { required: false, type: string }
+      reveal_personal_emails: { required: false, type: boolean, default: false, description: "Include personal emails (paid)" }
+    body:
+      first_name: "{{ params.first_name }}"
+      last_name: "{{ params.last_name }}"
+      name: "{{ params.name }}"
+      email: "{{ params.email }}"
+      organization_name: "{{ params.organization_name }}"
+      linkedin_url: "{{ params.linkedin_url }}"
+      reveal_personal_emails: "{{ params.reveal_personal_emails }}"
+
+  search_people:
+    description: Search people with filters (title, company, industry)
+    method: POST
+    path: /people/search
+    params:
+      q_keywords: { required: false, type: string, description: "Free-text keywords" }
+      person_titles: { required: false, type: array, description: "Titles e.g. [CTO, Founder]" }
+      organization_names: { required: false, type: array, description: "Company names, e.g. [Acme Inc]" }
+      organization_ids: { required: false, type: array }
+      page: { required: false, type: integer, default: 1 }
+      per_page: { required: false, type: integer, default: 25 }
+    body:
+      q_keywords: "{{ params.q_keywords }}"
+      person_titles: "{{ params.person_titles }}"
+      organization_names: "{{ params.organization_names }}"
+      organization_ids: "{{ params.organization_ids }}"
+      page: "{{ params.page }}"
+      per_page: "{{ params.per_page }}"
+
+  search_companies:
+    description: Search companies by name/domain/industry
+    method: POST
+    path: /organizations/search
+    params:
+      q_organization_name: { required: false, type: string }
+      q_organization_domains: { required: false, type: array, description: "Domains e.g. [acme.com]" }
+      organization_num_employees_ranges: { required: false, type: array, description: "Ranges e.g. [[11, 50]]" }
+      organization_industry: { required: false, type: string }
+      page: { required: false, type: integer, default: 1 }
+      per_page: { required: false, type: integer, default: 25 }
+    body:
+      q_organization_name: "{{ params.q_organization_name }}"
+      q_organization_domains: "{{ params.q_organization_domains }}"
+      organization_num_employees_ranges: "{{ params.organization_num_employees_ranges }}"
+      organization_industry: "{{ params.organization_industry }}"
+      page: "{{ params.page }}"
+      per_page: "{{ params.per_page }}"

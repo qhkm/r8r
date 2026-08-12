@@ -1,0 +1,74 @@
+version: 1
+name: browserbase
+display_name: Browserbase
+description: Browserbase — headless browser sessions in the cloud (automation, scraping, AI agents)
+base_url: https://api.browserbase.com/v1
+docs_url: https://docs.browserbase.com/reference/api
+
+auth:
+  methods:
+    - type: api_key
+      header_name: X-BB-API-Key
+      description: Browserbase API key (from https://www.browserbase.com/settings) — sent as `X-BB-API-Key` header
+
+operations:
+  create_session:
+    description: Create a new browser session
+    method: POST
+    path: /sessions
+    params:
+      project_id: { required: false, type: string, description: "Project ID (optional — inferred from API key)" }
+      region: { required: false, type: string, enum: [us-west-2, us-east-1, eu-central-1, ap-southeast-1], description: "Browser region" }
+      timeout: { required: false, type: integer, description: "Session timeout (60-21600s)" }
+      keep_alive: { required: false, type: boolean, default: false }
+      user_metadata: { required: false, type: object }
+    body:
+      projectId: "{{ params.project_id }}"
+      region: "{{ params.region }}"
+      timeout: "{{ params.timeout }}"
+      keepAlive: "{{ params.keep_alive }}"
+      userMetadata: "{{ params.user_metadata }}"
+
+  list_sessions:
+    description: List all sessions
+    method: GET
+    path: /sessions
+    params:
+      status: { required: false, type: string, enum: [running, completed] }
+      q: { required: false, type: string, description: "Search query" }
+    query:
+      status: "{{ params.status }}"
+      q: "{{ params.q }}"
+
+  get_session:
+    description: Get a session by ID
+    method: GET
+    path: /sessions/{{ params.session_id }}
+    params:
+      session_id: { required: true, type: string }
+
+  get_session_logs:
+    description: Get console logs for a session
+    method: GET
+    path: /sessions/{{ params.session_id }}/logs
+    params:
+      session_id: { required: true, type: string }
+
+  get_session_live_urls:
+    description: Get live debugger URLs for a session
+    method: GET
+    path: /sessions/{{ params.session_id }}/live-urls
+    params:
+      session_id: { required: true, type: string }
+
+  update_session:
+    description: Update a session (e.g. extend timeout, set live)
+    method: PATCH
+    path: /sessions/{{ params.session_id }}
+    params:
+      session_id: { required: true, type: string }
+      timeout: { required: false, type: integer }
+      live: { required: false, type: boolean }
+    body:
+      timeout: "{{ params.timeout }}"
+      live: "{{ params.live }}"

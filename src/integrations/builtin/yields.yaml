@@ -1,0 +1,16 @@
+version: 1
+name: yields
+display_name: DeFiLlama Yields
+description: DeFiLlama Yields — lending & DeFi yield pools (public API, no auth)
+base_url: https://yields.llama.fi
+docs_url: https://defillama.com/docs/api
+
+operations:
+  get_pools:
+    description: List all yield pools
+    method: GET
+    path: /pools
+    params:
+      include_tvl: { required: false, type: boolean, default: false }
+    query:
+      includeTVL: "{{ params.include_tvl }}"

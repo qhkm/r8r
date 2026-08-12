@@ -55,6 +55,33 @@ impl IntegrationLoader {
         const BUILTIN_OPENAI: &str = include_str!("builtin/openai.yaml");
         const BUILTIN_STRIPE: &str = include_str!("builtin/stripe.yaml");
         const BUILTIN_NOTION: &str = include_str!("builtin/notion.yaml");
+        const BUILTIN_TELEGRAM: &str = include_str!("builtin/telegram.yaml");
+        const BUILTIN_WHATSAPP: &str = include_str!("builtin/whatsapp.yaml");
+        const BUILTIN_GOOGLE_SHEETS: &str = include_str!("builtin/google-sheets.yaml");
+        const BUILTIN_AIRTABLE: &str = include_str!("builtin/airtable.yaml");
+        const BUILTIN_DISCORD: &str = include_str!("builtin/discord.yaml");
+        const BUILTIN_RESEND: &str = include_str!("builtin/resend.yaml");
+        const BUILTIN_TWILIO: &str = include_str!("builtin/twilio.yaml");
+        const BUILTIN_SHOPIFY: &str = include_str!("builtin/shopify.yaml");
+        const BUILTIN_HUBSPOT: &str = include_str!("builtin/hubspot.yaml");
+        const BUILTIN_X: &str = include_str!("builtin/x.yaml");
+        const BUILTIN_LINKEDIN: &str = include_str!("builtin/linkedin.yaml");
+        const BUILTIN_YOUTUBE: &str = include_str!("builtin/youtube.yaml");
+        const BUILTIN_GOOGLE_DRIVE: &str = include_str!("builtin/google-drive.yaml");
+        const BUILTIN_GOOGLE_CALENDAR: &str = include_str!("builtin/google-calendar.yaml");
+        const BUILTIN_TYPEFORM: &str = include_str!("builtin/typeform.yaml");
+        const BUILTIN_CALCOM: &str = include_str!("builtin/cal.com.yaml");
+        const BUILTIN_SUPABASE: &str = include_str!("builtin/supabase.yaml");
+        const BUILTIN_EXA: &str = include_str!("builtin/exa.yaml");
+        const BUILTIN_COINGECKO: &str = include_str!("builtin/coingecko.yaml");
+        const BUILTIN_ELEVENLABS: &str = include_str!("builtin/elevenlabs.yaml");
+        const BUILTIN_PDL: &str = include_str!("builtin/pdl.yaml");
+        const BUILTIN_APOLLO: &str = include_str!("builtin/apollo.yaml");
+        const BUILTIN_DEFILLAMA: &str = include_str!("builtin/defillama.yaml");
+        const BUILTIN_STABLECOINS: &str = include_str!("builtin/stablecoins.yaml");
+        const BUILTIN_YIELDS: &str = include_str!("builtin/yields.yaml");
+        const BUILTIN_BROWSERBASE: &str = include_str!("builtin/browserbase.yaml");
+        const BUILTIN_APIFY: &str = include_str!("builtin/apify.yaml");
 
         for (name, yaml) in [
             ("github", BUILTIN_GITHUB),
@@ -62,6 +89,33 @@ impl IntegrationLoader {
             ("openai", BUILTIN_OPENAI),
             ("stripe", BUILTIN_STRIPE),
             ("notion", BUILTIN_NOTION),
+            ("telegram", BUILTIN_TELEGRAM),
+            ("whatsapp", BUILTIN_WHATSAPP),
+            ("google-sheets", BUILTIN_GOOGLE_SHEETS),
+            ("airtable", BUILTIN_AIRTABLE),
+            ("discord", BUILTIN_DISCORD),
+            ("resend", BUILTIN_RESEND),
+            ("twilio", BUILTIN_TWILIO),
+            ("shopify", BUILTIN_SHOPIFY),
+            ("hubspot", BUILTIN_HUBSPOT),
+            ("x", BUILTIN_X),
+            ("linkedin", BUILTIN_LINKEDIN),
+            ("youtube", BUILTIN_YOUTUBE),
+            ("google-drive", BUILTIN_GOOGLE_DRIVE),
+            ("google-calendar", BUILTIN_GOOGLE_CALENDAR),
+            ("typeform", BUILTIN_TYPEFORM),
+            ("cal.com", BUILTIN_CALCOM),
+            ("supabase", BUILTIN_SUPABASE),
+            ("exa", BUILTIN_EXA),
+            ("coingecko", BUILTIN_COINGECKO),
+            ("elevenlabs", BUILTIN_ELEVENLABS),
+            ("pdl", BUILTIN_PDL),
+            ("apollo", BUILTIN_APOLLO),
+            ("defillama", BUILTIN_DEFILLAMA),
+            ("stablecoins", BUILTIN_STABLECOINS),
+            ("yields", BUILTIN_YIELDS),
+            ("browserbase", BUILTIN_BROWSERBASE),
+            ("apify", BUILTIN_APIFY),
         ] {
             match serde_yaml::from_str::<IntegrationDefinition>(yaml) {
                 Ok(def) => {
@@ -262,7 +316,18 @@ mod tests {
         let loader = IntegrationLoader::new();
         let names = loader.list_all();
 
-        for expected in &["github", "slack", "openai", "stripe", "notion"] {
+        for expected in &[
+            "github",
+            "slack",
+            "openai",
+            "stripe",
+            "notion",
+            "telegram",
+            "whatsapp",
+            "google-sheets",
+            "airtable",
+            "discord",
+        ] {
             assert!(
                 names.contains(&expected.to_string()),
                 "list should contain {}, got: {:?}",
@@ -270,7 +335,7 @@ mod tests {
                 names
             );
         }
-        assert_eq!(names.len(), 5, "expected 5 built-ins, got: {:?}", names);
+        assert_eq!(names.len(), 32, "expected 32 built-ins, got: {:?}", names);
     }
 
     #[test]

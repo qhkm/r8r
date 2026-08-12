@@ -1,0 +1,48 @@
+version: 1
+name: elevenlabs
+display_name: ElevenLabs
+description: ElevenLabs — text-to-speech, voice cloning & audio generation
+base_url: https://api.elevenlabs.io
+docs_url: https://elevenlabs.io/docs/api-reference
+
+auth:
+  methods:
+    - type: api_key
+      header_name: xi-api-key
+      description: ElevenLabs API key (from https://elevenlabs.io/api-keys) — sent as `xi-api-key` header
+
+operations:
+  text_to_speech:
+    description: Convert text to speech with a voice
+    method: POST
+    path: /v1/text-to-speech/{{ params.voice_id }}
+    params:
+      voice_id: { required: true, type: string, description: "Voice ID or the name of a predefined voice" }
+      text: { required: true, type: string }
+      model_id: { required: false, type: string, default: eleven_multilingual_v2 }
+      stability: { required: false, type: number, default: 0.5, description: "0-1" }
+      similarity_boost: { required: false, type: number, default: 0.75, description: "0-1" }
+      style: { required: false, type: number, default: 0, description: "0-1" }
+      voice_settings: { required: false, type: boolean, default: true }
+    body:
+      text: "{{ params.text }}"
+      model_id: "{{ params.model_id }}"
+      voice_settings:
+        stability: "{{ params.stability }}"
+        similarity_boost: "{{ params.similarity_boost }}"
+        style: "{{ params.style }}"
+
+  list_voices:
+    description: List available voices (v2 API)
+    method: GET
+    path: /v2/voices
+
+  list_models:
+    description: List available TTS models
+    method: GET
+    path: /v1/models
+
+  get_user_info:
+    description: Account subscription & usage info
+    method: GET
+    path: /v1/user

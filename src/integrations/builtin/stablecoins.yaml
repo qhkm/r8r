@@ -1,0 +1,16 @@
+version: 1
+name: stablecoins
+display_name: DeFiLlama Stablecoins
+description: DeFiLlama Stablecoins — stablecoin market caps & pegged assets (public API, no auth)
+base_url: https://stablecoins.llama.fi
+docs_url: https://defillama.com/docs/api
+
+operations:
+  get_stablecoins:
+    description: List stablecoins with circulating market caps
+    method: GET
+    path: /stablecoins
+    params:
+      include_prices: { required: false, type: boolean, default: false }
+    query:
+      includePrices: "{{ params.include_prices }}"

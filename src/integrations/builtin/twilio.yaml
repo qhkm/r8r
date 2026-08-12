@@ -1,0 +1,64 @@
+version: 1
+name: twilio
+display_name: Twilio
+description: Twilio SMS & WhatsApp messaging API
+base_url: https://api.twilio.com/2010-04-01
+docs_url: https://www.twilio.com/docs/sms/api
+
+auth:
+  methods:
+    - type: basic
+      description: "Account SID : Auth Token (format ACxxxx:your_auth_token)"
+
+operations:
+  send_sms:
+    description: Send an SMS message
+    method: POST
+    path: /Accounts/{{ params.account_sid }}/Messages.json
+    params:
+      account_sid: { required: true, type: string, description: "Your Twilio Account SID (AC...)" }
+      to: { required: true, type: string, description: "Recipient number in E.164, e.g. +60123456789" }
+      from: { required: true, type: string, description: "Your Twilio number in E.164" }
+      body: { required: true, type: string, description: "Message content (max 1600 chars)" }
+      status_callback: { required: false, type: string, description: "Webhook URL for delivery status" }
+    body:
+      To: "{{ params.to }}"
+      From: "{{ params.from }}"
+      Body: "{{ params.body }}"
+      StatusCallback: "{{ params.status_callback }}"
+    body_type: form
+
+  send_whatsapp:
+    description: Send a WhatsApp message via Twilio
+    method: POST
+    path: /Accounts/{{ params.account_sid }}/Messages.json
+    params:
+      account_sid: { required: true, type: string }
+      to: { required: true, type: string, description: "Recipient, e.g. whatsapp:+60123456789" }
+      from: { required: true, type: string, description: "Your WhatsApp number, e.g. whatsapp:+14155238886" }
+      body: { required: true, type: string }
+    body:
+      To: "{{ params.to }}"
+      From: "{{ params.from }}"
+      Body: "{{ params.body }}"
+    body_type: form
+
+  get_message:
+    description: Fetch a message by SID
+    method: GET
+    path: /Accounts/{{ params.account_sid }}/Messages/{{ params.sid }}.json
+    params:
+      account_sid: { required: true, type: string }
+      sid: { required: true, type: string, description: "Message SID (SM...)" }
+
+  list_messages:
+    description: List recent messages
+    method: GET
+    path: /Accounts/{{ params.account_sid }}/Messages.json
+    params:
+      account_sid: { required: true, type: string }
+      to: { required: false, type: string }
+      page_size: { required: false, type: integer, default: 50 }
+    query:
+      To: "{{ params.to }}"
+      PageSize: "{{ params.page_size }}"

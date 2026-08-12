@@ -1,0 +1,19 @@
+version: 1
+name: defillama
+display_name: DeFiLlama
+description: DeFiLlama — protocol TVL data (public API, no auth). Stablecoins & yields ada di service `stablecoins` & `yields` (subdomain berasingan)
+base_url: https://api.llama.fi
+docs_url: https://defillama.com/docs/api
+
+operations:
+  get_protocols:
+    description: TVL of all protocols (current + historical)
+    method: GET
+    path: /protocols
+
+  get_protocol:
+    description: Detailed data for a single protocol
+    method: GET
+    path: /protocol/{{ params.slug }}
+    params:
+      slug: { required: true, type: string, description: "Protocol slug, e.g. lido" }

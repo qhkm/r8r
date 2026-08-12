@@ -283,26 +283,58 @@ nodes:
 - Natural language processing
 - Anything requiring "reasoning"
 
-### Integration Nodes (Phase 1 - Malaysian Focus)
+### Integration Layer — Built-in Services (32)
 
-| Node | Description |
-|------|-------------|
-| `whatsapp` | WhatsApp Cloud API |
-| `google-sheets` | Google Sheets read/write |
-| `telegram` | Telegram Bot API |
-| `email` | SMTP/Resend/SendGrid |
-| `webhook` | Receive webhooks |
+Service definitions deklaratif dalam `src/integrations/builtin/*.yaml` (kompil via `include_str!` ke `src/integrations/loader.rs`), dipanggil dari workflow melalui node `integration` (`service` + `operation` + `params`). User-defined integrations dalam `integrations/` — auto-scan, hot-reload, override builtin.
 
-### Integration Nodes (Phase 2)
+| Service | Deskripsi | Status |
+|---------|-----------|--------|
+| `telegram` | Bot API (send/edit/forward/delete, webhook, get_updates) | ✅ Shipped |
+| `whatsapp` | Cloud API (text/template/image, get_phone_numbers) | ✅ Shipped |
+| `google-sheets` | Read/append/update values, create_spreadsheet | ✅ Shipped |
+| `google-drive` | Drive files | ✅ Shipped |
+| `google-calendar` | Calendar events | ✅ Shipped |
+| `slack` | Slack API | ✅ Shipped |
+| `discord` | Bot (send/edit/delete, get_guilds) | ✅ Shipped |
+| `notion` | Notion API | ✅ Shipped |
+| `airtable` | CRUD records, list_bases | ✅ Shipped |
+| `stripe` | Payments | ✅ Shipped |
+| `shopify` | Shopify Admin (base_url per-tenant) | ✅ Shipped |
+| `hubspot` | CRM | ✅ Shipped |
+| `github` | GitHub API | ✅ Shipped |
+| `openai` | LLM | ✅ Shipped |
+| `resend` | Email | ✅ Shipped |
+| `twilio` | SMS/WhatsApp (basic auth) | ✅ Shipped |
+| `x` | X/Twitter | ✅ Shipped |
+| `linkedin` | LinkedIn | ✅ Shipped |
+| `youtube` | YouTube Data API (key dalam query) | ✅ Shipped |
+| `typeform` | Typeform | ✅ Shipped |
+| `cal.com` | Cal.com (key dalam query) | ✅ Shipped |
+| `supabase` | PostgREST (base_url per-tenant) | ✅ Shipped |
+| `exa` | Web search (x-api-key header) | ✅ Shipped |
+| `pdl` | People Data Labs (key dalam query) | ✅ Shipped |
+| `apollo` | B2B people/company search (X-Api-Key) | ✅ Shipped |
+| `coingecko` | Crypto prices (public, no auth) | ✅ Shipped |
+| `defillama` | Protocol TVL (public, no auth) | ✅ Shipped |
+| `stablecoins` | DeFiLlama stablecoins (subdomain berasingan, public) | ✅ Shipped |
+| `yields` | DeFiLlama yield pools (subdomain berasingan, public) | ✅ Shipped |
+| `elevenlabs` | TTS & voices (xi-api-key) | ✅ Shipped |
+| `browserbase` | Headless browser sessions (X-BB-API-Key) | ✅ Shipped |
+| `apify` | Scraping actors & datasets (Bearer) | ✅ Shipped |
+| `email` | SMTP/Resend/SendGrid (node berdedikasi) | ✅ Shipped (node) |
+| `webhook` | Receive webhooks | ✅ Shipped (trigger) |
 
-| Node | Description |
-|------|-------------|
-| `slack` | Slack API |
-| `discord` | Discord webhooks/bot |
-| `notion` | Notion API |
-| `airtable` | Airtable API |
-| `stripe` | Stripe payments |
-| `shopify` | Shopify API |
+### Roadmap Integrations (rujukan katalog Monid — direct API, bukan aggregator)
+
+Katalog Monid (monid.ai/tools) dijadikan rujukan permintaan pasaran; integrasi dibina direct ke API service (BYOK), BUKAN guna Monid sebagai backend. Batch 13-Ogo-2026 sudah shipped: `exa`, `apollo`, `pdl`, `coingecko`, `defillama`, `stablecoins`, `yields`, `elevenlabs`, `browserbase`, `apify`. Calon seterusnya:
+
+| Kelas | Calon | Nota |
+|-------|-------|------|
+| Media/AI | `minimax` | Speech & generative |
+| Sosial | `reddit`, `facebook`, `instagram`, `tiktok` | Platform social (OAuth) |
+| Blockchain | `quicknode` | RPC/data access |
+
+---
 
 ---
 

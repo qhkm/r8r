@@ -1,0 +1,87 @@
+version: 1
+name: shopify
+display_name: Shopify
+description: Shopify Admin API — products, orders, customers
+base_url: https://{{ params.shop }}.myshopify.com/admin/api/2024-01
+docs_url: https://shopify.dev/docs/api/admin-rest
+
+auth:
+  methods:
+    - type: api_key
+      header_name: X-Shopify-Access-Token
+      description: Shopify admin access token (from Admin API or private app)
+
+headers:
+  Content-Type: application/json
+
+operations:
+  list_products:
+    description: List products in the store
+    method: GET
+    path: /products.json
+    params:
+      shop: { required: true, type: string, description: "Store subdomain, e.g. my-store" }
+      limit: { required: false, type: integer, default: 50 }
+      status: { required: false, type: string, enum: [active, archived, draft] }
+    query:
+      limit: "{{ params.limit }}"
+      status: "{{ params.status }}"
+
+  get_product:
+    description: Fetch a single product
+    method: GET
+    path: /products/{{ params.product_id }}.json
+    params:
+      shop: { required: true, type: string }
+      product_id: { required: true, type: integer }
+
+  create_product:
+    description: Create a new product
+    method: POST
+    path: /products.json
+    params:
+      shop: { required: true, type: string }
+      title: { required: true, type: string }
+      body_html: { required: false, type: string }
+      vendor: { required: false, type: string }
+      product_type: { required: false, type: string }
+      tags: { required: false, type: string }
+      status: { required: false, type: string, default: draft, enum: [active, archived, draft] }
+    body:
+      product:
+        title: "{{ params.title }}"
+        body_html: "{{ params.body_html }}"
+        vendor: "{{ params.vendor }}"
+        product_type: "{{ params.product_type }}"
+        tags: "{{ params.tags }}"
+        status: "{{ params.status }}"
+
+  list_orders:
+    description: List orders in the store
+    method: GET
+    path: /orders.json
+    params:
+      shop: { required: true, type: string }
+      status: { required: false, type: string, enum: [open, closed, any, cancelled] }
+      limit: { required: false, type: integer, default: 50 }
+    query:
+      status: "{{ params.status }}"
+      limit: "{{ params.limit }}"
+
+  get_order:
+    description: Fetch a single order
+    method: GET
+    path: /orders/{{ params.order_id }}.json
+    params:
+      shop: { required: true, type: string }
+      order_id: { required: true, type: integer }
+
+  list_customers:
+    description: List customers
+    method: GET
+    path: /customers.json
+    params:
+      shop: { required: true, type: string }
+      limit: { required: false, type: integer, default: 50 }
+    query:
+      limit: "{{ params.limit }}"

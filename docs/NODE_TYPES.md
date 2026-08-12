@@ -629,6 +629,80 @@ nodes:
 
 ---
 
+### Built-in Integration Services
+
+Service definitions deklaratif (YAML) dalam `src/integrations/builtin/` — dipanggil dari workflow melalui node integration (`service` + `operation` + `params`). Senarai penuh service `r8r integrations list` / API `GET /integrations`.
+
+**Configuration**:
+
+```yaml
+nodes:
+  - id: notify-telegram
+    type: integration
+    config:
+      service: telegram
+      operation: send_message
+      credential: telegram_bot
+      params:
+        chat_id: "{{ input.chat_id }}"
+        text: "Order #{{ input.order_id }} diterima ✅"
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `service` | string | Yes | Nama service (rujuk senarai bawah) |
+| `operation` | string | Yes | Operation yang tersedia untuk service tersebut |
+| `credential` | string | No | Nama credential dalam credential store (fallback: nama service) |
+| `params` | object | No | Parameter operation (template `{{ input }}`, `{{ nodes.* }}` disokong) |
+
+**Built-in services (32)**:
+
+| Service | Deskripsi ringkas | Ops contoh |
+|---------|-------------------|------------|
+| `github` | GitHub API | repos, issues, PR |
+| `slack` | Slack API | post message, reply |
+| `openai` | LLM API | chat completion, embeddings |
+| `stripe` | Payments | charges, customers |
+| `notion` | Notion API | pages, databases |
+| `telegram` | Bot API | send_message, send_photo, edit_message_text, delete_message, forward_message, set_webhook, get_updates |
+| `whatsapp` | Cloud API (Graph v21.0) | send_text, send_template, send_image, get_phone_numbers |
+| `google-sheets` | Spreadsheets | get/append/update values, create_spreadsheet |
+| `airtable` | Airtable API | CRUD records, list_bases |
+| `discord` | Bot (`Authorization: Bot <token>`) | send/edit/delete message, get_guilds |
+| `resend` | Email API | send_email |
+| `twilio` | SMS/WhatsApp (basic auth) | send_sms, send_whatsapp |
+| `shopify` | Shopify Admin (base_url per-tenant) | orders, products |
+| `hubspot` | CRM API | contacts, companies |
+| `x` | X/Twitter API | post tweet, search |
+| `linkedin` | LinkedIn API | post share |
+| `youtube` | YouTube Data API (key dalam query) | search videos |
+| `google-drive` | Drive API | list, get files |
+| `google-calendar` | Calendar API | list/create events |
+| `typeform` | Typeform API | forms, responses |
+| `cal.com` | Cal.com API (key dalam query) | bookings |
+| `supabase` | PostgREST (base_url per-tenant) | insert, select |
+| `exa` | Web search & contents (x-api-key header) | search, get_contents |
+| `pdl` | People Data Labs (key dalam query) | person_enrich, person_search |
+| `apollo` | B2B people/company (X-Api-Key) | match_person, search_people, search_companies |
+| `coingecko` | Harga crypto (public, no auth) | get_price, search, trending |
+| `defillama` | Protocol TVL (public, no auth) | get_protocols, get_protocol |
+| `stablecoins` | DeFiLlama stablecoins (public) | get_stablecoins |
+| `yields` | DeFiLlama yield pools (public) | get_pools |
+| `elevenlabs` | TTS & voices (xi-api-key) | text_to_speech, list_voices, list_models |
+| `browserbase` | Headless browser (X-BB-API-Key) | create_session, list_sessions, get_session, get_session_logs, get_session_live_urls, update_session |
+| `apify` | Scraping actors & datasets (Bearer) | run_actor, get_run, list_runs, get_dataset_items |
+
+**Nota auth**:
+- Telegram letak token dalam path (`/bot{{ credential }}/sendMessage`) — credential wajib.
+- Discord credential mesti sertakan prefix `Bot <token>`.
+- Twilio credential format `AccountSID:AuthToken` (basic auth).
+- Google/shopify/supabase: base_url/header boleh template per-tenant.
+- `exa`/`elevenlabs` guna header nama khusus (`x-api-key`, `xi-api-key`), `browserbase` guna `X-BB-API-Key`, `apollo` guna `X-Api-Key` — credential disuntik automatik oleh `build_http_config` lepas `param` tersebut.
+- `defillama`, `stablecoins`, `yields` public — credential tak diperlukan.
+- `apify` run_actor: whole-body `input` dihantar terus sebagai actor input (tanpa wrapper).
+
+---
+
 ### Email
 
 Send emails via SMTP or API providers.

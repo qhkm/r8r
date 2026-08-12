@@ -1,0 +1,66 @@
+version: 1
+name: pdl
+display_name: People Data Labs
+description: People Data Labs — person & company enrichment API (500M+ profiles)
+base_url: https://api.peopledatalabs.com/v5
+docs_url: https://docs.peopledatalabs.com
+
+auth:
+  methods:
+    - type: api_key
+      description: PDL API key — sent as `api_key` query param
+
+operations:
+  person_enrich:
+    description: Enrich a person profile by email/name/location
+    method: GET
+    path: /person/enrich
+    params:
+      email: { required: false, type: string }
+      phone: { required: false, type: string }
+      first_name: { required: false, type: string }
+      last_name: { required: false, type: string }
+      company: { required: false, type: string, description: "Company name (increases match accuracy)" }
+      location: { required: false, type: string }
+      linkedin: { required: false, type: string, description: "LinkedIn profile URL" }
+      title: { required: false, type: string, description: "Job title (improves match accuracy)" }
+    query:
+      api_key: "{{ credential }}"
+      email: "{{ params.email }}"
+      phone: "{{ params.phone }}"
+      first_name: "{{ params.first_name }}"
+      last_name: "{{ params.last_name }}"
+      company: "{{ params.company }}"
+      location: "{{ params.location }}"
+      linkedin: "{{ params.linkedin }}"
+      job_title: "{{ params.title }}"
+
+  person_search:
+    description: Search people with SQL-ish filters
+    method: GET
+    path: /person/search
+    params:
+      sql: { required: false, type: string, description: "SQL query, e.g. SELECT * FROM person WHERE job_title='CTO' LIMIT 10" }
+      dataset: { required: false, type: string, default: person, enum: [person, company], description: "Search dataset" }
+      size: { required: false, type: integer, default: 10, description: "Max results (1-100)" }
+    query:
+      api_key: "{{ credential }}"
+      sql: "{{ params.sql }}"
+      dataset: "{{ params.dataset }}"
+      size: "{{ params.size }}"
+
+  company_enrich:
+    description: Enrich a company profile by domain/name
+    method: GET
+    path: /company/enrich
+    params:
+      domain: { required: false, type: string, description: "e.g. google.com" }
+      name: { required: false, type: string }
+      website: { required: false, type: string }
+      location: { required: false, type: string }
+    query:
+      api_key: "{{ credential }}"
+      domain: "{{ params.domain }}"
+      name: "{{ params.name }}"
+      website: "{{ params.website }}"
+      location: "{{ params.location }}"

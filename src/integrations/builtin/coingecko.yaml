@@ -1,0 +1,48 @@
+version: 1
+name: coingecko
+display_name: CoinGecko
+description: CoinGecko — crypto prices, coins & market data (public API, no auth; rate-limited)
+base_url: https://api.coingecko.com/api/v3
+docs_url: https://docs.coingecko.com
+
+operations:
+  get_price:
+    description: Current prices for one or more coins vs currencies
+    method: GET
+    path: /simple/price
+    params:
+      ids: { required: true, type: string, description: "Comma-separated coin ids, e.g. bitcoin,ethereum" }
+      vs_currencies: { required: false, type: string, default: usd, description: "Comma-separated, e.g. usd,myr" }
+      include_market_cap: { required: false, type: boolean, default: false }
+      include_24hr_change: { required: false, type: boolean, default: false }
+    query:
+      ids: "{{ params.ids }}"
+      vs_currencies: "{{ params.vs_currencies }}"
+      include_market_cap: "{{ params.include_market_cap }}"
+      include_24hr_change: "{{ params.include_24hr_change }}"
+
+  get_coin:
+    description: Full coin data (market cap, volume, description)
+    method: GET
+    path: /coins/{{ params.id }}
+    params:
+      id: { required: true, type: string, description: "Coin id, e.g. bitcoin" }
+      localization: { required: false, type: boolean, default: false }
+      tickers: { required: false, type: boolean, default: false }
+      market_data: { required: false, type: boolean, default: true }
+      community_data: { required: false, type: boolean, default: false }
+      developer_data: { required: false, type: boolean, default: false }
+
+  search_coins:
+    description: Search coins by name/symbol
+    method: GET
+    path: /search
+    params:
+      query: { required: true, type: string }
+    query:
+      query: "{{ params.query }}"
+
+  list_trending:
+    description: Trending coins (last 24h)
+    method: GET
+    path: /search/trending

@@ -1,0 +1,76 @@
+version: 1
+name: whatsapp
+display_name: WhatsApp
+description: WhatsApp Cloud API integration (Meta)
+base_url: https://graph.facebook.com/v21.0
+docs_url: https://developers.facebook.com/docs/whatsapp/cloud-api
+
+auth:
+  methods:
+    - type: bearer
+      description: System user access token
+
+headers:
+  Content-Type: application/json
+
+operations:
+  send_text:
+    description: Send a text message to a WhatsApp number
+    method: POST
+    path: /{{ params.phone_number_id }}/messages
+    params:
+      phone_number_id: { required: true, type: string, description: "Business phone number ID" }
+      to: { required: true, type: string, description: "Recipient WhatsApp number in E.164" }
+      text: { required: true, type: string }
+      preview_url: { required: false, type: boolean, default: false }
+    body:
+      messaging_product: "whatsapp"
+      to: "{{ params.to }}"
+      type: "text"
+      text:
+        body: "{{ params.text }}"
+        preview_url: "{{ params.preview_url }}"
+
+  send_template:
+    description: Send a template message (approved templates only)
+    method: POST
+    path: /{{ params.phone_number_id }}/messages
+    params:
+      phone_number_id: { required: true, type: string }
+      to: { required: true, type: string }
+      template_name: { required: true, type: string }
+      language: { required: false, type: string, default: en_US }
+      components: { required: false, type: object }
+    body:
+      messaging_product: "whatsapp"
+      to: "{{ params.to }}"
+      type: "template"
+      template:
+        name: "{{ params.template_name }}"
+        language:
+          code: "{{ params.language }}"
+        components: "{{ params.components }}"
+
+  send_image:
+    description: Send an image message
+    method: POST
+    path: /{{ params.phone_number_id }}/messages
+    params:
+      phone_number_id: { required: true, type: string }
+      to: { required: true, type: string }
+      link: { required: true, type: string, description: "Public image URL" }
+      caption: { required: false, type: string }
+    body:
+      messaging_product: "whatsapp"
+      to: "{{ params.to }}"
+      type: "image"
+      image:
+        link: "{{ params.link }}"
+        caption: "{{ params.caption }}"
+
+  get_phone_numbers:
+    description: List phone numbers for the authenticated business account
+    method: GET
+    path: /{{ params.business_account_id }}/phone_numbers
+    params:
+      business_account_id: { required: true, type: string, description: "WABA ID" }

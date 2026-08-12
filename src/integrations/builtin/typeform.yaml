@@ -1,0 +1,67 @@
+version: 1
+name: typeform
+display_name: Typeform
+description: Typeform API v1 — forms, responses, webhooks
+base_url: https://api.typeform.com
+docs_url: https://developer.typeform.com
+
+auth:
+  methods:
+    - type: bearer
+      description: Typeform personal access token (created at https://admin.typeform.com/user/tokens)
+
+operations:
+  list_forms:
+    description: List all forms
+    method: GET
+    path: /forms
+    params:
+      page_size: { required: false, type: integer, default: 200 }
+      search: { required: false, type: string }
+    query:
+      page_size: "{{ params.page_size }}"
+      search: "{{ params.search }}"
+
+  get_form:
+    description: Fetch form definition
+    method: GET
+    path: /forms/{{ params.form_id }}
+    params:
+      form_id: { required: true, type: string }
+
+  list_responses:
+    description: List form responses
+    method: GET
+    path: /forms/{{ params.form_id }}/responses
+    params:
+      form_id: { required: true, type: string }
+      page_size: { required: false, type: integer, default: 100 }
+      since: { required: false, type: string, description: "RFC3339 — only responses submitted after this" }
+      until: { required: false, type: string }
+      completed: { required: false, type: boolean, default: true }
+    query:
+      page_size: "{{ params.page_size }}"
+      since: "{{ params.since }}"
+      until: "{{ params.until }}"
+      completed: "{{ params.completed }}"
+
+  get_response:
+    description: Fetch a single response
+    method: GET
+    path: /forms/{{ params.form_id }}/responses/{{ params.response_id }}
+    params:
+      form_id: { required: true, type: string }
+      response_id: { required: true, type: string }
+
+  create_webhook:
+    description: Create or update a webhook
+    method: PUT
+    path: /forms/{{ params.form_id }}/webhooks/{{ params.tag }}
+    params:
+      form_id: { required: true, type: string }
+      tag: { required: true, type: string, description: "Webhook name/tag" }
+      url: { required: true, type: string, description: "Webhook URL" }
+      enabled: { required: false, type: boolean, default: true }
+    body:
+      url: "{{ params.url }}"
+      enabled: "{{ params.enabled }}"

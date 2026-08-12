@@ -69,6 +69,11 @@ pub enum AuthMethod {
         #[serde(default)]
         description: Option<String>,
     },
+    #[serde(rename = "basic")]
+    Basic {
+        #[serde(default)]
+        description: Option<String>,
+    },
 }
 
 /// A single API operation (e.g. "list_repos", "create_issue").

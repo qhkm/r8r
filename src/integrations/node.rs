@@ -10,7 +10,31 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+
+/// Characters that must be percent-encoded inside a URL query *value*
+/// (RFC 3986 `query` production, plus the sub-delims/space that would
+/// otherwise break form parsing). Alphanumerics and `- _ . ~ *` are
+/// left as-is so credentials like API keys keep their literal form.
+pub const QUERY_VALUE_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'&')
+    .add(b'\'')
+    .add(b'(')
+    .add(b')')
+    .add(b'+')
+    .add(b',')
+    .add(b'/')
+    .add(b':')
+    .add(b';')
+    .add(b'=')
+    .add(b'?')
+    .add(b'@')
+    .add(b'[')
+    .add(b']');
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use tracing::debug;
@@ -102,6 +126,17 @@ pub fn extract_param_ref(template: &str) -> Option<String> {
     None
 }
 
+/// Replace `{{ credential }}` / `{{credential}}` placeholders in a template string.
+/// If no credential is provided, the placeholder is left unresolved.
+pub fn substitute_credential(template: &str, credential: Option<&str>) -> String {
+    match credential {
+        Some(cred) => template
+            .replace("{{ credential }}", cred)
+            .replace("{{credential}}", cred),
+        None => template.to_string(),
+    }
+}
+
 /// Build a JSON body from the body template and resolved params.
 ///
 /// For each key in the body template object:
@@ -153,6 +188,15 @@ pub fn build_typed_body(body_template: &Value, resolved: &HashMap<String, Value>
             }
             Value::Object(out)
         }
+        // Top-level whole-body template: resolve to the typed param value
+        // (e.g. a top-level JSON array for Supabase insert)
+        Value::String(s) => {
+            if let Some(param_name) = extract_param_ref(s) {
+                resolved.get(&param_name).cloned().unwrap_or(Value::Null)
+            } else {
+                Value::String(s.clone())
+            }
+        }
         other => other.clone(),
     }
 }
@@ -167,7 +211,24 @@ pub fn build_http_config(
 ) -> Value {
     // --- URL: base_url + path (with params substituted) ---
     let path = substitute_params_in_string(&op.path, resolved);
-    let mut url = format!("{}{}", def.base_url, path);
+    // Support {{ credential }} placeholder in the path template so services
+    // that embed the secret in the URL (e.g. Telegram bot tokens) can use the
+    // credential store instead of leaking the secret into workflow params.
+    let path = if path.contains("{{ credential }}") || path.contains("{{credential}}") {
+        match credential {
+            Some(cred) => path
+                .replace("{{ credential }}", cred)
+                .replace("{{credential}}", cred),
+            None => path,
+        }
+    } else {
+        path
+    };
+    // base_url may contain params (e.g. Shopify store domain) and/or credential
+    // placeholders — resolve both before joining with the path.
+    let base_url = substitute_params_in_string(&def.base_url, resolved);
+    let base_url = substitute_credential(&base_url, credential);
+    let mut url = format!("{}{}", base_url, path);
 
     // --- Query params ---
     if let Some(query_template) = &op.query {
@@ -177,8 +238,20 @@ pub fn build_http_config(
             let value = if let Some(param_name) = extract_param_ref(qv) {
                 resolved.get(&param_name).cloned()
             } else {
-                let substituted = substitute_params_in_string(qv, resolved);
-                if substituted.contains("{{ params.") || substituted.contains("{{params.") {
+                let mut substituted = substitute_params_in_string(qv, resolved);
+                // Credential placeholder in query (API keys in query, e.g. YouTube)
+                if substituted.contains("{{ credential }}")
+                    || substituted.contains("{{credential}}")
+                {
+                    match credential {
+                        Some(_) => substituted = substitute_credential(&substituted, credential),
+                        None => substituted = String::new(),
+                    }
+                }
+                if substituted.contains("{{ params.")
+                    || substituted.contains("{{params.")
+                    || substituted.is_empty()
+                {
                     None
                 } else {
                     Some(Value::String(substituted))
@@ -191,7 +264,7 @@ pub fn build_http_config(
                     Value::Null => continue,
                     other => other.to_string(),
                 };
-                let encoded = utf8_percent_encode(&str_val, NON_ALPHANUMERIC).to_string();
+                let encoded = utf8_percent_encode(&str_val, QUERY_VALUE_ENCODE_SET).to_string();
                 query_parts.push(format!("{}={}", qk, encoded));
             }
         }
@@ -204,12 +277,32 @@ pub fn build_http_config(
     let mut headers_map: Map<String, Value> = Map::new();
     if let Some(service_headers) = &def.headers {
         for (k, v) in service_headers {
-            headers_map.insert(k.clone(), Value::String(v.clone()));
+            let val = substitute_credential(v, credential);
+            headers_map.insert(k.clone(), Value::String(val));
         }
     }
     if let Some(op_headers) = &op.headers {
         for (k, v) in op_headers {
-            headers_map.insert(k.clone(), Value::String(v.clone()));
+            let val = substitute_credential(v, credential);
+            headers_map.insert(k.clone(), Value::String(val));
+        }
+    }
+    // Inject credential into the declared API-key header (e.g. `x-api-key`,
+    // `X-BB-API-Key`) when the integration uses `type: api_key` auth and the
+    // executor consumes `auth_type: header:<name>`.
+    if let Some(cred) = credential {
+        if let Some(auth) = &def.auth {
+            for method in &auth.methods {
+                if let crate::integrations::definition::AuthMethod::ApiKey {
+                    header_name: Some(hdr),
+                    ..
+                } = method
+                {
+                    headers_map
+                        .entry(hdr.clone())
+                        .or_insert(Value::String(cred.to_string()));
+                }
+            }
         }
     }
 
@@ -254,6 +347,10 @@ pub fn build_http_config(
                         } else {
                             config["auth_type"] = Value::String("api_key".to_string());
                         }
+                        break;
+                    }
+                    crate::integrations::definition::AuthMethod::Basic { .. } => {
+                        config["auth_type"] = Value::String("basic".to_string());
                         break;
                     }
                     _ => {}
