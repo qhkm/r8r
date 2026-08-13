@@ -60,6 +60,12 @@ pub enum InputCommand {
     Operator { enable: Option<bool> },
     /// Show session token usage: /usage
     Usage,
+    /// Show guardrail state: /guardrails
+    Guardrails,
+    /// Whitelist a tool: /allow <tool>
+    AllowTool { tool: Option<String> },
+    /// Denylist a tool: /deny <tool>
+    DenyTool { tool: Option<String> },
     /// Unknown slash command.
     Unknown(String),
     /// Empty input.
@@ -159,6 +165,13 @@ pub fn parse_input(input: &str) -> InputCommand {
             description: arg.filter(|s| !s.is_empty()),
         },
         "/usage" => InputCommand::Usage,
+        "/guardrails" => InputCommand::Guardrails,
+        "/allow" => InputCommand::AllowTool {
+            tool: arg.filter(|s| !s.is_empty()),
+        },
+        "/deny" => InputCommand::DenyTool {
+            tool: arg.filter(|s| !s.is_empty()),
+        },
         "/arm" => InputCommand::ArmWrites,
         "/disarm" => InputCommand::Disarm,
         "/operator" => {
@@ -194,7 +207,10 @@ pub fn slash_commands() -> Vec<(&'static str, &'static str)> {
         ("/view <target>", "Switch panel: log|tools|yaml|dag|trace"),
         ("/export yaml <path>", "Export current YAML to a file"),
         ("/plan [description]", "Draft a plan before executing"),
-        ("/usage", "Show session token usage and estimated cost"),
+        ("/usage", "Show session token usage"),
+        ("/guardrails", "Show tool matrix + cost budget state"),
+        ("/allow <tool>", "Whitelist a tool for this session"),
+        ("/deny <tool>", "Denylist a tool for this session"),
         ("/arm", "Arm write operations for this session"),
         ("/disarm", "Disarm write operations (safe mode)"),
         (
@@ -204,4 +220,49 @@ pub fn slash_commands() -> Vec<(&'static str, &'static str)> {
         ("/help", "Show this help"),
         ("/exit", "Exit the REPL"),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_guardrail_commands() {
+        assert!(matches!(
+            parse_input("/guardrails"),
+            InputCommand::Guardrails
+        ));
+        match parse_input("/allow r8r_test") {
+            InputCommand::AllowTool { tool } => assert_eq!(tool.as_deref(), Some("r8r_test")),
+            other => panic!("expected AllowTool, got {other:?}"),
+        }
+        match parse_input("/deny r8r_test") {
+            InputCommand::DenyTool { tool } => assert_eq!(tool.as_deref(), Some("r8r_test")),
+            other => panic!("expected DenyTool, got {other:?}"),
+        }
+        match parse_input("/allow") {
+            InputCommand::AllowTool { tool } => assert!(tool.is_none()),
+            other => panic!("expected AllowTool with no arg, got {other:?}"),
+        }
+        assert!(matches!(
+            parse_input("/deny"),
+            InputCommand::DenyTool { .. }
+        ));
+    }
+
+    #[test]
+    fn help_lists_guardrails_commands() {
+        let cmds = slash_commands();
+        assert!(cmds.iter().any(|(c, _)| *c == "/guardrails"));
+        assert!(cmds.iter().any(|(c, _)| *c == "/allow <tool>"));
+        assert!(cmds.iter().any(|(c, _)| *c == "/deny <tool>"));
+    }
+
+    #[test]
+    fn existing_commands_still_parse() {
+        assert!(matches!(parse_input("/usage"), InputCommand::Usage));
+        assert!(matches!(parse_input("/exit"), InputCommand::Exit));
+        assert!(matches!(parse_input("/run foo"), InputCommand::Run { .. }));
+        assert!(matches!(parse_input("/arm"), InputCommand::ArmWrites));
+    }
 }

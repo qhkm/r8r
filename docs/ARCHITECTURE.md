@@ -115,7 +115,9 @@ r8r combines:
 │  │  • Cron     │  │  • HTTP     │  │  • Queue    │              │
 │  │  • Webhook  │  │  • WhatsApp │  │  • Workers  │              │
 │  │  • Manual   │  │  • GSheets  │  │  • Retry    │              │
-│  │  • Event    │  │  • Transform│  │  • Timeout  │              │
+│  │  • Kafka    │  │  • Transform│  │  • Timeout  │              │
+│  │  • SQS/SNS  │  │  • Discord  │  │             │              │
+│  │  • Event    │  │  • Telegram │  │             │              │
 │  └─────────────┘  └─────────────┘  └─────────────┘              │
 │                                                                  │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
@@ -323,6 +325,8 @@ Service definitions deklaratif dalam `src/integrations/builtin/*.yaml` (kompil v
 | `apify` | Scraping actors & datasets (Bearer) | ✅ Shipped |
 | `email` | SMTP/Resend/SendGrid (node berdedikasi) | ✅ Shipped (node) |
 | `webhook` | Receive webhooks | ✅ Shipped (trigger) |
+| `kafka` | Kafka consumer (event source, pure-Rust client) | ✅ Shipped (trigger) |
+| `sqs` | AWS SQS long-poll consumer + SNS publisher (SigV4 manual) | ✅ Shipped (trigger) |
 
 ### Roadmap Integrations (rujukan katalog Monid — direct API, bukan aggregator)
 

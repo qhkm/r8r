@@ -196,8 +196,8 @@ Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style
 ## Backlog
 
 ### Event Triggers
-- [ ] Kafka consumer trigger
-- [ ] SQS/SNS triggers
+- [x] Kafka consumer trigger
+- [x] SQS/SNS triggers
 
 ### Node Types
 - [ ] `discord` - Discord messaging
@@ -251,7 +251,7 @@ The following features are intentionally **not** on the roadmap to maintain r8r'
 We welcome contributions! Pick an item from "Planned" or "Backlog" and open an issue to discuss before starting work.
 
 Priority areas (next):
-1. New node types — discord, telegram, google-sheets
-2. New triggers — Kafka, SQS/SNS
+1. New node types — discord, telegram, google-sheets ✅
+2. New triggers — Kafka, SQS/SNS ✅
 3. Scalability — distributed workers, Redis job queue
 4. Enterprise — multi-tenancy, RBAC, SSO

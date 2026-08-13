@@ -91,6 +91,18 @@ enum Commands {
         /// Resume a previous session
         #[arg(long, num_args = 0..=1, default_missing_value = "")]
         resume: Option<String>,
+        /// Max LLM cost per turn in USD (guardrail)
+        #[arg(long, value_name = "USD")]
+        max_cost: Option<f64>,
+        /// Max LLM cost per session in USD (guardrail)
+        #[arg(long, value_name = "USD")]
+        max_cost_per_session: Option<f64>,
+        /// Allowlist tool name (repeatable; when set, only these tools run)
+        #[arg(long, value_name = "TOOL")]
+        allow_tool: Vec<String>,
+        /// Denylist tool name (repeatable; always blocked)
+        #[arg(long, value_name = "TOOL")]
+        deny_tool: Vec<String>,
     },
     /// Generate or refine a workflow from a natural language description (shorthand)
     Prompt {
@@ -593,8 +605,23 @@ async fn run_command(
     output: &r8r::cli::output::Output,
 ) -> anyhow::Result<()> {
     match command {
-        None => cmd_chat(None).await?,
-        Some(Commands::Chat { resume }) => cmd_chat(resume).await?,
+        None => cmd_chat(None, None, None, vec![], vec![]).await?,
+        Some(Commands::Chat {
+            resume,
+            max_cost,
+            max_cost_per_session,
+            allow_tool,
+            deny_tool,
+        }) => {
+            cmd_chat(
+                resume,
+                max_cost,
+                max_cost_per_session,
+                allow_tool,
+                deny_tool,
+            )
+            .await?
+        }
         Some(Commands::Workflows { action }) => match action {
             WorkflowActions::List => cmd_workflows_list(output).await?,
             WorkflowActions::Create { file } => cmd_workflows_create(&file, output).await?,
@@ -831,8 +858,28 @@ fn cmd_completions(shell: CompletionShell) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_chat(resume: Option<String>) -> anyhow::Result<()> {
-    r8r::repl::run_repl(resume).await
+async fn cmd_chat(
+    resume: Option<String>,
+    max_cost: Option<f64>,
+    max_cost_per_session: Option<f64>,
+    allow_tool: Vec<String>,
+    deny_tool: Vec<String>,
+) -> anyhow::Result<()> {
+    let cli_guardrails = if max_cost.is_some()
+        || max_cost_per_session.is_some()
+        || !allow_tool.is_empty()
+        || !deny_tool.is_empty()
+    {
+        Some(r8r::repl::guardrails::GuardrailsConfig {
+            allow_tools: allow_tool,
+            deny_tools: deny_tool,
+            max_cost_per_turn: max_cost,
+            max_cost_per_session,
+        })
+    } else {
+        None
+    };
+    r8r::repl::run_repl(resume, cli_guardrails).await
 }
 
 // ============================================================================

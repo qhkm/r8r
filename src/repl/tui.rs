@@ -2266,6 +2266,7 @@ async fn handle_slash_command(
     executor: &Arc<Executor>,
     llm_client: &mut reqwest::Client,
     llm_config: &mut Option<LlmConfig>,
+    guardrails: &Arc<tokio::sync::Mutex<super::guardrails::ReplGuardrails>>,
 ) -> anyhow::Result<()> {
     match cmd {
         InputCommand::Run { workflow } => {
@@ -2651,6 +2652,32 @@ async fn handle_slash_command(
 
             app.push_message(MessageKind::System, text);
         }
+        InputCommand::Guardrails => {
+            let summary = guardrails.lock().await.status_summary();
+            app.push_message(MessageKind::System, summary);
+        }
+        InputCommand::AllowTool { tool } => {
+            let msg = match tool {
+                Some(name) if !name.trim().is_empty() => {
+                    let name = name.trim().to_string();
+                    guardrails.lock().await.allow_tool(&name);
+                    format!("🟢 Tool `{name}` whitelisted for this session")
+                }
+                _ => "Usage: /allow <tool>".to_string(),
+            };
+            app.push_message(MessageKind::System, msg);
+        }
+        InputCommand::DenyTool { tool } => {
+            let msg = match tool {
+                Some(name) if !name.trim().is_empty() => {
+                    let name = name.trim().to_string();
+                    guardrails.lock().await.deny_tool(&name);
+                    format!("🔴 Tool `{name}` denylisted for this session")
+                }
+                _ => "Usage: /deny <tool>".to_string(),
+            };
+            app.push_message(MessageKind::System, msg);
+        }
         InputCommand::ArmWrites => {
             app.writes_armed = true;
             app.push_message(
@@ -2759,6 +2786,7 @@ pub async fn run_repl_tui(
     session_id: String,
     system_prompt: String,
     tool_defs: Vec<Value>,
+    guardrails: Arc<tokio::sync::Mutex<super::guardrails::ReplGuardrails>>,
 ) -> anyhow::Result<()> {
     let workflow_count = storage.list_workflows().await.unwrap_or_default().len();
     let mut active_llm_config = llm_config;
@@ -3088,6 +3116,7 @@ pub async fn run_repl_tui(
                                         let system_prompt_cloned = system_prompt.clone();
                                         let tool_defs_cloned = tool_defs.clone();
                                         let text_cloned = original;
+                                        let guardrails_cloned = guardrails.clone();
                                         current_turn = Some(tokio::spawn(async move {
                                             let tx_stream = tx_updates.clone();
                                             let callback: engine::StreamCallback =
@@ -3105,6 +3134,7 @@ pub async fn run_repl_tui(
                                                 &executor_cloned,
                                                 &tool_defs_cloned,
                                                 &callback,
+                                                &guardrails_cloned,
                                             )
                                             .await;
                                             let _ = tx_updates.send(ReplEvent::TurnComplete {
@@ -3153,6 +3183,7 @@ pub async fn run_repl_tui(
                                         let system_prompt_cloned = system_prompt.clone();
                                         let tool_defs_cloned = tool_defs.clone();
                                         let text_cloned = original;
+                                        let guardrails_cloned = guardrails.clone();
                                         current_turn = Some(tokio::spawn(async move {
                                             let tx_stream = tx_updates.clone();
                                             let callback: engine::StreamCallback =
@@ -3170,6 +3201,7 @@ pub async fn run_repl_tui(
                                                 &executor_cloned,
                                                 &tool_defs_cloned,
                                                 &callback,
+                                                &guardrails_cloned,
                                             )
                                             .await;
                                             let _ = tx_updates.send(ReplEvent::TurnComplete {
@@ -3275,6 +3307,7 @@ pub async fn run_repl_tui(
                                 let system_prompt_cloned = system_prompt.clone();
                                 let tool_defs_cloned = tool_defs.clone();
                                 let text_cloned = text.clone();
+                                let guardrails_cloned = guardrails.clone();
 
                                 current_turn = Some(tokio::spawn(async move {
                                     let tx_stream = tx_updates.clone();
@@ -3293,6 +3326,7 @@ pub async fn run_repl_tui(
                                         &executor_cloned,
                                         &tool_defs_cloned,
                                         &callback,
+                                        &guardrails_cloned,
                                     )
                                     .await;
 
@@ -3311,6 +3345,7 @@ pub async fn run_repl_tui(
                                     &executor,
                                     &mut llm_client,
                                     &mut active_llm_config,
+                                    &guardrails,
                                 )
                                 .await?;
                                 // Restore action bar after view-only slash commands so user

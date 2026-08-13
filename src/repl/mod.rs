@@ -6,6 +6,7 @@
  */
 pub mod conversation;
 pub mod engine;
+pub mod guardrails;
 pub mod input;
 pub mod prompt;
 pub mod tools;
@@ -23,7 +24,10 @@ use std::io::{self, Write};
 use std::sync::Arc;
 
 /// Entry point for `r8r chat`.
-pub async fn run_repl(resume_session: Option<String>) -> anyhow::Result<()> {
+pub async fn run_repl(
+    resume_session: Option<String>,
+    cli_guardrails: Option<guardrails::GuardrailsConfig>,
+) -> anyhow::Result<()> {
     let config = crate::config::Config::load();
     let db_path = config
         .storage
@@ -32,6 +36,24 @@ pub async fn run_repl(resume_session: Option<String>) -> anyhow::Result<()> {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+
+    // Merge file config + CLI overrides (CLI wins).
+    let mut guardrails_config = config.repl.guardrails.clone();
+    if let Some(cli) = cli_guardrails {
+        if !cli.allow_tools.is_empty() {
+            guardrails_config.allow_tools = cli.allow_tools;
+        }
+        if !cli.deny_tools.is_empty() {
+            guardrails_config.deny_tools = cli.deny_tools;
+        }
+        if cli.max_cost_per_turn.is_some() {
+            guardrails_config.max_cost_per_turn = cli.max_cost_per_turn;
+        }
+        if cli.max_cost_per_session.is_some() {
+            guardrails_config.max_cost_per_session = cli.max_cost_per_session;
+        }
+    }
+    let guardrails = guardrails::ReplGuardrails::from_config(&guardrails_config);
 
     let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open(&db_path)?);
     let persisted_llm_config = storage.get_repl_llm_config().await?;
@@ -114,6 +136,7 @@ pub async fn run_repl(resume_session: Option<String>) -> anyhow::Result<()> {
         session_id,
         system_prompt,
         tool_defs,
+        Arc::new(tokio::sync::Mutex::new(guardrails)),
     )
     .await
 }

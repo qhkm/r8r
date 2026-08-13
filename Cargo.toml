@@ -44,6 +44,8 @@ ee = ["enterprise", "redis", "storage-postgres"] # Full Enterprise Edition bundl
 
 # Infrastructure features
 redis = ["dep:redis"]
+kafka = ["dep:kafka"]              # Kafka consumer trigger (pure-Rust client)
+aws = ["dep:quick-xml", "dep:hmac", "dep:sha2"]   # SQS/SNS triggers (SigV4 via stdlib crypto)
 sandbox = ["dep:tempfile"]
 sandbox-docker = ["sandbox", "dep:bollard"]
 sandbox-firecracker = ["sandbox"]
@@ -158,6 +160,11 @@ tempfile = { version = "3", optional = true }
 # PostgreSQL storage backend (optional, enable with --features storage-postgres)
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "chrono", "uuid", "json"], optional = true }
 
+# External event-source triggers (optional)
+kafka = { version = "0.10", optional = true }                        # Kafka consumer (pure Rust, no C deps)
+quick-xml = { version = "0.37", optional = true }                    # SQS XML response parsing (feature aws)
+hmac = { version = "0.12", optional = true }                         # SigV4 HMAC-SHA256 (feature aws)
+sha2 = { version = "0.10", optional = true }                         # SigV4 payload SHA-256 (feature aws)
 
 [profile.release]
 strip = true

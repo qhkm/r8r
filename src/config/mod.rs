@@ -33,6 +33,10 @@ pub struct Config {
     #[serde(default)]
     pub agent: AgentConfig,
 
+    /// REPL configuration
+    #[serde(default)]
+    pub repl: ReplConfig,
+
     /// Sandbox execution configuration
     #[cfg(feature = "sandbox")]
     #[serde(default)]
@@ -94,6 +98,14 @@ pub struct StorageConfig {
     /// Path to SQLite database
     #[serde(default)]
     pub database_path: Option<PathBuf>,
+}
+
+/// REPL configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReplConfig {
+    /// REPL guardrails (tool permission matrix + cost budgets)
+    #[serde(default)]
+    pub guardrails: crate::repl::guardrails::GuardrailsConfig,
 }
 
 /// ZeptoClaw agent integration configuration.

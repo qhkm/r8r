@@ -15,18 +15,28 @@
 //! - Approval timeout: Background checker for expired approval requests
 
 mod approval_timeout;
+#[cfg(feature = "aws")]
+mod aws;
 mod delayed;
 mod event;
 mod event_backend;
+#[cfg(feature = "kafka")]
+mod kafka;
 #[cfg(feature = "redis")]
 mod redis_backend;
 mod scheduler;
 mod webhook;
 
 pub use approval_timeout::ApprovalTimeoutChecker;
+#[cfg(feature = "aws")]
+pub use aws::{AwsCredentials, SnsPublisher, SqsConfig, SqsMessage, SqsTrigger};
 pub use delayed::{DelayedEvent, DelayedEventProcessor};
 pub use event::{EventError, EventFanOut, EventMessage, EventSubscriber};
 pub use event_backend::{EventBackend, EventReceiver, NativeEventBackend};
+#[cfg(feature = "kafka")]
+pub use kafka::{
+    parse_payload as kafka_parse_payload, run_kafka_trigger, KafkaOffset, KafkaTriggerConfig,
+};
 #[cfg(feature = "redis")]
 pub use redis_backend::RedisEventBackend;
 pub use scheduler::Scheduler;

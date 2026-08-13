@@ -14,9 +14,9 @@ use serde_json::Value;
 use super::types::{Node, NodeContext, NodeResult};
 use super::{
     AgentNode, AggregateNode, ApprovalNode, CryptoNode, DatabaseNode, DateTimeNode, DebugNode,
-    DedupeNode, EmailNode, FilterNode, HttpNode, IfNode, LimitNode, MergeNode, S3Node, SetNode,
-    SlackNode, SortNode, SplitNode, SubWorkflowNode, SummarizeNode, SwitchNode, TransformNode,
-    VariablesNode, WaitNode,
+    DedupeNode, DiscordNode, EmailNode, FilterNode, GoogleSheetsNode, HttpNode, IfNode, LimitNode,
+    MergeNode, S3Node, SetNode, SlackNode, SortNode, SplitNode, SubWorkflowNode, SummarizeNode,
+    SwitchNode, TelegramNode, TransformNode, VariablesNode, WaitNode,
 };
 use crate::error::{Error, Result};
 use crate::integrations::node::IntegrationNode;
@@ -57,6 +57,9 @@ impl NodeRegistry {
         registry.register(Arc::new(SummarizeNode::new()));
         registry.register(Arc::new(EmailNode::new()));
         registry.register(Arc::new(SlackNode::new()));
+        registry.register(Arc::new(TelegramNode::new()));
+        registry.register(Arc::new(GoogleSheetsNode::new()));
+        registry.register(Arc::new(DiscordNode::new()));
         registry.register(Arc::new(DatabaseNode::new()));
         registry.register(Arc::new(S3Node::new()));
         registry.register(Arc::new(ApprovalNode::new()));
@@ -151,6 +154,9 @@ mod tests {
         assert!(registry.has("summarize"));
         assert!(registry.has("email"));
         assert!(registry.has("slack"));
+        assert!(registry.has("telegram"));
+        assert!(registry.has("google-sheets"));
+        assert!(registry.has("discord"));
         assert!(registry.has("database"));
         assert!(registry.has("s3"));
         assert!(registry.has("approval"));
@@ -185,6 +191,9 @@ mod tests {
         assert!(types.contains(&"summarize"));
         assert!(types.contains(&"email"));
         assert!(types.contains(&"slack"));
+        assert!(types.contains(&"telegram"));
+        assert!(types.contains(&"google-sheets"));
+        assert!(types.contains(&"discord"));
         assert!(types.contains(&"database"));
         assert!(types.contains(&"s3"));
         assert!(types.contains(&"approval"));

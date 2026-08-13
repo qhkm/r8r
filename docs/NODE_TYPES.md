@@ -27,6 +27,9 @@ This document describes all built-in node types available in r8r.
   - [SubWorkflow](#subworkflow)
   - [Email](#email)
   - [Slack](#slack)
+  - [Telegram](#telegram)
+  - [Google Sheets](#google-sheets)
+  - [Discord](#discord)
   - [Database](#database)
   - [S3](#s3)
   - [Sandbox](#sandbox)
@@ -782,6 +785,124 @@ nodes:
 | `reply_broadcast` | boolean | No | Also post to channel when replying |
 | `webhook_url` | string | No | Webhook URL (alternative to token) |
 | `credential` | string | No | OAuth token credential name |
+
+---
+
+### Telegram
+
+Send messages to Telegram chats via the Bot API.
+
+**Type**: `telegram`
+
+**Configuration**:
+
+```yaml
+nodes:
+  - id: notify-telegram
+    type: telegram
+    config:
+      chat_id: "@my_channel"
+      text: "Order #{{ input.order_id }} diterima ✅"
+      parse_mode: "HTML"
+      disable_notification: false
+      credential: telegram_bot
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `chat_id` | string/number | Yes | Target chat ID (`@username` atau numeric) |
+| `text` | string | Yes | Message text |
+| `parse_mode` | string | No | `HTML` atau `MarkdownV2` |
+| `disable_notification` | boolean | No | Hantar tanpa bunyi |
+| `disable_web_page_preview` | boolean | No | Matikan link preview |
+| `reply_to_message_id` | number | No | Balas dalam thread |
+| `token` | string | No | Bot token (inline) |
+| `credential` | string | No | Credential name untuk bot token |
+
+**Output**: `{ success, message_id, chat, date }`
+
+---
+
+### Google Sheets
+
+Read, append, or update values in Google Sheets via Sheets API v4.
+
+**Type**: `google-sheets`
+
+**Configuration**:
+
+```yaml
+nodes:
+  - id: append-sheet
+    type: google-sheets
+    config:
+      action: append  # read, append, update
+      spreadsheet_id: "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+      range: "Sheet1!A1"
+      values:
+        - ["Nama", "Skor"]
+        - ["Ali", 90]
+      credential: google_sheets_oauth
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `action` | string | No | `read` (default), `append`, `update` |
+| `spreadsheet_id` | string | Yes | ID spreadsheet (dari URL) |
+| `range` | string | Yes | Range A1 notation (e.g., `Sheet1!A1:C10`) |
+| `values` | array | No* | Rows untuk append/update (*wajib untuk append/update) |
+| `token` | string | No | Access token (inline) |
+| `credential` | string | No | Credential name — OAuth2 access token diutamakan, plain token sebagai fallback |
+
+**Output** (read): `{ success, range, values: [[...]] }`
+**Output** (append/update): `{ success, updates: { updated_range, updated_rows } }`
+
+---
+
+### Discord
+
+Send messages to Discord channels via Bot API atau webhook.
+
+**Type**: `discord`
+
+**Configuration** (Bot token):
+
+```yaml
+nodes:
+  - id: notify-discord
+    type: discord
+    config:
+      channel_id: "123456789012345678"
+      text: "New order: {{ input.order_id }}"
+      embeds:
+        - title: "Report"
+          description: "Daily report sedia"
+          color: 3447003
+      credential: discord_bot
+```
+
+**Configuration** (webhook — tanpa token):
+
+```yaml
+nodes:
+  - id: notify-discord-webhook
+    type: discord
+    config:
+      webhook_url: "https://discord.com/api/webhooks/xxx/yyy"
+      text: "Hello from r8r!"
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel_id` | string | Yes* | Channel ID (*wajib jika guna bot token) |
+| `text` | string | Yes | Message content |
+| `embeds` | array | No | Rich embeds |
+| `token` | string | No | Bot token (inline) |
+| `credential` | string | No | Credential name untuk bot token — **nilai mesti sertakan prefix `Bot `** |
+| `webhook_url` | string | No | Webhook URL (alternative — tiada token diperlukan) |
+
+**Output** (api): `{ success, method: "api", channel_id, message_id }`
+**Output** (webhook): `{ success, method: "webhook" }`
 
 ---
 
