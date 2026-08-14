@@ -71,10 +71,13 @@ impl JobQueue for RedisQueue {
         let payload = serde_json::to_string(&job)
             .map_err(|e| crate::error::Error::Internal(format!("job serialization failed: {e}")))?;
         let mut conn = self.conn().await?;
-        conn.lpush::<_, _, ()>(pending_key(), &payload).await.map_err(|e| {
-            crate::error::Error::Internal(format!("Redis LPUSH failed: {e}"))
-        })?;
-        debug!("enqueued job {} for workflow {}", job.job_id, job.workflow_id);
+        conn.lpush::<_, _, ()>(pending_key(), &payload)
+            .await
+            .map_err(|e| crate::error::Error::Internal(format!("Redis LPUSH failed: {e}")))?;
+        debug!(
+            "enqueued job {} for workflow {}",
+            job.job_id, job.workflow_id
+        );
         Ok(())
     }
 
@@ -104,9 +107,9 @@ impl JobQueue for RedisQueue {
         let payload = serde_json::to_string(job)
             .map_err(|e| crate::error::Error::Internal(format!("job serialization failed: {e}")))?;
         let mut conn = self.conn().await?;
-        conn.lrem::<_, _, i64>(processing_key(), 1, &payload).await.map_err(|e| {
-            crate::error::Error::Internal(format!("Redis LREM failed: {e}"))
-        })?;
+        conn.lrem::<_, _, i64>(processing_key(), 1, &payload)
+            .await
+            .map_err(|e| crate::error::Error::Internal(format!("Redis LREM failed: {e}")))?;
         debug!("acked job {}", job.job_id);
         Ok(())
     }
@@ -125,18 +128,19 @@ impl JobQueue for RedisQueue {
             .await
             .map_err(|e| crate::error::Error::Internal(format!("Redis LREM failed: {e}")))?;
         // …and push the bumped copy back to pending.
-        conn.lpush::<_, _, ()>(pending_key(), &payload).await.map_err(|e| {
-            crate::error::Error::Internal(format!("Redis LPUSH failed: {e}"))
-        })?;
+        conn.lpush::<_, _, ()>(pending_key(), &payload)
+            .await
+            .map_err(|e| crate::error::Error::Internal(format!("Redis LPUSH failed: {e}")))?;
         debug!("requeued job {} (attempt {})", job.job_id, retried.attempts);
         Ok(())
     }
 
     async fn pending_len(&self) -> Result<usize> {
         let mut conn = self.conn().await?;
-        let len: i64 = conn.llen(pending_key()).await.map_err(|e| {
-            crate::error::Error::Internal(format!("Redis LLEN failed: {e}"))
-        })?;
+        let len: i64 = conn
+            .llen(pending_key())
+            .await
+            .map_err(|e| crate::error::Error::Internal(format!("Redis LLEN failed: {e}")))?;
         Ok(len.max(0) as usize)
     }
 
@@ -150,7 +154,9 @@ impl JobQueue for RedisQueue {
             .await
             .map_err(|e| crate::error::Error::Internal(format!("Redis LRANGE failed: {e}")))?;
 
-        let cutoff = chrono::Utc::now() - chrono::Duration::from_std(max_age).unwrap_or(chrono::Duration::seconds(DEFAULT_STALE_JOB_SECS as i64));
+        let cutoff = chrono::Utc::now()
+            - chrono::Duration::from_std(max_age)
+                .unwrap_or(chrono::Duration::seconds(DEFAULT_STALE_JOB_SECS as i64));
         let mut moved = 0usize;
 
         for raw in inflight {
@@ -180,7 +186,12 @@ mod tests {
     use super::*;
 
     fn sample_job(id: &str) -> RunJob {
-        RunJob::new(id.to_string(), "wf-1".to_string(), None, serde_json::json!({"x": 1}))
+        RunJob::new(
+            id.to_string(),
+            "wf-1".to_string(),
+            None,
+            serde_json::json!({"x": 1}),
+        )
     }
 
     #[test]

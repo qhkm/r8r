@@ -138,6 +138,33 @@ impl Worker {
         info!("worker stopped");
     }
 
+    /// Process at most one job, then return.
+    ///
+    /// Used by `r8r worker --once` (cron/systemd-driven workers) and tests.
+    /// Returns `true` when a job was processed, `false` when the queue had no
+    /// job within the (short) wait window.
+    pub async fn process_one(&self, wait: Duration) -> Result<bool> {
+        let executor = Executor::new(self.registry.clone(), self.storage.clone());
+        // First recover stale jobs (same semantics as `run`).
+        match self
+            .queue
+            .requeue_stale(Duration::from_secs(DEFAULT_STALE_JOB_SECS))
+            .await
+        {
+            Ok(0) => {}
+            Ok(n) => info!("worker startup: requeued {n} stale in-flight job(s)"),
+            Err(e) => warn!("worker startup: stale requeue failed: {e}"),
+        }
+        match self.queue.dequeue(wait).await {
+            Ok(Some(job)) => {
+                Self::process(&executor, &self.queue, &self.storage, job).await?;
+                Ok(true)
+            }
+            Ok(None) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Process one job: load workflow → execute → ack/requeue.
     ///
     /// Any failure (workflow missing, parse error, execution error) is handled
@@ -267,8 +294,9 @@ nodes:
   - id: start
     type: set
     config:
-      key: result
-      value: hello
+      fields:
+        - name: result
+          value: hello
 "#;
 
     async fn save_test_workflow(

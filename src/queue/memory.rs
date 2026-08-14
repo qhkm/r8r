@@ -108,7 +108,12 @@ mod tests {
     use std::time::Duration;
 
     fn sample_job(id: &str) -> RunJob {
-        RunJob::new(id.to_string(), "wf-1".to_string(), None, serde_json::json!({"x": 1}))
+        RunJob::new(
+            id.to_string(),
+            "wf-1".to_string(),
+            None,
+            serde_json::json!({"x": 1}),
+        )
     }
 
     #[tokio::test]
@@ -117,8 +122,16 @@ mod tests {
         q.enqueue(sample_job("a")).await.unwrap();
         q.enqueue(sample_job("b")).await.unwrap();
 
-        let a = q.dequeue(Duration::from_millis(100)).await.unwrap().unwrap();
-        let b = q.dequeue(Duration::from_millis(100)).await.unwrap().unwrap();
+        let a = q
+            .dequeue(Duration::from_millis(100))
+            .await
+            .unwrap()
+            .unwrap();
+        let b = q
+            .dequeue(Duration::from_millis(100))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(a.job_id, "a");
         assert_eq!(b.job_id, "b");
         assert_eq!(q.pending_len().await.unwrap(), 0);
@@ -135,9 +148,7 @@ mod tests {
     async fn dequeue_blocks_until_enqueue() {
         let q = MemoryQueue::new();
         let q2 = q.clone();
-        let handle = tokio::spawn(async move {
-            q2.dequeue(Duration::from_secs(2)).await.unwrap()
-        });
+        let handle = tokio::spawn(async move { q2.dequeue(Duration::from_secs(2)).await.unwrap() });
         // Give the dequeue a moment to start blocking, then enqueue.
         tokio::time::sleep(Duration::from_millis(50)).await;
         q.enqueue(sample_job("wake")).await.unwrap();
