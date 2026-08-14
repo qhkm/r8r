@@ -384,7 +384,10 @@ mod tests {
     async fn test_http_get() {
         let node = HttpNode::new();
         let config = json!({
-            "url": "https://httpbin.org/get",
+            // httpbin.org frequently returns 503 (rate-limited/down), making
+            // this test flaky. jsonplaceholder.typicode.com is a stable JSON
+            // test endpoint that always answers 200 with a JSON body.
+            "url": "https://jsonplaceholder.typicode.com/todos/1",
             "method": "GET"
         });
         let ctx = NodeContext::new("exec-1", "test");
