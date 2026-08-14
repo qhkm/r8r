@@ -112,6 +112,12 @@ impl RunJob {
     }
 }
 
+/// True when the library was compiled with the `redis` backend.
+///
+/// Exposed so integration tests (separate crates, no feature visibility)
+/// can branch on the compiled feature set.
+pub const HAS_REDIS_BACKEND: bool = cfg!(feature = "redis");
+
 /// Backend-agnostic job queue interface.
 ///
 /// Implementations must be `Send + Sync` so workers can share them across

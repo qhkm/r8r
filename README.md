@@ -319,6 +319,15 @@ r8r refine <name> <description>       # Refine existing workflow
 # Security
 r8r credentials set <name>            # Store secret
 r8r credentials list                  # List (masked)
+
+# Job Queue (distributed workers)
+r8r enqueue <workflow>                # Push a workflow run onto the queue
+r8r enqueue <workflow> -i '{"x":1}'   # With input JSON
+r8r enqueue <workflow> --version 2    # Pin a specific workflow version
+r8r enqueue <workflow> --idempotency-key k  # Dedupe-safe key
+r8r worker                            # Start a worker (4 concurrent consumers)
+r8r worker --once                     # Process one job, then exit (cron/systemd)
+r8r worker -c 8 --redis-url redis://host:6379  # Redis-backed queue
 ```
 
 While a prompt is running, the REPL TUI shows staged progress: planning, active tool calls, latest completed tool, and reply drafting, alongside elapsed time.

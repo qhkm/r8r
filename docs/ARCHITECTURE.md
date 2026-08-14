@@ -501,6 +501,25 @@ impl Executor {
 }
 ```
 
+### Job Queue & Distributed Workers
+
+For decoupled, retryable background execution, r8r ships a job queue layer (`src/queue/`):
+
+- **`JobQueue` trait** — backend-agnostic (`enqueue`/`dequeue`/`ack`/`requeue`/`pending_len`/`requeue_stale`).
+- **`MemoryQueue`** — in-process FIFO (default; zero dependencies; used in tests).
+- **`RedisQueue`** — reliable producer/consumer via `BRPOPLPUSH` (`--features redis`). Pending and in-flight jobs live in separate lists; crashed workers are recovered through `requeue_stale` on startup. Key names: `r8r:queue:<name>:pending` / `:processing`.
+- **`Worker`** — dequeue → load workflow → execute → ack/requeue loop, with graceful shutdown and bounded retries (`MAX_ATTEMPTS = 3`). Executions reuse the normal `Executor` + storage, so node behavior is identical to direct runs.
+- **CLI** — `r8r enqueue <workflow>` pushes runs; `r8r worker [-c N] [--once]` consumes them. Backend resolution: `--redis-url` flag > `R8R_REDIS_URL` > `REDIS_URL` > in-memory fallback.
+
+```
+┌──────────┐   enqueue    ┌──────────────────┐   dequeue    ┌──────────────┐
+│ Producer │ ───────────► │  Job Queue       │ ───────────► │  Worker(s)   │
+│ (CLI/cron│             │  (Memory|Redis)  │              │  ─ Executor  │
+│  /API)   │              └──────────────────┘              └──────────────┘
+```
+
+Design notes: at-least-once semantics with bounded retry (idempotency keys on `RunJob` enable safe consumers); distributed workers share a Redis-backed queue; `MemoryQueue` is intentionally per-process (suited for embedded/single-binary deployments).
+
 ### Retry & Error Handling
 
 ```yaml

@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`r8r runs pending`** — now shows assignee/group routing info per approval
 - **SQLite migration** — `assignee` and `groups` columns added automatically via `ALTER TABLE` on startup
 
+#### Job Queue & Distributed Workers
+
+- **`JobQueue` trait** (`src/queue/mod.rs`) — backend-agnostic async trait: `enqueue`, `dequeue`, `ack`, `requeue`, `pending_len`, `requeue_stale`; `RunJob` payload with `job_id`, `workflow_id`, pinned `version`, `input`, `attempts`, `correlation_id`, `idempotency_key`, `origin`
+- **`MemoryQueue`** — in-process FIFO with blocking dequeue + notify wakeups; default backend, zero extra dependencies
+- **`RedisQueue`** (`--features redis`) — reliable producer/consumer via `BRPOPLPUSH` (pending/processing lists, stale-job recovery on worker startup, bounded retry)
+- **`Worker`** (`src/queue/worker.rs`) — dequeue → execute → ack/requeue loop; graceful shutdown (`ctrl_c`); `MAX_ATTEMPTS = 3` then drop; reuses `Executor` + `Storage` so node semantics match direct runs
+- **CLI** — `r8r enqueue <workflow>` (input JSON, version pin, idempotency key) and `r8r worker [-c N] [--once]` (single-shot mode for cron/systemd); backend resolution `--redis-url` > `R8R_REDIS_URL` > `REDIS_URL` > memory fallback
+
 #### JSON Schema & REPL Guardrails
 
 - **`r8r schema`** — emits the JSON Schema for workflow YAML to stdout or `--output <file>`. Enables IDE autocomplete in VSCode/Cursor with the YAML Language Server.
