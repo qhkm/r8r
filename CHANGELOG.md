@@ -94,6 +94,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Slack** — Block Kit message with workflow name, approval ID, description, and expiry
 - **Email** — HTML email via SMTP relay configured with `R8R_SMTP_RELAY_URL` env var
 
+### Fixed
+
+#### Intel macOS (x86_64) binaries
+- **Release matrix** — `x86_64-apple-darwin` added to the build matrix (Intel Macs previously had no installable binary; installer assumed ARM binaries work everywhere via Rosetta 2)
+- **Installer arch detection** — `install.sh` now selects `x86_64-apple-darwin` on Intel Macs and `aarch64-apple-darwin` on Apple Silicon instead of always downloading the ARM binary
+
 ## [0.3.0] - 2026-03-01
 
 ### Added
