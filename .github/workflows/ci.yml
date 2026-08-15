@@ -23,9 +23,13 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-test-
-      # Limit parallelism: linking many test binaries concurrently OOMs the
-      # runner (collect2: ld terminated with signal 7 [Bus error]).
+      # Limit parallelism + strip debug info from test binaries. This dep tree
+      # (aws-lc-sys, ring, sqlx, kafka, redis, ...) with default debug=2 makes
+      # test binaries hundreds of MB — linking OOMs the runner
+      # (collect2: ld terminated with signal 7 [Bus error]).
       - run: cargo test --all-features --jobs 2
+        env:
+          CARGO_PROFILE_TEST_DEBUG: 0
 
   clippy:
     name: Clippy
