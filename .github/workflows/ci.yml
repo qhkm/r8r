@@ -23,7 +23,9 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-test-
-      - run: cargo test --all-features
+      # Limit parallelism: linking many test binaries concurrently OOMs the
+      # runner (collect2: ld terminated with signal 7 [Bus error]).
+      - run: cargo test --all-features --jobs 2
 
   clippy:
     name: Clippy
