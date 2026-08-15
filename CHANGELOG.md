@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-15
+
+### Fixed
+
+- **Circuit-breaker deadlock on macOS** — `CircuitBreakerRegistry::get_or_create` no longer holds a write lock while acquiring a read lock on the same `RwLock` (glibc/Linux tolerated the pattern; `pthread_rwlock` on macOS deadlocked every run).
+- **Flaky `test_http_get`** — switched the external test endpoint from httpbin.org (frequent 503/rate-limit) to a stable JSON endpoint.
+- **Intel macOS (x86_64) release binaries** — release matrix now builds `x86_64-apple-darwin` (runner `macos-13`); installer detects `uname -m` on Darwin instead of assuming ARM. v0.5.0 assets backfilled.
+
+### Added
+
+- **Real bridge health metrics** — ZeptoClaw `health.ping` now returns live runtime values (uptime, active executions, pending approvals, loaded workflows) instead of stub zeros.
+
 ## [Unreleased]
 
 ### Added
