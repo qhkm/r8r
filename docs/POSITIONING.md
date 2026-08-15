@@ -109,6 +109,27 @@ That demo IS the positioning. Everything else supports it.
 4. **Recruit 3–5 beta users** from the beachhead segment (founders running agents, AI agencies). Learn from their workflows before adding features.
 5. **Public launch sequence**: public repo → Show HN → MCP registry → comparison pages → dogfood case study.
 
+## 10. Objection handling: "Yet another n8n?"
+
+The objection is fair on the surface — the visible surface (workflow engine, YAML, self-host, agent support) genuinely overlaps with n8n (200K stars, $2.5B valuation). Never defend with "we're YAML-first" — that loses. Reframe on **who is in the driver's seat**:
+
+**n8n = a canvas for humans. r8r = a trust layer for agents.**
+
+- n8n: a human builds automations in a visual editor, then runs them. The human is the intelligence; the workflow is the plan.
+- r8r: an LLM agent is the intelligence. The agent *proposes* work (YAML); r8r decides what is **allowed**, runs it deterministically, stops it off-policy/off-budget.
+
+Analogy: "yet another Jenkins?" to GitHub Actions — same pipeline shape, different claim (developer-native + trusted by default). n8n is the Jenkins of this story. Making n8n a trust layer means bolting on budget tracking, permission checks, approval gates, edge deployment onto a 500MB+ Node platform built around a visual canvas. r8r makes the guardrail model the schema of a 15MB binary.
+
+**Three counter-questions when someone says it:**
+
+1. *Can your agent write its own workflow and run it?* — n8n: human-authored/API-imported; r8r: YAML designed for LLM generation, validated by a permission matrix.
+2. *Does your agent have a budget and a kill switch?* — n8n: hand-rolled node logic; r8r: cost caps, arm/disarm, approvals as core.
+3. *Will it run on a Pi/Jetson, offline, cloud-to-edge?* — n8n: no; r8r: ~15MB.
+
+**The closer:** "We're not selling 'better n8n'. We run our actual business on it — our agents do our ops through r8r." Nobody calls a system already running your own operations "yet another n8n."
+
+**Honest fallback:** "Yes, it's n8n-shaped in a crowded market. Our bet is the thin slice we can own before n8n follows: trust-first, edge-light, agent-native. If that slice stays unclaimed for 12 months, we win it."
+
 ---
 
 *This doc is strategy, not marketing copy. It should evolve after every meaningful user conversation.*
