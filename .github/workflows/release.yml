@@ -30,8 +30,10 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-latest
             use_cross: false
+          # macos-13 (Intel) runners sunset by GitHub — build on macos-14 (arm64)
+          # and cross-compile x86_64 natively (macOS SDK universal, same pattern as universal binaries)
           - target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-14
             use_cross: false
     steps:
       - uses: actions/checkout@v4
