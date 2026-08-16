@@ -694,6 +694,8 @@ nodes:
 | `elevenlabs` | TTS & voices (xi-api-key) | text_to_speech, list_voices, list_models |
 | `browserbase` | Headless browser (X-BB-API-Key) | create_session, list_sessions, get_session, get_session_logs, get_session_live_urls, update_session |
 | `apify` | Scraping actors & datasets (Bearer) | run_actor, get_run, list_runs, get_dataset_items |
+| `runware` | Image/video/audio/3D gen — Seedance, Kling, Flux (Bearer) | generate_video, generate_image, get_response |
+| `meta-graph` | Meta Graph API v21: FB/IG pages, posts, ads (OAuth2/Bearer) | get_me, list_pages, publish_post, publish_photo, list_ad_accounts, list_campaigns, create_campaign |
 
 **Nota auth**:
 - Telegram letak token dalam path (`/bot{{ credential }}/sendMessage`) — credential wajib.

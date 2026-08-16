@@ -104,6 +104,8 @@ fn test_all_builtin_definitions_parse() {
     assert!(services.contains(&"yields".to_string()));
     assert!(services.contains(&"browserbase".to_string()));
     assert!(services.contains(&"apify".to_string()));
+    assert!(services.contains(&"runware".to_string()));
+    assert!(services.contains(&"meta-graph".to_string()));
     for service in &services {
         let def = loader.get(service).unwrap();
         assert!(

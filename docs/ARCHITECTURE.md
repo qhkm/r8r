@@ -323,6 +323,8 @@ Service definitions deklaratif dalam `src/integrations/builtin/*.yaml` (kompil v
 | `elevenlabs` | TTS & voices (xi-api-key) | ✅ Shipped |
 | `browserbase` | Headless browser sessions (X-BB-API-Key) | ✅ Shipped |
 | `apify` | Scraping actors & datasets (Bearer) | ✅ Shipped |
+| `runware` | Image/video/audio/3D gen — Seedance, Kling, Flux etc (Bearer) | ✅ Shipped |
+| `meta-graph` | Meta Graph API v21: pages, posts, photos, ads (OAuth2/Bearer) | ✅ Shipped |
 | `email` | SMTP/Resend/SendGrid (node berdedikasi) | ✅ Shipped (node) |
 | `webhook` | Receive webhooks | ✅ Shipped (trigger) |
 | `kafka` | Kafka consumer (event source, pure-Rust client) | ✅ Shipped (trigger) |
@@ -330,12 +332,12 @@ Service definitions deklaratif dalam `src/integrations/builtin/*.yaml` (kompil v
 
 ### Roadmap Integrations (rujukan katalog Monid — direct API, bukan aggregator)
 
-Katalog Monid (monid.ai/tools) dijadikan rujukan permintaan pasaran; integrasi dibina direct ke API service (BYOK), BUKAN guna Monid sebagai backend. Batch 13-Ogo-2026 sudah shipped: `exa`, `apollo`, `pdl`, `coingecko`, `defillama`, `stablecoins`, `yields`, `elevenlabs`, `browserbase`, `apify`. Calon seterusnya:
+Katalog Monid (monid.ai/tools) dijadikan rujukan permintaan pasaran; integrasi dibina direct ke API service (BYOK), BUKAN guna Monid sebagai backend. Batch 13-Ogo-2026 sudah shipped: `exa`, `apollo`, `pdl`, `coingecko`, `defillama`, `stablecoins`, `yields`, `elevenlabs`, `browserbase`, `apify`. Batch 16-Ogo-2026 shipped: `runware`, `meta-graph`. Calon seterusnya:
 
 | Kelas | Calon | Nota |
 |-------|-------|------|
 | Media/AI | `minimax` | Speech & generative |
-| Sosial | `reddit`, `facebook`, `instagram`, `tiktok` | Platform social (OAuth) |
+| Sosial | `reddit`, `tiktok` | Platform social (OAuth); FB/IG diliputi `meta-graph` |
 | Blockchain | `quicknode` | RPC/data access |
 
 ---
