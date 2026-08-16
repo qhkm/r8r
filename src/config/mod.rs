@@ -368,6 +368,10 @@ impl Config {
 
     /// Get the data directory.
     pub fn data_dir() -> PathBuf {
+        // Allow overriding data dir via env (used by tests to isolate storage)
+        if let Ok(dir) = std::env::var("R8R_DATA_DIR") {
+            return PathBuf::from(dir);
+        }
         dirs::data_dir()
             .map(|d| d.join("r8r"))
             .unwrap_or_else(|| PathBuf::from(".r8r"))

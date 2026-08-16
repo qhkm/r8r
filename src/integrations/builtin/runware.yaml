@@ -17,7 +17,7 @@ operations:
   generate_video:
     description: Generate video(s). Body = JSON array of task objects (taskType videoInference). Use deliveryMethod:async + webhookURL/get_response for long videos
     method: POST
-    path: /v1
+    path: ""
     params:
       tasks:
         required: true
@@ -28,7 +28,7 @@ operations:
   generate_image:
     description: Generate image(s). Body = JSON array of task objects (taskType imageInference)
     method: POST
-    path: /v1
+    path: ""
     params:
       tasks:
         required: true
@@ -39,7 +39,7 @@ operations:
   get_response:
     description: "Poll status/results of an async task (status: processing|success|error; includes videoURL/imageURL when done)"
     method: POST
-    path: /v1
+    path: ""
     params:
       tasks:
         required: true
