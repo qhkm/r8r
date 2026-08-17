@@ -34,7 +34,7 @@ exclude = [
 ]
 
 [features]
-default = ["ce"]
+default = ["ce", "document"]
 
 # Edition features
 ce = []                                          # Community Edition (AGPL-3.0)
@@ -51,6 +51,7 @@ sandbox = ["dep:tempfile"]
 sandbox-docker = ["sandbox", "dep:bollard"]
 sandbox-firecracker = ["sandbox"]
 storage-postgres = ["dep:sqlx"]
+document = ["dep:pdf-extract"]
 
 [[bin]]
 name = "r8r"
@@ -170,6 +171,7 @@ async-imap = { version = "0.11", default-features = false, features = ["runtime-
 tokio-rustls = { version = "0.26", optional = true }                 # IMAP TLS via rustls (no OpenSSL)
 webpki-roots = { version = "0.26", optional = true }                 # TLS root certificates (no system store)
 mailparse = { version = "0.15", optional = true }                    # MIME/RFC822 email parsing
+pdf-extract = { version = "0.12", optional = true }                 # Pure-Rust PDF text extraction
 
 [profile.release]
 strip = true

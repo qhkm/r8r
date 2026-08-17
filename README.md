@@ -216,6 +216,7 @@ r8r-mcp
 | Node | Purpose |
 |------|---------|
 | `http` | REST API calls |
+| **`document`** | **Extract digital PDF text or transcribe scans/images with a vision model** |
 | `transform` | Data transformation (Rhai expressions) |
 | **`agent`** | **AI reasoning — call OpenAI, Anthropic, Ollama, or any LLM** |
 | **`sandbox`** | **Execute Python, Node, or Bash in isolated environments** |

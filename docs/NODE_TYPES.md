@@ -22,6 +22,7 @@ This document describes all built-in node types available in r8r.
   - [Dedupe](#dedupe)
   - [Aggregate](#aggregate)
   - [Summarize](#summarize)
+  - [Document](#document)
 - [Integration Nodes](#integration-nodes)
   - [Agent](#agent)
   - [SubWorkflow](#subworkflow)
@@ -514,6 +515,59 @@ nodes:
 | `fields` | array | Yes | Fields to summarize |
 
 **Output**: Statistics (count, min, max, avg, median, stddev) for each field
+
+---
+
+### Document
+
+Extract text from a digital PDF locally or transcribe a scan/photo with an OpenAI-compatible vision model. This node is available when the `document` feature is enabled; it is included in the default feature set.
+
+**Type**: `document`
+
+```yaml
+# Extract the text layer from the first IMAP attachment without an API call.
+- id: extract-pdf
+  type: document
+  config:
+    data_field: attachments.0.data
+    mode: pdf_text
+    max_pages: 200
+
+# OCR an image with a BYOK OpenAI-compatible endpoint.
+- id: ocr-scan
+  type: document
+  config:
+    data_field: attachments.0.data
+    mode: vision
+    mime: image/png
+    output: json
+    prompt: "Return a JSON object containing the invoice number and total."
+    provider: openai
+    model: gpt-4o-mini
+    credential: openai
+```
+
+Exactly one of `data`, `data_field`, or `url` must be set. `data` and values resolved through `data_field` use standard base64 encoding. Dotted paths can traverse objects and arrays, such as `attachments.0.data`; JSON-string node input is parsed before path resolution.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `data` | string | One source | - | Base64-encoded document bytes |
+| `data_field` | string | One source | - | Dotted path to base64 data in node input |
+| `url` | string | One source | - | URL to download, bounded by `max_bytes` |
+| `mode` | string | Yes | - | `pdf_text` or `vision` |
+| `max_pages` | integer | No | `200` | Maximum PDF pages extracted |
+| `prompt` | string | No | Verbatim transcription instruction | Vision extraction instruction |
+| `output` | string | No | `text` | `text` or strict `json` vision response |
+| `provider` | string | No | `openai` | `openai` or an OpenAI-compatible `custom` provider |
+| `model` | string | No | `gpt-4o-mini` | Vision model name |
+| `api_url` | string | Custom only | OpenAI chat completions URL | API endpoint; required for `custom` |
+| `credential` | string | No | `openai`, then `llm` | Credential resolved through workflow BYOK credentials |
+| `mime` | string | No | `application/octet-stream` | MIME type used in the vision data URI |
+| `max_bytes` | integer | No | `10485760` | Maximum decoded or downloaded input size |
+
+`pdf_text` is local, deterministic, and intended for PDFs with a text layer. A scanned PDF can legitimately return empty page text; route that result to `vision` when OCR is needed. Its output contains `text`, per-page `pages`, `page_count`, and `source: pdf_text`.
+
+`vision` sends a chat-completions request containing a text part and an `image_url` data URI. Its output contains `text`, `source: vision`, `model`, and provider `usage`. With `output: json`, parsed object data is also returned under `json`; invalid or non-object model output produces `json: null` while preserving the raw `text`.
 
 ---
 

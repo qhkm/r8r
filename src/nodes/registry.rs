@@ -12,6 +12,8 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::types::{Node, NodeContext, NodeResult};
+#[cfg(feature = "document")]
+use super::DocumentNode;
 use super::{
     AgentNode, AggregateNode, ApprovalNode, CryptoNode, DatabaseNode, DateTimeNode, DebugNode,
     DedupeNode, DiscordNode, EmailNode, FilterNode, GoogleSheetsNode, HttpNode, IfNode, LimitNode,
@@ -64,6 +66,8 @@ impl NodeRegistry {
         registry.register(Arc::new(S3Node::new()));
         registry.register(Arc::new(ApprovalNode::new()));
         registry.register(Arc::new(IntegrationNode::new()));
+        #[cfg(feature = "document")]
+        registry.register(Arc::new(DocumentNode::new()));
 
         registry
     }
@@ -161,6 +165,8 @@ mod tests {
         assert!(registry.has("s3"));
         assert!(registry.has("approval"));
         assert!(registry.has("integration"));
+        #[cfg(feature = "document")]
+        assert!(registry.has("document"));
         assert!(!registry.has("nonexistent"));
     }
 
@@ -198,5 +204,7 @@ mod tests {
         assert!(types.contains(&"s3"));
         assert!(types.contains(&"approval"));
         assert!(types.contains(&"integration"));
+        #[cfg(feature = "document")]
+        assert!(types.contains(&"document"));
     }
 }

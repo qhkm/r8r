@@ -19,6 +19,8 @@ mod datetime;
 mod debug;
 mod dedupe;
 mod discord;
+#[cfg(feature = "document")]
+mod document;
 mod email;
 mod filter;
 mod google_sheets;
@@ -53,6 +55,8 @@ pub use datetime::DateTimeNode;
 pub use debug::DebugNode;
 pub use dedupe::DedupeNode;
 pub use discord::DiscordNode;
+#[cfg(feature = "document")]
+pub use document::DocumentNode;
 pub use email::EmailNode;
 pub use filter::FilterNode;
 pub use google_sheets::GoogleSheetsNode;
