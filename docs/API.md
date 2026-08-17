@@ -449,6 +449,15 @@ POST /webhooks/custom-webhook
 }
 ```
 
+#### WhatsApp Cloud API (feature-gated)
+
+Build with `--features whatsapp-inbound` to expose these public endpoints (they do not use r8r API-key authentication):
+
+- `GET /webhooks/whatsapp` validates Meta's `hub.mode`, `hub.verify_token`, and `hub.challenge` handshake against `WHATSAPP_VERIFY_TOKEN`.
+- `POST /webhooks/whatsapp` verifies `X-Hub-Signature-256` when `WHATSAPP_APP_SECRET` is set, then publishes `whatsapp.inbound` and `whatsapp.status` events.
+
+A successful delivery returns `{"status":"ok","received":N}`. Invalid signatures return 401; malformed JSON returns 400; a missing event backend or publish failure returns 500 so Meta can retry. Signature verification is skipped with a warning when `WHATSAPP_APP_SECRET` is unset.
+
 ---
 
 ## Error Responses

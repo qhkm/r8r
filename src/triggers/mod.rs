@@ -28,6 +28,8 @@ mod kafka;
 mod redis_backend;
 mod scheduler;
 mod webhook;
+#[cfg(feature = "whatsapp-inbound")]
+mod whatsapp;
 
 pub use approval_timeout::ApprovalTimeoutChecker;
 #[cfg(feature = "aws")]
@@ -47,3 +49,9 @@ pub use kafka::{
 pub use redis_backend::RedisEventBackend;
 pub use scheduler::Scheduler;
 pub use webhook::create_webhook_routes;
+#[cfg(feature = "whatsapp-inbound")]
+pub use whatsapp::{
+    parse_inbound_payload as parse_whatsapp_inbound_payload,
+    verify_signature as verify_whatsapp_signature, verify_token as verify_whatsapp_token,
+    InboundMessage as WhatsAppInboundMessage, WHATSAPP_EVENT, WHATSAPP_STATUS_EVENT,
+};

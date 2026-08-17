@@ -102,6 +102,14 @@ r8r server --workflows ./workflows
 
 This is the primary mode today. Supports SQLite (default) or PostgreSQL (`--features storage-postgres`) for execution history and state. IMAP mailbox polling triggers are available via `--features imap`.
 
+WhatsApp Cloud API inbound webhooks are opt-in via `--features whatsapp-inbound`. Configure Meta to use `GET /webhooks/whatsapp` for verification and `POST /webhooks/whatsapp` for delivery. Set `WHATSAPP_VERIFY_TOKEN` (required) and `WHATSAPP_APP_SECRET` (optional but strongly recommended for signature verification). Message and delivery updates publish `whatsapp.inbound` and `whatsapp.status` events:
+
+```json
+{"event":"whatsapp.inbound","data":{"wa_id":"60123456789","message_type":"text","text_body":"Hello"}}
+```
+
+If the event backend is unavailable, delivery returns HTTP 500 so Meta can retry instead of silently dropping the event.
+
 ### Edge / Runner Mode (Coming Soon)
 
 `r8r-runner` — a lightweight daemon designed for edge devices. Pulls workflow definitions from a central server or local directory, executes them offline, and syncs results when connectivity is available.

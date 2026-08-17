@@ -47,6 +47,7 @@ redis = ["dep:redis"]
 kafka = ["dep:kafka"]              # Kafka consumer trigger (pure-Rust client)
 aws = ["dep:quick-xml", "dep:hmac", "dep:sha2"]   # SQS/SNS triggers (SigV4 via stdlib crypto)
 imap = ["dep:async-imap", "dep:tokio-rustls", "dep:webpki-roots", "dep:mailparse"]  # IMAP mailbox trigger (pure Rust, rustls)
+whatsapp-inbound = ["dep:hmac", "dep:sha2"]  # Meta Cloud API inbound webhook (X-Hub-Signature-256)
 sandbox = ["dep:tempfile"]
 sandbox-docker = ["sandbox", "dep:bollard"]
 sandbox-firecracker = ["sandbox"]
