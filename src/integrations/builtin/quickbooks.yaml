@@ -1,0 +1,79 @@
+version: 1
+name: quickbooks
+display_name: QuickBooks Online
+description: QuickBooks Online API — chart of accounts, journal entries, invoices (bank feed import via Intuit SDK; API-side = journal entries/read ops)
+base_url: https://quickbooks.api.intuit.com/v3/company/{{ params.realm_id }}
+docs_url: https://developer.intuit.com/app/developer/qbo/docs/api
+
+auth:
+  methods:
+    - type: oauth2
+      authorization_url: https://appcenter.intuit.com/connect/oauth2
+      token_url: https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer
+      scopes:
+        - com.intuit.quickbooks.accounting
+        - com.intuit.quickbooks.payment
+        - openid
+        - profile
+        - email
+      flows:
+        - authorization_code
+    - type: bearer
+      description: QBO OAuth2 access token (BYOK self-host)
+
+headers:
+  Accept: application/json
+  Content-Type: application/json
+
+operations:
+  get_company_info:
+    description: Get connected QBO company info (CompanyName, CompanyAddr) — confirms realm_id works
+    method: GET
+    path: /companyinfo/{{ params.realm_id }}
+    params:
+      realm_id: { required: true, type: string, description: "QBO company ID — number in the URL after /company/" }
+
+  list_chart_of_accounts:
+    description: List all chart-of-accounts (QBO Intuit SQL query, pre-encoded)
+    method: GET
+    path: /query
+    params:
+      realm_id: { required: true, type: string, description: "QBO company ID" }
+    query:
+      query: select%20*%20from%20Account%20maxresults%20200
+
+  list_bank_accounts:
+    description: List bank accounts only (AccountType=Bank)
+    method: GET
+    path: /query
+    params:
+      realm_id: { required: true, type: string, description: "QBO company ID" }
+    query:
+      query: select%20*%20from%20Account%20where%20AccountType%20%3D%20%27Bank%27%20maxresults%20200
+
+  list_journal_entries:
+    description: List recent journal entries (for AI expense/receipt categorization workflows)
+    method: GET
+    path: /query
+    params:
+      realm_id: { required: true, type: string, description: "QBO company ID" }
+    query:
+      query: select%20*%20from%20JournalEntry%20orderby%20TxnDate%20desc%20maxresults%2020
+
+  create_invoice:
+    description: Create a sales invoice. Pass the FULL QBO Invoice object as payload (agent/transform node can build it)
+    method: POST
+    path: /invoice
+    params:
+      realm_id: { required: true, type: string, description: "QBO company ID" }
+      payload: { required: true, type: object, description: "QBO Invoice object, e.g. {\"Line\":[{\"Amount\":8000,\"DetailType\":\"SalesItemLineDetail\",\"Description\":\"Consulting\",\"SalesItemLineDetail\":{\"UnitPrice\":8000,\"Qty\":1,\"ItemRef\":{\"value\":\"1\"}}}],\"CustomerRef\":{\"value\":\"58\"},\"BillEmail\":{\"Address\":\"billing@acme.com\"}}" }
+    body: "{{ params.payload }}"
+
+  create_journal_entry:
+    description: Create a journal entry (receipt/expense categorization). Pass the FULL QBO JournalEntry object as payload
+    method: POST
+    path: /journal-entry
+    params:
+      realm_id: { required: true, type: string, description: "QBO company ID" }
+      payload: { required: true, type: object, description: "QBO JournalEntry object, e.g. {\"Line\":[{\"Description\":\"UTP Rent\",\"Amount\":1200,\"DetailType\":\"JournalEntryLineDetail\",\"JournalEntryLineDetail\":{\"PostingType\":\"Debit\",\"AccountRef\":{\"value\":\"33\"}}},{\"Description\":\"UTP Rent\",\"Amount\":1200,\"DetailType\":\"JournalEntryLineDetail\",\"JournalEntryLineDetail\":{\"PostingType\":\"Credit\",\"AccountRef\":{\"value\":\"36\"}}}],\"TxnDate\":\"2026-08-18\"}" }
+    body: "{{ params.payload }}"

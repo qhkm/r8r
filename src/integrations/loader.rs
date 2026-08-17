@@ -84,6 +84,8 @@ impl IntegrationLoader {
         const BUILTIN_APIFY: &str = include_str!("builtin/apify.yaml");
         const BUILTIN_RUNWARE: &str = include_str!("builtin/runware.yaml");
         const BUILTIN_META_GRAPH: &str = include_str!("builtin/meta-graph.yaml");
+        const BUILTIN_XERO: &str = include_str!("builtin/xero.yaml");
+        const BUILTIN_QUICKBOOKS: &str = include_str!("builtin/quickbooks.yaml");
 
         for (name, yaml) in [
             ("github", BUILTIN_GITHUB),
@@ -120,6 +122,8 @@ impl IntegrationLoader {
             ("apify", BUILTIN_APIFY),
             ("runware", BUILTIN_RUNWARE),
             ("meta-graph", BUILTIN_META_GRAPH),
+            ("xero", BUILTIN_XERO),
+            ("quickbooks", BUILTIN_QUICKBOOKS),
         ] {
             let def = Self::parse_builtin_yaml(name, yaml);
             builtin.insert(def.name.clone(), def);
@@ -355,7 +359,7 @@ mod tests {
                 names
             );
         }
-        assert_eq!(names.len(), 34, "expected 34 built-ins, got: {:?}", names);
+        assert_eq!(names.len(), 36, "expected 36 built-ins, got: {:?}", names);
     }
 
     #[test]

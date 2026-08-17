@@ -283,7 +283,9 @@ pub fn build_http_config(
     }
     if let Some(op_headers) = &op.headers {
         for (k, v) in op_headers {
-            let val = substitute_credential(v, credential);
+            // Resolve {{ credential }} first, then {{ params.x }} so services like
+            // Xero (Xero-tenant-id) can pass per-operation IDs via headers.
+            let val = substitute_params_in_string(&substitute_credential(v, credential), resolved);
             headers_map.insert(k.clone(), Value::String(val));
         }
     }
@@ -686,6 +688,25 @@ mod tests {
         assert_eq!(config["auth_type"], "bearer");
         // Service-level headers present
         assert_eq!(config["headers"]["Accept"], "application/vnd.github+json");
+    }
+
+    #[test]
+    fn op_headers_resolve_params() {
+        let def = test_def();
+        let mut op = list_issues_op();
+        op.headers = Some({
+            let mut h = HashMap::new();
+            // Simulates Xero-tenant-id-style per-operation header
+            h.insert("Xero-tenant-id".into(), "{{ params.owner }}".into());
+            h
+        });
+
+        let mut resolved = HashMap::new();
+        resolved.insert("owner".into(), json!("tenant-1234"));
+        resolved.insert("repo".into(), json!("widgets"));
+
+        let config = build_http_config(&def, &op, &resolved, Some("github"));
+        assert_eq!(config["headers"]["Xero-tenant-id"], "tenant-1234");
     }
 
     // ------------------------------------------------------------------
