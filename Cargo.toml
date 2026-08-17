@@ -46,6 +46,7 @@ ee = ["enterprise", "redis", "storage-postgres"] # Full Enterprise Edition bundl
 redis = ["dep:redis"]
 kafka = ["dep:kafka"]              # Kafka consumer trigger (pure-Rust client)
 aws = ["dep:quick-xml", "dep:hmac", "dep:sha2"]   # SQS/SNS triggers (SigV4 via stdlib crypto)
+imap = ["dep:async-imap", "dep:tokio-rustls", "dep:webpki-roots", "dep:mailparse"]  # IMAP mailbox trigger (pure Rust, rustls)
 sandbox = ["dep:tempfile"]
 sandbox-docker = ["sandbox", "dep:bollard"]
 sandbox-firecracker = ["sandbox"]
@@ -165,6 +166,10 @@ kafka = { version = "0.10", optional = true }                        # Kafka con
 quick-xml = { version = "0.37", optional = true }                    # SQS XML response parsing (feature aws)
 hmac = { version = "0.12", optional = true }                         # SigV4 HMAC-SHA256 (feature aws)
 sha2 = { version = "0.10", optional = true }                         # SigV4 payload SHA-256 (feature aws)
+async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"], optional = true }  # IMAP client (pure Rust)
+tokio-rustls = { version = "0.26", optional = true }                 # IMAP TLS via rustls (no OpenSSL)
+webpki-roots = { version = "0.26", optional = true }                 # TLS root certificates (no system store)
+mailparse = { version = "0.15", optional = true }                    # MIME/RFC822 email parsing
 
 [profile.release]
 strip = true

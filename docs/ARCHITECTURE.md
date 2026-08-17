@@ -117,6 +117,7 @@ r8r combines:
 │  │  • Manual   │  │  • GSheets  │  │  • Retry    │              │
 │  │  • Kafka    │  │  • Transform│  │  • Timeout  │              │
 │  │  • SQS/SNS  │  │  • Discord  │  │             │              │
+│  │  • IMAP     │  │  • Telegram │  │             │              │
 │  │  • Event    │  │  • Telegram │  │             │              │
 │  └─────────────┘  └─────────────┘  └─────────────┘              │
 │                                                                  │
@@ -329,6 +330,7 @@ Service definitions deklaratif dalam `src/integrations/builtin/*.yaml` (kompil v
 | `webhook` | Receive webhooks | ✅ Shipped (trigger) |
 | `kafka` | Kafka consumer (event source, pure-Rust client) | ✅ Shipped (trigger) |
 | `sqs` | AWS SQS long-poll consumer + SNS publisher (SigV4 manual) | ✅ Shipped (trigger) |
+| `imap` | IMAP mailbox polling → email → AI workflows (pure-Rust: async-imap + tokio-rustls) | ✅ Shipped (trigger) |
 
 ### Roadmap Integrations (rujukan katalog Monid — direct API, bukan aggregator)
 

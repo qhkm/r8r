@@ -198,6 +198,7 @@ Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style
 ### Event Triggers
 - [x] Kafka consumer trigger
 - [x] SQS/SNS triggers
+- [x] IMAP mailbox polling trigger (pure-Rust: async-imap + tokio-rustls)
 
 ### Node Types
 - [x] `discord` - Discord messaging
@@ -252,6 +253,6 @@ We welcome contributions! Pick an item from "Planned" or "Backlog" and open an i
 
 Priority areas (next):
 1. New node types — discord, telegram, google-sheets ✅
-2. New triggers — Kafka, SQS/SNS ✅
+2. New triggers — Kafka, SQS/SNS, IMAP ✅
 3. Scalability — distributed workers, Redis job queue ✅
 4. Enterprise — multi-tenancy, RBAC, SSO

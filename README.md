@@ -94,13 +94,13 @@ curl -X POST localhost:8080/api/workflows/hello-world/execute \
 
 ### Cloud / Server Mode
 
-Run `r8r server` for the full-featured automation server — REST API, web dashboard, MCP server, webhooks, cron triggers, and credential management.
+Run `r8r server` for the full-featured automation server — REST API, web dashboard, MCP server, webhooks, cron triggers, Kafka/SQS/IMAP event sources, and credential management.
 
 ```bash
 r8r server --workflows ./workflows
 ```
 
-This is the primary mode today. Supports SQLite (default) or PostgreSQL (`--features storage-postgres`) for execution history and state.
+This is the primary mode today. Supports SQLite (default) or PostgreSQL (`--features storage-postgres`) for execution history and state. IMAP mailbox polling triggers are available via `--features imap`.
 
 ### Edge / Runner Mode (Coming Soon)
 

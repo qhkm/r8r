@@ -20,6 +20,8 @@ mod aws;
 mod delayed;
 mod event;
 mod event_backend;
+#[cfg(feature = "imap")]
+mod imap;
 #[cfg(feature = "kafka")]
 mod kafka;
 #[cfg(feature = "redis")]
@@ -33,6 +35,10 @@ pub use aws::{AwsCredentials, SnsPublisher, SqsConfig, SqsMessage, SqsTrigger};
 pub use delayed::{DelayedEvent, DelayedEventProcessor};
 pub use event::{EventError, EventFanOut, EventMessage, EventSubscriber};
 pub use event_backend::{EventBackend, EventReceiver, NativeEventBackend};
+#[cfg(feature = "imap")]
+pub use imap::{
+    imap_topic, mail_to_event as imap_mail_to_event, run_imap_trigger, ImapTriggerConfig,
+};
 #[cfg(feature = "kafka")]
 pub use kafka::{
     parse_payload as kafka_parse_payload, run_kafka_trigger, KafkaOffset, KafkaTriggerConfig,
