@@ -738,9 +738,11 @@ r8r/
 │   └── config/              # Configuration
 │       ├── mod.rs
 │       └── types.rs
-├── ui/                      # React frontend (optional)
+├── ui/                      # React frontend (optional) — Vite + React 19 + ReactFlow 11
 │   ├── package.json
 │   └── src/
+│       ├── components/      # VisualWorkflowCanvas (ReactFlow), TriggerEditor (trigger config), WorkflowEditor (guided/visual)
+│       └── lib/workflowYaml.ts  # definition ↔ canvas converters (js-yaml)
 ├── examples/                # Example workflows
 │   ├── order-notification.yaml
 │   └── inventory-alert.yaml
