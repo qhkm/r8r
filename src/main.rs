@@ -2308,6 +2308,20 @@ fn build_registry() -> r8r::nodes::NodeRegistry {
                     Arc::new(SubprocessBackend::new())
                 }
             }
+            #[cfg(feature = "sandbox-wasm")]
+            "wasm" => match r8r::sandbox::WasmSandbox::new() {
+                Ok(wb) => {
+                    tracing::info!("Using WASM sandbox backend");
+                    Arc::new(wb)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "WASM sandbox init failed: {}. Falling back to subprocess.",
+                        e
+                    );
+                    Arc::new(SubprocessBackend::new())
+                }
+            },
             _ => Arc::new(SubprocessBackend::new()),
         };
 

@@ -1118,7 +1118,7 @@ nodes:
   - id: compute
     type: sandbox
     config:
-      runtime: python3        # python3, node, bash
+      runtime: python3        # python3, node, bash, wasm (base64 module, sandbox-wasm feature)
       timeout_seconds: 30     # default: 30
       memory_mb: 256           # optional, enforced by Docker backend
       network: false           # default: false (no network access)
@@ -1135,7 +1135,7 @@ nodes:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `runtime` | string | (required) | Runtime to use: `python3`, `node`, `bash` |
+| `runtime` | string | (required) | Runtime to use: `python3`, `node`, `bash`. With the `sandbox-wasm` feature, also `wasm` (code = base64 wasm32-wasi module). |
 | `code` | string | (required) | Code to execute (supports `{{ }}` templates) |
 | `timeout_seconds` | integer | `30` | Maximum execution time |
 | `memory_mb` | integer | none | Memory limit (Docker only) |

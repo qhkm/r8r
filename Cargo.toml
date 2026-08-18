@@ -53,6 +53,7 @@ sandbox-docker = ["sandbox", "dep:bollard"]
 sandbox-firecracker = ["sandbox"]
 storage-postgres = ["dep:sqlx"]
 document = ["dep:pdf-extract"]
+sandbox-wasm = ["sandbox", "dep:wasmtime", "dep:wasmtime-wasi", "dep:wasmtime-environ"]
 
 [[bin]]
 name = "r8r"
@@ -173,6 +174,9 @@ tokio-rustls = { version = "0.26", optional = true }                 # IMAP TLS 
 webpki-roots = { version = "0.26", optional = true }                 # TLS root certificates (no system store)
 mailparse = { version = "0.15", optional = true }                    # MIME/RFC822 email parsing
 pdf-extract = { version = "0.12", optional = true }                 # Pure-Rust PDF text extraction
+wasmtime = { version = "47", optional = true }
+wasmtime-wasi = { version = "47", default-features = false, features = ["p1"], optional = true }
+wasmtime-environ = { version = "47", optional = true }
 
 [profile.release]
 strip = true
@@ -185,3 +189,4 @@ tokio-test = "0.4"
 tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
+wat = "1.256.0"

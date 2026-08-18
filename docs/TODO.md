@@ -217,7 +217,7 @@ Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style
 - [x] Package caching — `packages: [...]` in sandbox node config; pip/npm install prefix for subprocess and Docker; `image:` override for custom Docker images
 - [ ] Warm pools — pre-started containers/VMs for sub-100ms cold starts (backlogged)
 - [ ] Firecracker guest agent reference implementation
-- [ ] WASM backend (`sandbox-wasm`) — for trusted, high-frequency tool execution
+- [x] WASM backend (`sandbox-wasm`) — for trusted, high-frequency tool execution; wasmtime in-process, base64 wasm32-wasi modules, epoch-based timeout, artifact dir preopen at `/`
 
 ### Scalability
 - [x] Distributed execution (multiple workers)

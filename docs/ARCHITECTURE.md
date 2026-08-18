@@ -235,7 +235,7 @@ CREATE TABLE node_executions (
 | `approval` | Pause execution until approved/rejected via MCP |
 | `set` | Set variables |
 | **`agent`** | **Call ZeptoClaw for AI-powered decisions** |
-| **`sandbox`** | **Execute Python/Node/Bash code in isolated environments** |
+| **`sandbox`** | **Execute Python/Node/Bash/WASM code in isolated environments** |
 
 ### Agent Node (ZeptoClaw Integration)
 
@@ -720,6 +720,7 @@ r8r/
 │   ├── sandbox/             # Code execution sandbox
 │   │   ├── mod.rs           # SandboxBackend trait, types, errors
 │   │   ├── subprocess.rs    # SubprocessBackend (feature: sandbox)
+│   │   ├── wasm.rs          # WasmSandbox (feature: sandbox-wasm)
 │   │   ├── docker.rs        # DockerBackend (feature: sandbox-docker)
 │   │   └── firecracker.rs   # FirecrackerBackend (feature: sandbox-firecracker)
 │   ├── triggers/            # Trigger implementations

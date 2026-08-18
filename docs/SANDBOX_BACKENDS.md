@@ -9,6 +9,7 @@ r8r's sandbox module uses a pluggable backend architecture. Operators choose the
 | Subprocess | `sandbox` | None | macOS, Linux, Windows | Stable |
 | Docker | `sandbox-docker` | Container-level | macOS, Linux | Stable |
 | Firecracker | `sandbox-firecracker` | Hardware VM (KVM) | Linux only | Stable |
+| WASM | `sandbox-wasm` | Memory-safe (WASI, no host access) | macOS, Linux, Windows | New (v0.7.x) |
 
 ## Example Workflow
 
@@ -106,23 +107,42 @@ The rootfs must include a guest agent that listens on vsock and executes code. A
 
 ---
 
-## Future Backends (Not Yet Implemented)
+## WASM (wasmtime)
 
-The `SandboxBackend` trait is designed to support additional backends. Below are candidates evaluated for future implementation.
+In-process WebAssembly execution via wasmtime (Bytecode Alliance, Rust-native, production-ready). Sub-millisecond cold start, no interpreter, no container, no external runtime — the module runs inside the r8r process for **zero per-execution cost**. This is the recommended backend for trusted, high-frequency tool execution.
 
-### WASM (wasmtime)
+**What runs:** pre-compiled `wasm32-wasi` modules (Rust, Go, C, AssemblyScript, Zig, …). Not Python/Node/Bash source — compile your tool into a module once, then call it millions of times cheaply.
 
-**Feature flag:** `sandbox-wasm`
+**Isolation (enforced by default):**
+- No network access (network is rejected at the boundary)
+- No host filesystem (only an optional temp artifact dir, preopened at `/`)
+- No subprocess spawn
+- 64 MiB default wasmtime memory limit
+- Timeout enforced via wasmtime epoch interruption (CPU-bound loops are killed, not just awaited)
 
-**What:** Run code in a WebAssembly sandbox using wasmtime (a Rust-native WASM runtime). Sub-millisecond cold start, cross-platform, embeds directly in the r8r binary.
+```toml
+[sandbox]
+backend = "wasm"
+```
 
-**Isolation:** Memory-safe sandbox. No filesystem or network access unless explicitly granted via WASI capabilities.
+Wire format: `runtime: "wasm"` and `code:` is the **base64-encoded wasm module**. The node's stdout parse (JSON) still applies.
 
-**Limitation:** Cannot run arbitrary Python/Node/Bash scripts. Only works with pre-compiled WASM modules, MicroPython (limited stdlib), or languages that compile to WASM (Rust, Go, C).
+```yaml
+name: wasm-token-count
+nodes:
+  - id: count
+    type: sandbox
+    config:
+      runtime: wasm
+      timeout_seconds: 5
+      code: "AGFzbQEGAAAA...base64-module..."   # compiled wasm32-wasi module
+```
 
-**Best for:** High-frequency, trusted tool execution where you control the code ahead of time.
+Build a module once and reuse the same code string in many workflows. Supported by the same `SandboxBackend` trait, so `r8r doctor`, streaming output, artifact collection (`R8R_OUTPUT_DIR`), and the existing sandbox node semantics all work unchanged.
 
-**Rust crate:** `wasmtime` (mature, Bytecode Alliance, production-ready)
+To upgrade from `subprocess`, only change `backend` and the node's `runtime: wasm` + base64 code — the rest of the workflow YAML stays identical.
+
+Below are candidates evaluated for future implementation.
 
 ### Hyperlight (Microsoft)
 
