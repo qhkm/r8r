@@ -74,6 +74,7 @@
 ### UI & Developer Experience
 - [x] Web dashboard for monitoring
 - [x] Visual workflow editor
+- [x] Visual editor upgrade: open/edit existing workflows (YAML→canvas via js-yaml), full 30-node palette, trigger config (manual/cron/webhook/event), JSON node config panel
 - [x] Non-builder dashboard UX (overview, runs, approvals, audit)
 - [x] Guided workflow studio (template + plain-language form + publish)
 - [x] CLI autocomplete
