@@ -402,7 +402,8 @@ mod tests {
         assert!(openai.operations.contains_key("chat_completion"));
         assert!(openai.operations.contains_key("create_embedding"));
         assert!(openai.operations.contains_key("list_models"));
-        assert_eq!(openai.operations.len(), 3);
+        assert!(openai.operations.contains_key("transcribe_audio"));
+        assert_eq!(openai.operations.len(), 4);
     }
 
     #[test]

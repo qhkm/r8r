@@ -55,6 +55,11 @@
 - [x] Workflow import/export CLI
 - [x] REST Approval API — CRUD endpoints (`GET/POST /api/approvals`) for human-in-the-loop without MCP
 
+### HTTP Node & AI Ops (18-Ogo-2026)
+- [x] HTTP node `body_type: multipart` — data URI → binary file part (filename ikut MIME), text/other → text part, null di-skip
+- [x] OpenAI `transcribe_audio` op — whisper-1 via `/audio/transcriptions` (multipart) → voice message → transcription pipeline
+- [x] 7 contoh workflows dalam `examples/` — voice-note-transcription, negative-review-to-ticket (filter node), 5 compliance templates (regulation-impact, document-check, cross-check, gap-analysis, evidence-mapping) — n8n coverage **88/88 = 100%**
+
 ### Workflow Features
 - [x] Workflow templates/blueprints (5 built-in, custom templates supported)
 - [x] Parameterized workflows (with type validation & defaults)
