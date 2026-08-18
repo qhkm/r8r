@@ -1,0 +1,83 @@
+# Compliance: Documents → Requirements Cross-Check
+#
+# Cross-check submitted documents against compliance requirements and emit
+# a per-requirement verdict. The agent outputs a verifiable trace
+# (requirement → document → clause), which is the audit trail for
+# compliance opinions.
+#
+# Pattern: agent + structured output (traceable JSON), ready to export.
+#
+# Prerequisites:
+#   r8r credentials set openai <your-openai-key>
+
+name: compliance-cross-check
+description: Cross-check documents against requirements with verifiable trace
+version: 1
+
+triggers:
+  - type: manual
+
+inputs:
+  documents:
+    type: array
+    description: "Dokumen: [{name, text | text_extract}]"
+    required: true
+  requirements:
+    type: array
+    description: "Senarai keperluan: [{id, clause}] (dari ontology/LawKB)"
+    required: true
+
+nodes:
+  # 1) Agent: padankan dokumen → keperluan → klausa
+  - id: cross-check
+    type: agent
+    config:
+      provider: openai
+      credential: openai
+      response_format: json
+      json_schema:
+        type: object
+        required:
+          - findings
+        properties:
+          findings:
+            type: array
+            items:
+              type: object
+              properties:
+                requirement_id: { type: string }
+                status:
+                  type: string
+                  enum: [met, not_met, partial, no_evidence]
+                document: { type: string }
+                clause_evidence: { type: string }
+                confidence: { type: number }
+      prompt: |
+        Keperluan compliance:
+        {{ to_json(inputs.requirements) }}
+
+        Dokumen klien:
+        {{ to_json(inputs.documents) }}
+
+        Untuk setiap keperluan, sahkan dengan menunjuk dokumen + klausa.
+        Jawab JSON sahaja.
+
+  # 2) Ringkasan status untuk laporan
+  - id: verdict-summary
+    type: transform
+    config:
+      expression: |
+        (() => {
+          const f = nodes["cross-check"].output.findings;
+          const count = (s) => f.filter(x => x.status === s).length;
+          return {
+            "total": f.length,
+            "met": count("met"),
+            "partial": count("partial"),
+            "not_met": count("not_met"),
+            "no_evidence": count("no_evidence"),
+            "findings": f
+          };
+        })()
+    depends_on:
+      - cross-check

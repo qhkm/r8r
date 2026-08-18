@@ -1,0 +1,80 @@
+# Compliance: Automated Gap Analysis
+#
+# Produces a remediation backlog: for each requirement not met, the agent
+# suggests concrete remediation actions + priority, ready to feed into a
+# project management tool (or the document node for PDF export).
+#
+# Pattern: agent (gap detection) + transform (backlog shaping) + export.
+#
+# Prerequisites:
+#   r8r credentials set openai <your-openai-key>
+#   r8r credentials set airtable <your-airtable-token>   # optional, backlog
+
+name: compliance-gap-analysis
+description: Automate compliance gap analysis into a remediation backlog
+version: 1
+
+triggers:
+  - type: manual
+
+inputs:
+  assessment:
+    type: string
+    description: Output compliance-cross-check (JSON findings)
+    required: true
+
+nodes:
+  # 1) Agent: hasilkan tindakan remediasi untuk setiap jurang
+  - id: remediate
+    type: agent
+    config:
+      provider: openai
+      credential: openai
+      response_format: json
+      json_schema:
+        type: object
+        required:
+          - backlog
+        properties:
+          backlog:
+            type: array
+            items:
+              type: object
+              properties:
+                requirement_id: { type: string }
+                priority: { type: string, enum: [P0, P1, P2] }
+                action: { type: string }
+                effort: { type: string, enum: [low, medium, high] }
+      prompt: |
+        Hasil penilaian compliance:
+        {{ input.assessment }}
+
+        Untuk setiap jurang (not_met / partial / no_evidence),
+        cadangkan tindakan remediasi + keutamaan.
+        Jawab JSON sahaja.
+
+  # 2) Backlog tersusun ikut keutamaan, flat rows untuk simpan
+  - id: backlog
+    type: transform
+    config:
+      expression: |
+        nodes["remediate"].output.backlog
+          .slice()
+          .sort((a, b) => a.priority.localeCompare(b.priority))
+          .map(x => [x.requirement_id, x.priority, x.action, x.effort])
+    depends_on:
+      - remediate
+
+  # 3) Simpan dalam Google Sheets (pilihan) — kolum: Requirement, Priority, Action, Effort
+  - id: save-backlog
+    type: integration
+    config:
+      service: google-sheets
+      operation: append_values
+      credential: google-sheets
+      params:
+        spreadsheet_id: "{{ env.GAP_BACKLOG_SHEET }}"
+        range: "backlog!A:D"
+        values: "{{ nodes.backlog.output }}"
+    depends_on:
+      - backlog

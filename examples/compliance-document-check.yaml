@@ -1,0 +1,81 @@
+# Compliance: Client Documents → AI Completeness Check
+#
+# Before processing any submission, verify the document pack is complete
+# against a checklist. Uses the sandbox node (Python) for file/vision
+# inspection — OCR/PDF handling lives in the sandbox image.
+#
+# Pattern: sandbox + vision + checklist template.
+#
+# Prerequisites:
+#   r8r credentials set openai <your-openai-key>
+#   # Sandbox image with python + pymupdf/ocr installed (see sandbox-python.yaml)
+
+name: compliance-document-check
+description: AI completeness check of client document submissions
+version: 1
+
+triggers:
+  - type: webhook
+    path: /docs-check
+
+inputs:
+  checklist:
+    type: array
+    description: Senarai dokumen wajib (cth. ["Borang B-1", "Salinan MST"] )
+    required: true
+  documents:
+    type: array
+    description: Dokumen diterima sebagai data URI (data:application/pdf;base64,...)
+    required: true
+
+nodes:
+  # 1) Sandbox: inspect each document (page count, text extract, MIME)
+  - id: inspect-docs
+    type: sandbox
+    config:
+      image: r8r-doc-inspector
+      code: |
+        import base64
+        docs = {{ to_json(inputs.documents) }}
+        result = []
+        for idx, doc in enumerate(docs):
+            # data:application/pdf;base64,<...>
+            mime = doc.split(";")[0].split(":")[1]
+            payload = doc.split(",", 1)[1]
+            raw = base64.b64decode(payload)
+            result.append({"index": idx, "mime": mime, "size": len(raw)})
+        print(to_json(result))
+
+  # 2) Agent: map documents against checklist + flag missing items
+  - id: completeness
+    type: agent
+    config:
+      provider: openai
+      credential: openai
+      prompt: |
+        Checklist yang diperlukan:
+        {{ to_json(inputs.checklist) }}
+
+        Dokumen yang diterima (metadata sahaja):
+        {{ nodes.inspect-docs.output }}
+
+        Kenal pasti dokumen yang lengkap, tidak lengkap, atau hilang.
+        Jawab JSON sahaja.
+      response_format: json
+      json_schema:
+        type: object
+        required:
+          - status
+          - missing
+          - notes
+        properties:
+          status:
+            type: string
+            enum: [complete, incomplete]
+          missing:
+            type: array
+            items: { type: string }
+          notes:
+            type: string
+    depends_on:
+      - inspect-docs

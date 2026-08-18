@@ -1,0 +1,128 @@
+# Negative Review → Support Ticket
+#
+# E-commerce workflow: detects negative reviews (Shopify/Meta comments or
+# webhook), creates a support ticket in Google Sheets, and notifies Slack.
+# The filter node saringanhanya reviews negatif — kalau semua positif,
+# ticket-rows kosong dan tiada baris ditambah.
+#
+# Prerequisites:
+#   r8r credentials set openai <your-openai-key>
+#   r8r credentials set google-sheets <your-sheets-token>
+#   r8r credentials set slack <your-slack-bot-token>
+#
+# Source: point any HTTP integration at /review (e.g. Shopify webhook or
+# Meta Graph API comment feed).
+
+name: negative-review-to-ticket
+description: Turn negative product reviews into tracked support tickets
+version: 1
+
+triggers:
+  - type: webhook
+    path: /review
+
+inputs:
+  review_text:
+    type: string
+    description: Teks review
+    required: true
+  rating:
+    type: integer
+    required: false
+  product:
+    type: string
+    required: false
+
+nodes:
+  # 1) Classify sentiment + severity with structured output
+  - id: classify
+    type: agent
+    config:
+      provider: openai
+      credential: openai
+      prompt: |
+        Nilai review pelanggan ini:
+        "{{ input.review_text }}"
+
+        Jawab JSON sahaja.
+      response_format: json
+      json_schema:
+        type: object
+        required:
+          - sentiment
+          - severity
+          - reason
+        properties:
+          sentiment:
+            type: string
+            enum: [positive, neutral, negative]
+          severity:
+            type: string
+            enum: [low, medium, high]
+          reason:
+            type: string
+
+  # 2) Bungkus jadi array supaya boleh disaring
+  - id: wrap
+    type: transform
+    config:
+      expression: |
+        [{
+          "sentiment": nodes["classify"].output.sentiment,
+          "severity": nodes["classify"].output.severity,
+          "reason": nodes["classify"].output.reason,
+          "review": inputs.review_text,
+          "product": inputs.product ?? "unknown"
+        }]
+    depends_on:
+      - classify
+
+  # 3) Saring — kekalkan yang negatif sahaja
+  - id: only-negative
+    type: filter
+    config:
+      field: nodes.wrap.output
+      match_mode: all
+      conditions:
+        - field: sentiment
+          operator: equals
+          value: negative
+    depends_on:
+      - wrap
+
+  # 4) Bentuk baris ticket
+  - id: ticket-rows
+    type: transform
+    config:
+      expression: |
+        nodes["only-negative"].output.map(x => [x.review, x.severity, x.product, x.reason, "new"])
+    depends_on:
+      - only-negative
+
+  # 5) Simpan ke Google Sheets — kolum: Review, Severity, Product, Reason, Status
+  #    (rows kosong bila tiada review negatif → tiada baris tambah)
+  - id: create-ticket
+    type: integration
+    config:
+      service: google-sheets
+      operation: append_values
+      credential: google-sheets
+      params:
+        spreadsheet_id: "{{ env.SUPPORT_TICKET_SHEET }}"
+        range: "tickets!A:E"
+        values: "{{ nodes.ticket-rows.output }}"
+    depends_on:
+      - ticket-rows
+
+  # 6) Notify — count negatif hari ini
+  - id: notify-slack
+    type: integration
+    config:
+      service: slack
+      operation: post_message
+      credential: slack
+      params:
+        channel: "#support"
+        text: "⚠️ {{ nodes.ticket-rows.output.length }} review negatif baru"
+    depends_on:
+      - ticket-rows

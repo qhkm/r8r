@@ -1,0 +1,109 @@
+# Compliance: Evidence → Requirement Mapping
+#
+# For audit readiness: map every evidence item to the requirement(s) it
+# satisfies and store the trace in a database (here: Google Sheets / SQLite
+# via tool node) so the whole mapping is queryable.
+#
+# Pattern: agent (extraction) + db persistence + dashboard-ready output.
+#
+# Prerequisites:
+#   r8r credentials set openai <your-openai-key>
+#   r8r credentials set google-sheets <your-sheets-token>
+
+name: compliance-evidence-mapping
+description: Map audit evidence to compliance requirements
+version: 1
+
+triggers:
+  - type: webhook
+    path: /evidence
+
+inputs:
+  evidence:
+    type: array
+    description: "Setiap item: {id, title, description, file_ref}"
+    required: true
+  requirements:
+    type: array
+    description: "Senarai keperluan: [{id, title}]"
+    required: true
+
+nodes:
+  # 1) Agent: peta setiap evidence ke requirement yang disokongnya
+  - id: map-evidence
+    type: agent
+    config:
+      provider: openai
+      credential: openai
+      response_format: json
+      json_schema:
+        type: object
+        required:
+          - mappings
+        properties:
+          mappings:
+            type: array
+            items:
+              type: object
+              properties:
+                evidence_id: { type: string }
+                requirement_id: { type: string }
+                strength:
+                  type: string
+                  enum: [direct, partial, indirect]
+                rationale: { type: string }
+      prompt: |
+        Evidence klien:
+        {{ to_json(inputs.evidence) }}
+
+        Requirement:
+        {{ to_json(inputs.requirements) }}
+
+        Petakan setiap evidence kepada requirement (boleh berbilang).
+        Jawab JSON sahaja.
+
+  # 2) Flat rows untuk disimpan
+  - id: flatten
+    type: transform
+    config:
+      expression: |
+        nodes["map-evidence"].output.mappings.map(m => ({
+          "evidence": m.evidence_id,
+          "requirement": m.requirement_id,
+          "strength": m.strength,
+          "rationale": m.rationale
+        }))
+    depends_on:
+      - map-evidence
+
+  # 3) Simpan trace ke Google Sheets (new rows)
+  - id: persist
+    type: integration
+    config:
+      service: google-sheets
+      operation: append_values
+      credential: google-sheets
+      params:
+        spreadsheet_id: "{{ env.EVIDENCE_TRACE_SHEET }}"
+        range: "trace!A:D"
+        values: "{{ nodes.flatten.output }}"
+    depends_on:
+      - flatten
+
+  # 4) Coverage summary: requirement yang belum ada evidence
+  - id: coverage
+    type: transform
+    config:
+      expression: |
+        (() => {
+          const mapped = new Set(nodes["map-evidence"].output.mappings.map(m => m.requirement_id));
+          return {
+            "total_requirements": inputs.requirements.length,
+            "covered": mapped.size,
+            "uncovered": inputs.requirements
+              .map(r => r.id)
+              .filter(id => !mapped.has(id))
+          };
+        })()
+    depends_on:
+      - map-evidence
