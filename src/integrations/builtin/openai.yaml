@@ -40,6 +40,19 @@ operations:
       model: "{{ params.model }}"
       input: "{{ params.input }}"
 
+  transcribe_audio:
+    description: Transcribe audio to text (Whisper). audio param = data URI (data:<mime>;base64,...) dari voice note/attachment
+    method: POST
+    path: /audio/transcriptions
+    body_type: multipart
+    params:
+      audio: { required: true, type: string, description: "Base64 audio as data URI: data:audio/ogg;base64,..." }
+      language: { required: false, type: string, description: "Optional ISO-639-1 language hint" }
+    body:
+      model: whisper-1
+      file: "{{ params.audio }}"
+      response_format: json
+
   list_models:
     description: List available models
     method: GET

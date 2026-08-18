@@ -56,6 +56,29 @@ fn test_full_pipeline_openai_completion() {
 }
 
 #[test]
+fn test_openai_transcribe_audio_multipart() {
+    let loader = IntegrationLoader::new();
+    let def = loader.get("openai").unwrap();
+    let op = def.operations.get("transcribe_audio").unwrap();
+    let params = json!({
+        "audio": "data:audio/ogg;base64,U29tZSBhdWRpbw=="
+    });
+    let resolved = validate_and_resolve_params(&op.params, &params).unwrap();
+    let config = build_http_config(&def, op, &resolved, Some("openai_key"));
+    assert_eq!(
+        config["url"],
+        "https://api.openai.com/v1/audio/transcriptions"
+    );
+    assert_eq!(config["body_type"], "multipart");
+    assert_eq!(config["body"]["model"], "whisper-1");
+    assert_eq!(config["body"]["response_format"], "json");
+    assert_eq!(
+        config["body"]["file"],
+        "data:audio/ogg;base64,U29tZSBhdWRpbw=="
+    );
+}
+
+#[test]
 fn test_full_pipeline_slack_send_message() {
     let loader = IntegrationLoader::new();
     let def = loader.get("slack").unwrap();

@@ -106,6 +106,95 @@ fn default_body_type() -> String {
     "json".to_string()
 }
 
+/// Build a multipart/form-data body from a JSON object (binary-safe, zero deps).
+///
+/// String values starting with `data:<mime>;base64,` (or `data:<mime>,` raw) become
+/// binary file parts with a filename derived from the MIME type; all other values
+/// become text parts. Returns (body bytes, Content-Type header value).
+fn build_multipart_body(obj: &serde_json::Map<String, Value>) -> Result<(Vec<u8>, String)> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let boundary = format!("r8r-{}-{}", std::process::id(), nanos % 1_000_000_000_000);
+    let mut out: Vec<u8> = Vec::new();
+    let mut file_idx: u32 = 0;
+
+    for (k, v) in obj {
+        let val = match v {
+            Value::Null => continue,
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        if let Some((mime, bytes)) = parse_data_uri(&val) {
+            let ext = mime_extension(&mime);
+            let filename = format!("file{file_idx}{ext}");
+            file_idx += 1;
+            out.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+            out.extend_from_slice(
+                format!(
+                    "Content-Disposition: form-data; name=\"{k}\"; filename=\"{filename}\"\r\n"
+                )
+                .as_bytes(),
+            );
+            out.extend_from_slice(format!("Content-Type: {mime}\r\n\r\n").as_bytes());
+            out.extend_from_slice(&bytes);
+            out.extend_from_slice(b"\r\n");
+        } else {
+            out.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+            out.extend_from_slice(
+                format!("Content-Disposition: form-data; name=\"{k}\"\r\n\r\n").as_bytes(),
+            );
+            out.extend_from_slice(val.as_bytes());
+            out.extend_from_slice(b"\r\n");
+        }
+    }
+    out.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    let content_type = format!("multipart/form-data; boundary={boundary}");
+    Ok((out, content_type))
+}
+
+/// Parse a `data:` URI (`data:<mime>;base64,<payload>` or `data:<mime>,<raw>`).
+fn parse_data_uri(s: &str) -> Option<(String, Vec<u8>)> {
+    use base64::Engine as _;
+    let rest = s.strip_prefix("data:")?;
+    let (meta, payload) = rest.split_once(',')?;
+    let parts: Vec<&str> = meta.split(';').collect();
+    let mime = parts
+        .first()
+        .filter(|m| !m.is_empty())
+        .copied()
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let is_base64 = parts.iter().any(|p| p.eq_ignore_ascii_case("base64"));
+    let bytes = if is_base64 {
+        base64::engine::general_purpose::STANDARD
+            .decode(payload.trim())
+            .ok()?
+    } else {
+        payload.as_bytes().to_vec()
+    };
+    Some((mime, bytes))
+}
+
+/// Filename extension for a MIME type (used for multipart file parts).
+fn mime_extension(mime: &str) -> &'static str {
+    match mime {
+        "audio/ogg" => ".ogg",
+        "audio/mpeg" | "audio/mp3" => ".mp3",
+        "audio/mp4" | "audio/x-m4a" => ".m4a",
+        "audio/wav" | "audio/x-wav" => ".wav",
+        "audio/webm" => ".webm",
+        "video/mp4" => ".mp4",
+        "image/png" => ".png",
+        "image/jpeg" => ".jpg",
+        "application/pdf" => ".pdf",
+        _ => ".bin",
+    }
+}
+
 fn default_auth_type() -> String {
     "bearer".to_string()
 }
@@ -244,6 +333,18 @@ impl Node for HttpNode {
                     } else {
                         request = request.json(&rendered_body);
                     }
+                }
+                "multipart" => {
+                    // Hand-rolled multipart/form-data (no extra deps, binary-safe).
+                    // String values starting with `data:<mime>;base64,` become binary
+                    // file parts; all other values become text parts.
+                    let obj = rendered_body.as_object().ok_or_else(|| {
+                        Error::Node("multipart body must be a JSON object".to_string())
+                    })?;
+                    let (body_bytes, content_type) = build_multipart_body(obj)?;
+                    request = request
+                        .header(reqwest::header::CONTENT_TYPE, content_type)
+                        .body(body_bytes);
                 }
                 _ => {
                     request = request.json(&rendered_body);
@@ -482,5 +583,58 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(config.body_type, "form");
+    }
+
+    #[test]
+    fn test_parse_data_uri_base64() {
+        let (mime, bytes) = parse_data_uri("data:audio/ogg;base64,U29tZSBhdWRpbw==").unwrap();
+        assert_eq!(mime, "audio/ogg");
+        assert_eq!(bytes, b"Some audio");
+    }
+
+    #[test]
+    fn test_parse_data_uri_raw() {
+        let (mime, bytes) = parse_data_uri("data:text/plain,hello").unwrap();
+        assert_eq!(mime, "text/plain");
+        assert_eq!(bytes, b"hello");
+    }
+
+    #[test]
+    fn test_parse_data_uri_invalid() {
+        assert!(parse_data_uri("not a uri").is_none());
+        assert!(parse_data_uri("data:audio/ogg;base64,@@@not-base64@@@").is_none());
+        assert!(parse_data_uri("data:,no-comma-payload").is_some()); // empty mime → octet-stream
+    }
+
+    #[test]
+    fn test_build_multipart_body_text_and_file() {
+        let obj: serde_json::Map<String, Value> = serde_json::from_str(
+            r#"{
+              "model": "whisper-1",
+              "file": "data:audio/ogg;base64,U29tZSBhdWRpbw==",
+              "skip_null": null,
+              "temperature": 0.2
+            }"#,
+        )
+        .unwrap();
+        let (body, content_type) = build_multipart_body(&obj).unwrap();
+
+        assert!(content_type.starts_with("multipart/form-data; boundary=r8r-"));
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("name=\"model\""));
+        assert!(text.contains("whisper-1"));
+        assert!(text.contains("name=\"temperature\""));
+        assert!(text.contains("0.2"));
+        // null fields are skipped
+        assert!(!text.contains("skip_null"));
+        // binary file part: filename from audio/ogg mime + raw decoded bytes present
+        assert!(text.contains("name=\"file\"; filename=\"file0.ogg\""));
+        assert!(text.contains("Content-Type: audio/ogg"));
+        assert!(body.windows(10).any(|w| w == b"Some audio"));
+        // closing boundary present
+        assert!(text.trim_end().ends_with("--"));
+        // content type header boundary matches body boundary
+        let boundary = content_type.split_once("boundary=").unwrap().1;
+        assert!(text.contains(&format!("--{boundary}--")));
     }
 }

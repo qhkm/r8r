@@ -76,11 +76,36 @@ nodes:
 | `url` | string | Yes | - | URL to request |
 | `method` | string | No | GET | HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD) |
 | `headers` | object | No | - | HTTP headers |
-| `body` | any | No | - | Request body (JSON) |
+| `body` | any | No | - | Request body (JSON; untuk multipart: object, lihat `body_type`) |
+| `body_type` | string | No | json | `json` \| `form` (urlencoded) \| `multipart` |
 | `timeout_seconds` | number | No | 30 | Request timeout |
 | `raw_response` | boolean | No | false | Return raw text instead of parsing JSON |
 | `credential` | string | No | - | Credential name from credential store |
 | `auth_type` | string | No | bearer | Authentication type (bearer, basic, api_key, header:name) |
+
+**Body modes**:
+
+- `json` (default) — body dihantar sebagai JSON (`Content-Type: application/json`).
+- `form` — body object → `application/x-www-form-urlencoded`.
+- `multipart` — body object → `multipart/form-data`. String yang bermula
+  `data:<mime>;base64,<...>` menjadi binary file part (filename dijana dari MIME,
+  cth. `data:audio/ogg;base64,...` → `file0.ogg`); nilai lain menjadi text part;
+  `null` di-skip. Sesuai untuk OpenAI Whisper / upload fail.
+
+```yaml
+nodes:
+  - id: transcribe
+    type: http
+    config:
+      url: "https://api.openai.com/v1/audio/transcriptions"
+      method: POST
+      headers:
+        Authorization: "Bearer {{ env.OPENAI_API_KEY }}"
+      body_type: multipart
+      body:
+        model: whisper-1
+        file: "{{ input.audio_data_uri }}"
+```
 
 **Output**:
 
