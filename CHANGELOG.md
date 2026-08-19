@@ -17,9 +17,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Real bridge health metrics** — ZeptoClaw `health.ping` now returns live runtime values (uptime, active executions, pending approvals, loaded workflows) instead of stub zeros.
 
-## [Unreleased]
+## [0.7.0] - 2026-08-15
+
+### Changed
+
+- **CI/release pipeline** — GitHub Actions bumped to v5 + Node 24 runtime; `aws-actions/configure-aws-credentials` → v6 (clears Node 20 deprecations).
+- **Intel macOS builds** — `x86_64-apple-darwin` now built on `macos-14` (arm64) runners via native cross-compilation; macos-13 runners were sunset by GitHub and could leave jobs queued indefinitely.
+
+## [0.8.0] - 2026-08-19
 
 ### Added
+
+#### WASM Sandbox Backend
+
+- **In-process WASI execution** (`--features sandbox-wasm`) — wasmtime 47 runtime; base64 module in `SandboxRequest.code`; epoch-based interruption → `Timeout` error; 64 MiB memory cap; output artifacts via `$R8R_OUTPUT_DIR`; select via `sandbox.backend = "wasm"` (default subprocess).
+
+#### IMAP Trigger
+
+- **Email polling trigger** (`--features imap`) — pure-Rust TLS stack (async-imap + tokio-rustls); watches mailboxes (default UNSEEN), mark-seen/delete options, attachment capture via `include_attachments`.
+
+#### Document Node
+
+- **`document` node** (default feature) — `pdf_text` extraction (pure Rust) and `vision` OCR (BYOK credentials); input via base64 `data`, `data_field`, or `url`.
+
+#### WhatsApp Inbound Webhook
+
+- **Meta Cloud API webhook** (`--features whatsapp-inbound`) — `/webhooks/whatsapp` endpoint with `hub.verify_token` handshake + `X-Hub-Signature-256` verification; publishes `whatsapp.inbound` / `whatsapp.status` events.
+
+#### HTTP / Integrations
+
+- **Multipart request bodies** — `body_type: multipart` on HTTP nodes (data-URI → binary file parts); **OpenAI `transcribe_audio`** (whisper-1) operation.
+- **Operation-level headers** — headers now resolve `{{ params.* }}` per operation (e.g. `Xero-tenant-id`).
+- **New built-in integrations** — Runware (image/video generation), Threads ops added to meta-graph (me, create post, publish, media status), Xero + QuickBooks (bank feeds, invoices).
+- **7 example workflows** — voice-note transcription, review→ticket, compliance kit (regulation impact, document check, cross-check, gap analysis, evidence mapping).
+
+#### Platform / DX
+
+- **Visual workflow builder v2** — open/edit existing workflows (YAML/JSON ⇄ canvas), full 30-node palette grouped, trigger editor, JSON node config + delete, Save = API upsert.
+- **Built-in YAML loader fails loudly** — malformed built-in YAML panics at startup with file path + error instead of silently dropping the service.
+
+### Fixed
+
+- **Credential store isolation in tests** — test suite no longer overwrites the real `credentials.json` (path override + `R8R_DATA_DIR` support).
+- Clippy `useless_vec` in document test helper; loader ops count test updated for OpenAI `transcribe_audio`.
 
 #### PostgreSQL Storage Backend
 
@@ -105,12 +145,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Webhook** — HTTP POST with approval payload JSON
 - **Slack** — Block Kit message with workflow name, approval ID, description, and expiry
 - **Email** — HTML email via SMTP relay configured with `R8R_SMTP_RELAY_URL` env var
-
-### Fixed
-
-#### Intel macOS (x86_64) binaries
-- **Release matrix** — `x86_64-apple-darwin` added to the build matrix (Intel Macs previously had no installable binary; installer assumed ARM binaries work everywhere via Rosetta 2)
-- **Installer arch detection** — `install.sh` now selects `x86_64-apple-darwin` on Intel Macs and `aarch64-apple-darwin` on Apple Silicon instead of always downloading the ARM binary
 
 ## [0.3.0] - 2026-03-01
 
@@ -218,6 +252,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive security audit with 335+ tests
 - AGPL-3.0 license with dual licensing option
 
+[0.8.0]: https://github.com/qhkm/r8r/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/qhkm/r8r/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/qhkm/r8r/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/qhkm/r8r/compare/v0.4.1...v0.5.0
 [0.3.0]: https://github.com/qhkm/r8r/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/qhkm/r8r/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/qhkm/r8r/releases/tag/v0.1.0
