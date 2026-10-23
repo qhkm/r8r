@@ -1543,6 +1543,14 @@ impl SqliteStorage {
         Ok(())
     }
 
+    /// Delete the persisted REPL LLM config so the next session picks up fresh
+    /// config from config.toml.
+    pub async fn delete_repl_llm_config(&self) -> Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute("DELETE FROM repl_llm_config", [])?;
+        Ok(())
+    }
+
     /// Load persisted REPL LLM config, if present.
     pub async fn get_repl_llm_config(&self) -> Result<Option<LlmConfig>> {
         let conn = self.conn.lock().await;
@@ -2045,6 +2053,9 @@ impl super::Storage for SqliteStorage {
     }
     async fn get_repl_llm_config(&self) -> crate::error::Result<Option<crate::llm::LlmConfig>> {
         SqliteStorage::get_repl_llm_config(self).await
+    }
+    async fn delete_repl_llm_config(&self) -> crate::error::Result<()> {
+        SqliteStorage::delete_repl_llm_config(self).await
     }
     async fn store_delayed_event(
         &self,

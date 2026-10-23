@@ -57,6 +57,12 @@ impl Node for FilterNode {
         "Filter an array using conditional rules"
     }
 
+    fn validate_config(&self, config: &Value) -> Result<()> {
+        let _: FilterConfig = serde_json::from_value(config.clone())
+            .map_err(|e| Error::Node(format!("Invalid filter config: {}", e)))?;
+        Ok(())
+    }
+
     async fn execute(&self, config: &Value, ctx: &NodeContext) -> Result<NodeResult> {
         let config: FilterConfig = serde_json::from_value(config.clone())
             .map_err(|e| Error::Node(format!("Invalid filter config: {}", e)))?;

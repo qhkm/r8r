@@ -71,6 +71,64 @@ enum AgentProvider {
     Custom,
 }
 
+/// Parse a provider string (from `[llm].provider` in config.toml) into AgentProvider.
+fn parse_provider_str(s: &str) -> Option<AgentProvider> {
+    match s.to_ascii_lowercase().as_str() {
+        "zeptoclaw" => Some(AgentProvider::Zeptoclaw),
+        "openai" => Some(AgentProvider::Openai),
+        "anthropic" => Some(AgentProvider::Anthropic),
+        "ollama" => Some(AgentProvider::Ollama),
+        "custom" => Some(AgentProvider::Custom),
+        _ => None,
+    }
+}
+
+/// Cached global Config. Loaded once on first agent invocation.
+#[cfg(not(test))]
+fn global_config() -> &'static crate::config::Config {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<crate::config::Config> = OnceLock::new();
+    CACHE.get_or_init(crate::config::Config::load)
+}
+
+/// Under tests, return default Config to isolate from machine `[llm]` settings.
+/// Effective-* fallback paths are covered by separate unit tests that build Config explicitly.
+#[cfg(test)]
+fn global_config() -> &'static crate::config::Config {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<crate::config::Config> = OnceLock::new();
+    CACHE.get_or_init(crate::config::Config::default)
+}
+
+/// Resolve the effective provider: workflow's explicit choice, else `[llm].provider`
+/// from global config, else Zeptoclaw (backward-compat default).
+fn effective_provider(config: &AgentConfig) -> AgentProvider {
+    if let Some(p) = config.provider.clone() {
+        return p;
+    }
+    if let Some(s) = global_config().llm.provider.as_deref() {
+        if let Some(p) = parse_provider_str(s) {
+            return p;
+        }
+    }
+    AgentProvider::Zeptoclaw
+}
+
+/// Resolve the effective model: workflow's explicit value, else `[llm].model` when the
+/// global config's provider matches the chosen provider, else None.
+fn effective_model(config: &AgentConfig, provider: &AgentProvider) -> Option<String> {
+    if config.model.is_some() {
+        return config.model.clone();
+    }
+    let llm = &global_config().llm;
+    if let Some(s) = llm.provider.as_deref() {
+        if parse_provider_str(s).as_ref() == Some(provider) {
+            return llm.model.clone();
+        }
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Usage info (returned in metadata)
 // ---------------------------------------------------------------------------
@@ -94,9 +152,11 @@ struct AgentConfig {
     /// The prompt to send to the agent
     prompt: String,
 
-    /// LLM provider (default: zeptoclaw for backward compat)
+    /// LLM provider. When omitted, falls back to `[llm].provider` in the global config
+    /// (~/.config/r8r/config.toml or ~/Library/Application Support/r8r/config.toml on macOS),
+    /// then to Zeptoclaw for backward compat.
     #[serde(default)]
-    provider: AgentProvider,
+    provider: Option<AgentProvider>,
 
     /// Endpoint URL. Meaning varies by provider:
     /// - zeptoclaw: ZeptoClaw chat URL (default from env or localhost:3000)
@@ -204,11 +264,20 @@ fn default_ollama_endpoint() -> String {
     "http://localhost:11434/api/chat".to_string()
 }
 
-fn resolve_endpoint(config: &AgentConfig) -> String {
+fn resolve_endpoint(config: &AgentConfig, provider: &AgentProvider) -> String {
     if let Some(ep) = &config.endpoint {
         return ep.clone();
     }
-    match config.provider {
+    // If global [llm].provider matches the chosen provider, use its endpoint.
+    let llm = &global_config().llm;
+    if let Some(s) = llm.provider.as_deref() {
+        if parse_provider_str(s).as_ref() == Some(provider) {
+            if let Some(ep) = &llm.endpoint {
+                return ep.clone();
+            }
+        }
+    }
+    match provider {
         AgentProvider::Zeptoclaw => default_zeptoclaw_endpoint(),
         AgentProvider::Openai => default_openai_endpoint(),
         AgentProvider::Anthropic => default_anthropic_endpoint(),
@@ -221,7 +290,11 @@ fn resolve_endpoint(config: &AgentConfig) -> String {
 // Credential resolution
 // ---------------------------------------------------------------------------
 
-fn resolve_credential<'a>(config: &AgentConfig, ctx: &'a NodeContext) -> Result<Option<&'a str>> {
+fn resolve_credential<'a>(
+    config: &AgentConfig,
+    provider: &AgentProvider,
+    ctx: &'a NodeContext,
+) -> Result<Option<&'a str>> {
     // Explicit credential field takes priority
     if let Some(cred_name) = &config.credential {
         return ctx
@@ -231,7 +304,7 @@ fn resolve_credential<'a>(config: &AgentConfig, ctx: &'a NodeContext) -> Result<
     }
 
     // Try provider-specific defaults
-    match config.provider {
+    match provider {
         AgentProvider::Openai | AgentProvider::Custom => {
             if let Some(key) = ctx.get_credential("openai") {
                 return Ok(Some(key.as_str()));
@@ -264,10 +337,11 @@ fn resolve_credential<'a>(config: &AgentConfig, ctx: &'a NodeContext) -> Result<
 
 fn build_openai_request(
     config: &AgentConfig,
+    provider: &AgentProvider,
     prompt: &str,
     api_key: &str,
 ) -> Result<(String, reqwest::header::HeaderMap, Value)> {
-    let url = resolve_endpoint(config);
+    let url = resolve_endpoint(config, provider);
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::AUTHORIZATION,
@@ -282,7 +356,7 @@ fn build_openai_request(
             .map_err(|_| Error::Node("Invalid content type".to_string()))?,
     );
 
-    let model = config.model.clone().unwrap_or_else(|| "gpt-4o".to_string());
+    let model = effective_model(config, provider).unwrap_or_else(|| "gpt-4o".to_string());
 
     let mut messages = Vec::new();
     if let Some(system) = &config.system {
@@ -323,10 +397,11 @@ fn build_openai_request(
 
 fn build_anthropic_request(
     config: &AgentConfig,
+    provider: &AgentProvider,
     prompt: &str,
     api_key: &str,
 ) -> Result<(String, reqwest::header::HeaderMap, Value)> {
-    let url = resolve_endpoint(config);
+    let url = resolve_endpoint(config, provider);
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         "x-api-key",
@@ -347,10 +422,8 @@ fn build_anthropic_request(
             .map_err(|_| Error::Node("Invalid content type".to_string()))?,
     );
 
-    let model = config
-        .model
-        .clone()
-        .unwrap_or_else(|| "claude-3-haiku-20240307".to_string());
+    let model =
+        effective_model(config, provider).unwrap_or_else(|| "claude-3-haiku-20240307".to_string());
 
     let max_tokens = config.max_tokens.unwrap_or(4096);
 
@@ -372,9 +445,13 @@ fn build_anthropic_request(
     Ok((url, headers, body))
 }
 
-fn build_ollama_request(config: &AgentConfig, prompt: &str) -> Result<(String, Value)> {
-    let url = resolve_endpoint(config);
-    let model = config.model.clone().unwrap_or_else(|| "llama3".to_string());
+fn build_ollama_request(
+    config: &AgentConfig,
+    provider: &AgentProvider,
+    prompt: &str,
+) -> Result<(String, Value)> {
+    let url = resolve_endpoint(config, provider);
+    let model = effective_model(config, provider).unwrap_or_else(|| "llama3".to_string());
 
     let mut messages = Vec::new();
     if let Some(system) = &config.system {
@@ -490,9 +567,10 @@ fn extract_content(
 async fn call_zeptoclaw(
     client: &Client,
     config: &AgentConfig,
+    provider: &AgentProvider,
     prompt: &str,
 ) -> Result<(String, Option<AgentUsageInfo>)> {
-    let endpoint = resolve_endpoint(config);
+    let endpoint = resolve_endpoint(config, provider);
     debug!("Agent node calling ZeptoClaw: {}", endpoint);
 
     let request = ZeptoClawRequest {
@@ -555,22 +633,28 @@ impl Node for AgentNode {
         // Render prompt with template variables (pretty mode for better LLM readability)
         let prompt = render_template(&config.prompt, ctx, RenderMode::Pretty);
 
+        // Resolve effective provider (workflow > [llm] config > Zeptoclaw default)
+        let provider = effective_provider(&config);
+
         info!(
             "Agent prompt ({:?}): {}...",
-            config.provider,
+            provider,
             &prompt.chars().take(100).collect::<String>()
         );
 
         let start = std::time::Instant::now();
 
         // Dispatch to provider
-        let (content, usage) = match config.provider {
-            AgentProvider::Zeptoclaw => call_zeptoclaw(&self.client, &config, &prompt).await?,
+        let (content, usage) = match provider {
+            AgentProvider::Zeptoclaw => {
+                call_zeptoclaw(&self.client, &config, &provider, &prompt).await?
+            }
 
             AgentProvider::Openai | AgentProvider::Custom => {
-                let api_key = resolve_credential(&config, ctx)?
+                let api_key = resolve_credential(&config, &provider, ctx)?
                     .ok_or_else(|| Error::Node("API key required for OpenAI".to_string()))?;
-                let (url, headers, body) = build_openai_request(&config, &prompt, api_key)?;
+                let (url, headers, body) =
+                    build_openai_request(&config, &provider, &prompt, api_key)?;
 
                 debug!("Agent calling OpenAI-compatible: {}", url);
                 let response = self
@@ -597,13 +681,14 @@ impl Node for AgentNode {
                     .await
                     .map_err(|e| Error::Node(format!("Failed to parse response: {}", e)))?;
 
-                extract_content(&config.provider, &response_json)?
+                extract_content(&provider, &response_json)?
             }
 
             AgentProvider::Anthropic => {
-                let api_key = resolve_credential(&config, ctx)?
+                let api_key = resolve_credential(&config, &provider, ctx)?
                     .ok_or_else(|| Error::Node("API key required for Anthropic".to_string()))?;
-                let (url, headers, body) = build_anthropic_request(&config, &prompt, api_key)?;
+                let (url, headers, body) =
+                    build_anthropic_request(&config, &provider, &prompt, api_key)?;
 
                 debug!("Agent calling Anthropic: {}", url);
                 let response = self
@@ -634,7 +719,7 @@ impl Node for AgentNode {
             }
 
             AgentProvider::Ollama => {
-                let (url, body) = build_ollama_request(&config, &prompt)?;
+                let (url, body) = build_ollama_request(&config, &provider, &prompt)?;
 
                 debug!("Agent calling Ollama: {}", url);
                 let response = self
@@ -709,14 +794,14 @@ impl Node for AgentNode {
         };
 
         let metadata = json!({
-            "provider": format!("{:?}", config.provider),
-            "model": config.model,
+            "provider": format!("{:?}", provider),
+            "model": effective_model(&config, &provider),
             "agent": config.agent,
             "response_format": config.response_format,
             "has_json_schema": config.json_schema.is_some(),
             "usage": usage,
             "duration_ms": duration.as_millis() as u64,
-            "endpoint": resolve_endpoint(&config),
+            "endpoint": resolve_endpoint(&config, &provider),
         });
 
         Ok(NodeResult::with_metadata(output, metadata))
@@ -770,7 +855,10 @@ mod tests {
 
         assert_eq!(config.response_format, "text");
         assert_eq!(config.timeout_seconds, 30);
-        assert!(matches!(config.provider, AgentProvider::Zeptoclaw));
+        // provider is None when YAML omits it; effective_provider() resolves to Zeptoclaw
+        // as the backward-compat default when no global [llm] config is set.
+        assert!(config.provider.is_none());
+        assert_eq!(effective_provider(&config), AgentProvider::Zeptoclaw);
         assert!(config.credential.is_none());
         assert!(config.json_schema.is_none());
         assert!(config.max_tokens.is_none());
@@ -792,7 +880,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert!(matches!(config.provider, AgentProvider::Openai));
+        assert!(matches!(config.provider, Some(AgentProvider::Openai)));
         assert_eq!(config.model.as_deref(), Some("gpt-4o"));
     }
 
@@ -805,7 +893,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert!(matches!(config.provider, AgentProvider::Anthropic));
+        assert!(matches!(config.provider, Some(AgentProvider::Anthropic)));
     }
 
     #[test]
@@ -817,7 +905,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert!(matches!(config.provider, AgentProvider::Ollama));
+        assert!(matches!(config.provider, Some(AgentProvider::Ollama)));
     }
 
     #[test]
@@ -829,7 +917,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert!(matches!(config.provider, AgentProvider::Custom));
+        assert!(matches!(config.provider, Some(AgentProvider::Custom)));
         assert_eq!(
             config.endpoint.as_deref(),
             Some("https://my-vllm.internal/v1/chat/completions")
@@ -923,7 +1011,7 @@ mod tests {
     fn test_build_openai_request_shape() {
         let config = AgentConfig {
             prompt: "test".to_string(),
-            provider: AgentProvider::Openai,
+            provider: Some(AgentProvider::Openai),
             endpoint: None,
             model: Some("gpt-4o".to_string()),
             response_format: "text".to_string(),
@@ -936,7 +1024,8 @@ mod tests {
             agent: None,
         };
 
-        let (url, headers, body) = build_openai_request(&config, "Hello", "sk-test").unwrap();
+        let (url, headers, body) =
+            build_openai_request(&config, &AgentProvider::Openai, "Hello", "sk-test").unwrap();
 
         assert_eq!(url, "https://api.openai.com/v1/chat/completions");
         assert!(headers
@@ -958,7 +1047,7 @@ mod tests {
     fn test_build_openai_request_json_schema() {
         let config = AgentConfig {
             prompt: "classify".to_string(),
-            provider: AgentProvider::Openai,
+            provider: Some(AgentProvider::Openai),
             endpoint: None,
             model: None,
             response_format: "json".to_string(),
@@ -971,7 +1060,8 @@ mod tests {
             agent: None,
         };
 
-        let (_url, _headers, body) = build_openai_request(&config, "test", "sk-test").unwrap();
+        let (_url, _headers, body) =
+            build_openai_request(&config, &AgentProvider::Openai, "test", "sk-test").unwrap();
 
         assert_eq!(body["response_format"]["type"], "json_schema");
         assert!(body["response_format"]["json_schema"]["schema"].is_object());
@@ -981,7 +1071,7 @@ mod tests {
     fn test_build_openai_request_json_no_schema() {
         let config = AgentConfig {
             prompt: "classify".to_string(),
-            provider: AgentProvider::Openai,
+            provider: Some(AgentProvider::Openai),
             endpoint: None,
             model: None,
             response_format: "json".to_string(),
@@ -994,7 +1084,8 @@ mod tests {
             agent: None,
         };
 
-        let (_url, _headers, body) = build_openai_request(&config, "test", "sk-test").unwrap();
+        let (_url, _headers, body) =
+            build_openai_request(&config, &AgentProvider::Openai, "test", "sk-test").unwrap();
 
         assert_eq!(body["response_format"]["type"], "json_object");
     }
@@ -1003,7 +1094,7 @@ mod tests {
     fn test_build_anthropic_request_shape() {
         let config = AgentConfig {
             prompt: "test".to_string(),
-            provider: AgentProvider::Anthropic,
+            provider: Some(AgentProvider::Anthropic),
             endpoint: None,
             model: Some("claude-sonnet-4-5-20250929".to_string()),
             response_format: "text".to_string(),
@@ -1017,7 +1108,8 @@ mod tests {
         };
 
         let (url, headers, body) =
-            build_anthropic_request(&config, "Hello", "sk-ant-test").unwrap();
+            build_anthropic_request(&config, &AgentProvider::Anthropic, "Hello", "sk-ant-test")
+                .unwrap();
 
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
         assert_eq!(
@@ -1040,7 +1132,7 @@ mod tests {
     fn test_build_ollama_request_shape() {
         let config = AgentConfig {
             prompt: "test".to_string(),
-            provider: AgentProvider::Ollama,
+            provider: Some(AgentProvider::Ollama),
             endpoint: None,
             model: Some("llama3".to_string()),
             response_format: "text".to_string(),
@@ -1053,7 +1145,8 @@ mod tests {
             agent: None,
         };
 
-        let (url, body) = build_ollama_request(&config, "Classify this").unwrap();
+        let (url, body) =
+            build_ollama_request(&config, &AgentProvider::Ollama, "Classify this").unwrap();
 
         assert_eq!(url, "http://localhost:11434/api/chat");
         assert_eq!(body["model"], "llama3");
@@ -1069,7 +1162,7 @@ mod tests {
     fn test_build_ollama_request_json_format() {
         let config = AgentConfig {
             prompt: "test".to_string(),
-            provider: AgentProvider::Ollama,
+            provider: Some(AgentProvider::Ollama),
             endpoint: None,
             model: None,
             response_format: "json".to_string(),
@@ -1082,7 +1175,7 @@ mod tests {
             agent: None,
         };
 
-        let (_url, body) = build_ollama_request(&config, "test").unwrap();
+        let (_url, body) = build_ollama_request(&config, &AgentProvider::Ollama, "test").unwrap();
         assert_eq!(body["format"], "json");
     }
 
@@ -1176,7 +1269,7 @@ mod tests {
     fn test_resolve_credential_explicit() {
         let config = AgentConfig {
             prompt: "t".to_string(),
-            provider: AgentProvider::Openai,
+            provider: Some(AgentProvider::Openai),
             endpoint: None,
             model: None,
             response_format: "text".to_string(),
@@ -1193,7 +1286,8 @@ mod tests {
         creds.insert("my_key".to_string(), "sk-explicit".to_string());
         let ctx = NodeContext::new("exec-1", "test").with_credentials(creds);
 
-        let result = resolve_credential(&config, &ctx).unwrap();
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx).unwrap();
         assert_eq!(result, Some("sk-explicit"));
     }
 
@@ -1201,7 +1295,7 @@ mod tests {
     fn test_resolve_credential_fallback_openai() {
         let config = AgentConfig {
             prompt: "t".to_string(),
-            provider: AgentProvider::Openai,
+            provider: Some(AgentProvider::Openai),
             endpoint: None,
             model: None,
             response_format: "text".to_string(),
@@ -1218,7 +1312,8 @@ mod tests {
         creds.insert("openai".to_string(), "sk-fallback".to_string());
         let ctx = NodeContext::new("exec-1", "test").with_credentials(creds);
 
-        let result = resolve_credential(&config, &ctx).unwrap();
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx).unwrap();
         assert_eq!(result, Some("sk-fallback"));
     }
 
@@ -1226,7 +1321,7 @@ mod tests {
     fn test_resolve_credential_fallback_anthropic() {
         let config = AgentConfig {
             prompt: "t".to_string(),
-            provider: AgentProvider::Anthropic,
+            provider: Some(AgentProvider::Anthropic),
             endpoint: None,
             model: None,
             response_format: "text".to_string(),
@@ -1243,7 +1338,8 @@ mod tests {
         creds.insert("anthropic".to_string(), "sk-ant-fallback".to_string());
         let ctx = NodeContext::new("exec-1", "test").with_credentials(creds);
 
-        let result = resolve_credential(&config, &ctx).unwrap();
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx).unwrap();
         assert_eq!(result, Some("sk-ant-fallback"));
     }
 
@@ -1251,7 +1347,7 @@ mod tests {
     fn test_resolve_credential_zeptoclaw_none() {
         let config = AgentConfig {
             prompt: "t".to_string(),
-            provider: AgentProvider::Zeptoclaw,
+            provider: Some(AgentProvider::Zeptoclaw),
             endpoint: None,
             model: None,
             response_format: "text".to_string(),
@@ -1265,7 +1361,8 @@ mod tests {
         };
 
         let ctx = NodeContext::new("exec-1", "test");
-        let result = resolve_credential(&config, &ctx).unwrap();
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx).unwrap();
         assert!(result.is_none());
     }
 
@@ -1273,7 +1370,7 @@ mod tests {
     fn test_resolve_credential_ollama_none() {
         let config = AgentConfig {
             prompt: "t".to_string(),
-            provider: AgentProvider::Ollama,
+            provider: Some(AgentProvider::Ollama),
             endpoint: None,
             model: None,
             response_format: "text".to_string(),
@@ -1287,7 +1384,8 @@ mod tests {
         };
 
         let ctx = NodeContext::new("exec-1", "test");
-        let result = resolve_credential(&config, &ctx).unwrap();
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx).unwrap();
         assert!(result.is_none());
     }
 
@@ -1295,7 +1393,7 @@ mod tests {
     fn test_resolve_credential_missing_explicit() {
         let config = AgentConfig {
             prompt: "t".to_string(),
-            provider: AgentProvider::Openai,
+            provider: Some(AgentProvider::Openai),
             endpoint: None,
             model: None,
             response_format: "text".to_string(),
@@ -1309,7 +1407,8 @@ mod tests {
         };
 
         let ctx = NodeContext::new("exec-1", "test");
-        let result = resolve_credential(&config, &ctx);
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("nonexistent"));
     }
@@ -1318,7 +1417,7 @@ mod tests {
     fn test_resolve_credential_llm_fallback() {
         let config = AgentConfig {
             prompt: "t".to_string(),
-            provider: AgentProvider::Openai,
+            provider: Some(AgentProvider::Openai),
             endpoint: None,
             model: None,
             response_format: "text".to_string(),
@@ -1335,7 +1434,8 @@ mod tests {
         creds.insert("llm".to_string(), "sk-llm-generic".to_string());
         let ctx = NodeContext::new("exec-1", "test").with_credentials(creds);
 
-        let result = resolve_credential(&config, &ctx).unwrap();
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx).unwrap();
         assert_eq!(result, Some("sk-llm-generic"));
     }
 
@@ -1347,7 +1447,7 @@ mod tests {
     fn test_resolve_endpoint_custom() {
         let config = AgentConfig {
             prompt: "t".to_string(),
-            provider: AgentProvider::Custom,
+            provider: Some(AgentProvider::Custom),
             endpoint: Some("https://my-vllm.internal/v1/chat/completions".to_string()),
             model: None,
             response_format: "text".to_string(),
@@ -1361,7 +1461,7 @@ mod tests {
         };
 
         assert_eq!(
-            resolve_endpoint(&config),
+            resolve_endpoint(&config, &effective_provider(&config)),
             "https://my-vllm.internal/v1/chat/completions"
         );
     }
@@ -1370,7 +1470,7 @@ mod tests {
     fn test_resolve_endpoint_defaults() {
         let make_config = |provider: AgentProvider| AgentConfig {
             prompt: "t".to_string(),
-            provider,
+            provider: Some(provider),
             endpoint: None,
             model: None,
             response_format: "text".to_string(),
@@ -1383,11 +1483,19 @@ mod tests {
             agent: None,
         };
 
-        assert!(resolve_endpoint(&make_config(AgentProvider::Openai)).contains("api.openai.com"));
         assert!(
-            resolve_endpoint(&make_config(AgentProvider::Anthropic)).contains("api.anthropic.com")
+            resolve_endpoint(&make_config(AgentProvider::Openai), &AgentProvider::Openai)
+                .contains("api.openai.com")
         );
-        assert!(resolve_endpoint(&make_config(AgentProvider::Ollama)).contains("localhost:11434"));
+        assert!(resolve_endpoint(
+            &make_config(AgentProvider::Anthropic),
+            &AgentProvider::Anthropic
+        )
+        .contains("api.anthropic.com"));
+        assert!(
+            resolve_endpoint(&make_config(AgentProvider::Ollama), &AgentProvider::Ollama)
+                .contains("localhost:11434")
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1444,6 +1552,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(config.agent.as_deref(), Some("code-reviewer"));
-        assert!(matches!(config.provider, AgentProvider::Zeptoclaw));
+        // provider unset in YAML → None; effective_provider() defaults to Zeptoclaw
+        assert!(config.provider.is_none());
+        assert_eq!(effective_provider(&config), AgentProvider::Zeptoclaw);
     }
 }

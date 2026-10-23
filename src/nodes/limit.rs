@@ -46,6 +46,12 @@ impl Node for LimitNode {
         "Limit the number of items from an array"
     }
 
+    fn validate_config(&self, config: &Value) -> Result<()> {
+        let _: LimitConfig = serde_json::from_value(config.clone())
+            .map_err(|e| Error::Node(format!("Invalid limit config: {}", e)))?;
+        Ok(())
+    }
+
     async fn execute(&self, config: &Value, ctx: &NodeContext) -> Result<NodeResult> {
         let config: LimitConfig = serde_json::from_value(config.clone())
             .map_err(|e| Error::Node(format!("Invalid limit config: {}", e)))?;

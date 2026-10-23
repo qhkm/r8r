@@ -92,6 +92,10 @@ enum Commands {
         /// Resume a previous session
         #[arg(long, num_args = 0..=1, default_missing_value = "")]
         resume: Option<String>,
+        /// Clear persisted REPL LLM config and exit. Use after editing config.toml
+        /// so the next `r8r chat` picks up the new [llm] settings.
+        #[arg(long, conflicts_with = "resume")]
+        reset: bool,
         /// Max LLM cost per turn in USD (guardrail)
         #[arg(long, value_name = "USD")]
         max_cost: Option<f64>,
@@ -635,9 +639,10 @@ async fn run_command(
     output: &r8r::cli::output::Output,
 ) -> anyhow::Result<()> {
     match command {
-        None => cmd_chat(None, None, None, vec![], vec![]).await?,
+        None => cmd_chat(None, false, None, None, vec![], vec![]).await?,
         Some(Commands::Chat {
             resume,
+            reset,
             max_cost,
             max_cost_per_session,
             allow_tool,
@@ -645,6 +650,7 @@ async fn run_command(
         }) => {
             cmd_chat(
                 resume,
+                reset,
                 max_cost,
                 max_cost_per_session,
                 allow_tool,
@@ -913,11 +919,20 @@ fn cmd_completions(shell: CompletionShell) -> anyhow::Result<()> {
 
 async fn cmd_chat(
     resume: Option<String>,
+    reset: bool,
     max_cost: Option<f64>,
     max_cost_per_session: Option<f64>,
     allow_tool: Vec<String>,
     deny_tool: Vec<String>,
 ) -> anyhow::Result<()> {
+    if reset {
+        let storage = get_storage()?;
+        storage.delete_repl_llm_config().await?;
+        eprintln!(
+            "✓ Cleared persisted REPL LLM config. Next `r8r chat` will load from config.toml."
+        );
+        return Ok(());
+    }
     let cli_guardrails = if max_cost.is_some()
         || max_cost_per_session.is_some()
         || !allow_tool.is_empty()
@@ -966,8 +981,9 @@ async fn cmd_workflows_list(output: &r8r::cli::output::Output) -> anyhow::Result
 }
 
 async fn cmd_workflows_create(file: &str, output: &r8r::cli::output::Output) -> anyhow::Result<()> {
+    use r8r::nodes::NodeRegistry;
     use r8r::storage::StoredWorkflow;
-    use r8r::workflow::{parse_workflow_file, validate_workflow};
+    use r8r::workflow::{parse_workflow_file, validate_workflow_with_registry};
     use serde::Serialize;
     use std::path::Path;
 
@@ -976,9 +992,11 @@ async fn cmd_workflows_create(file: &str, output: &r8r::cli::output::Output) -> 
         anyhow::bail!("File not found: {}", file);
     }
 
-    // Parse and validate
+    // Parse and validate against the node registry — catches per-node config
+    // hallucinations (e.g. missing required fields) at create time.
     let workflow = parse_workflow_file(path)?;
-    validate_workflow(&workflow)?;
+    let registry = NodeRegistry::new();
+    validate_workflow_with_registry(&workflow, &registry)?;
 
     // Read raw YAML
     let definition = std::fs::read_to_string(path)?;
@@ -1418,7 +1436,8 @@ async fn cmd_workflows_delete(name: &str) -> anyhow::Result<()> {
 }
 
 async fn cmd_workflows_validate(file: &str) -> anyhow::Result<()> {
-    use r8r::workflow::{parse_workflow_file, validate_workflow};
+    use r8r::nodes::NodeRegistry;
+    use r8r::workflow::{parse_workflow_file, validate_workflow_with_registry};
     use std::path::Path;
 
     let path = Path::new(file);
@@ -1427,7 +1446,8 @@ async fn cmd_workflows_validate(file: &str) -> anyhow::Result<()> {
     }
 
     let workflow = parse_workflow_file(path)?;
-    validate_workflow(&workflow)?;
+    let registry = NodeRegistry::new();
+    validate_workflow_with_registry(&workflow, &registry)?;
 
     println!("✓ Workflow '{}' is valid", workflow.name);
     println!();

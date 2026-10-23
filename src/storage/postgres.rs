@@ -1223,6 +1223,14 @@ impl Storage for PostgresStorage {
             .transpose()
     }
 
+    async fn delete_repl_llm_config(&self) -> Result<()> {
+        sqlx::query("DELETE FROM repl_llm_config")
+            .execute(&self.pool)
+            .await
+            .map_err(sqlx_err)?;
+        Ok(())
+    }
+
     // -------------------------------------------------------------------------
     // Delayed events
     // -------------------------------------------------------------------------

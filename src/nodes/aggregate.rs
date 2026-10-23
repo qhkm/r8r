@@ -54,6 +54,12 @@ impl Node for AggregateNode {
         "Aggregate an array as array/object/first/last"
     }
 
+    fn validate_config(&self, config: &Value) -> Result<()> {
+        let _: AggregateConfig = serde_json::from_value(config.clone())
+            .map_err(|e| Error::Node(format!("Invalid aggregate config: {}", e)))?;
+        Ok(())
+    }
+
     async fn execute(&self, config: &Value, ctx: &NodeContext) -> Result<NodeResult> {
         let config: AggregateConfig = serde_json::from_value(config.clone())
             .map_err(|e| Error::Node(format!("Invalid aggregate config: {}", e)))?;
