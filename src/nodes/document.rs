@@ -221,7 +221,12 @@ fn resolve_data_field(input: &Value, path: &str) -> Result<String> {
 }
 
 async fn download_with_limit(url: &str, max_bytes: usize) -> Result<Vec<u8>> {
-    let client = http_client()?;
+    crate::ssrf::check_ssrf(url).map_err(Error::Node)?;
+    let client = crate::ssrf::hardened_client_builder()
+        .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+        .connect_timeout(Duration::from_secs(HTTP_CONNECT_TIMEOUT_SECS))
+        .build()
+        .map_err(|error| Error::Node(format!("Failed to build HTTP client: {error}")))?;
     let mut response =
         client.get(url).send().await.map_err(|error| {
             Error::Node(format!("Document download failed for '{url}': {error}"))

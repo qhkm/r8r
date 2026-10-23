@@ -50,7 +50,7 @@ const DEFAULT_HTTP_CONNECT_TIMEOUT_SECS: u64 = 10;
 
 impl HttpNode {
     pub fn new() -> Self {
-        let client = Client::builder()
+        let client = ssrf::hardened_client_builder()
             .timeout(Duration::from_secs(DEFAULT_HTTP_TIMEOUT_SECS))
             .connect_timeout(Duration::from_secs(DEFAULT_HTTP_CONNECT_TIMEOUT_SECS))
             .build()
