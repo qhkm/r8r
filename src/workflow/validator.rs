@@ -429,4 +429,120 @@ nodes:
         let err = validate_workflow(&workflow).unwrap_err();
         assert!(err.to_string().contains("at least 1"));
     }
+
+    // --- validate_workflow_with_registry: config validation against node registry ---
+
+    #[test]
+    fn test_registry_valid_workflow_passes() {
+        let yaml = r#"
+name: registry-valid
+nodes:
+  - id: fetch
+    type: http
+    config:
+      url: https://example.com
+  - id: cap
+    type: limit
+    depends_on: [fetch]
+    config:
+      field: items
+      limit: 5
+"#;
+        let workflow = parse_workflow(yaml).unwrap();
+        let registry = crate::nodes::NodeRegistry::new();
+        assert!(validate_workflow_with_registry(&workflow, &registry).is_ok());
+    }
+
+    #[test]
+    fn test_registry_unknown_node_type() {
+        let yaml = r#"
+name: registry-unknown
+nodes:
+  - id: bogus
+    type: frobnicate
+"#;
+        let workflow = parse_workflow(yaml).unwrap();
+        let registry = crate::nodes::NodeRegistry::new();
+        let err = validate_workflow_with_registry(&workflow, &registry).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("bogus"),
+            "should name the offending node: {msg}"
+        );
+        assert!(
+            msg.contains("frobnicate"),
+            "should name the bad type: {msg}"
+        );
+        assert!(
+            msg.contains("unknown type"),
+            "should flag unknown type: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_registry_catches_hallucinated_config() {
+        // A `limit` node missing the required `field` key — the exact class of
+        // LLM hallucination this function exists to catch at create time.
+        let yaml = r#"
+name: registry-hallucinated
+nodes:
+  - id: cap
+    type: limit
+    config:
+      limit: 5
+"#;
+        let workflow = parse_workflow(yaml).unwrap();
+        // Structural validation alone accepts it — the config is only checked
+        // once dispatched to the node registry.
+        assert!(validate_workflow(&workflow).is_ok());
+
+        let registry = crate::nodes::NodeRegistry::new();
+        let err = validate_workflow_with_registry(&workflow, &registry).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cap"), "should name the offending node: {msg}");
+        assert!(msg.contains("limit"), "should name the node type: {msg}");
+        assert!(
+            msg.contains("field"),
+            "should surface the missing key: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_registry_catches_missing_required_url() {
+        let yaml = r#"
+name: registry-missing-url
+nodes:
+  - id: fetch
+    type: http
+    config:
+      method: GET
+"#;
+        let workflow = parse_workflow(yaml).unwrap();
+        let registry = crate::nodes::NodeRegistry::new();
+        let err = validate_workflow_with_registry(&workflow, &registry).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("fetch"),
+            "should name the offending node: {msg}"
+        );
+        assert!(msg.contains("url"), "should surface the missing key: {msg}");
+    }
+
+    #[test]
+    fn test_registry_runs_structural_validation_first() {
+        // A structurally invalid workflow (empty name) must fail even though
+        // every node type/config is otherwise valid.
+        let yaml = r#"
+name: ""
+nodes:
+  - id: fetch
+    type: http
+    config:
+      url: https://example.com
+"#;
+        let workflow = parse_workflow(yaml).unwrap();
+        let registry = crate::nodes::NodeRegistry::new();
+        let err = validate_workflow_with_registry(&workflow, &registry).unwrap_err();
+        assert!(err.to_string().contains("name is required"));
+    }
 }
