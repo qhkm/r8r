@@ -1,0 +1,74 @@
+version: 1
+name: discord
+display_name: Discord
+description: Discord API integration
+base_url: https://discord.com/api/v10
+docs_url: https://discord.com/developers/docs/reference
+
+auth:
+  methods:
+    - type: api_key
+      header_name: Authorization
+      description: Bot token, include the "Bot " prefix (e.g. Bot MTIz...)
+
+headers:
+  Content-Type: application/json
+
+operations:
+  get_guilds:
+    description: List guilds (servers) the bot is in
+    method: GET
+    path: /users/@me/guilds
+    params: {}
+
+  send_message:
+    description: Send a message to a channel
+    method: POST
+    path: /channels/{{ params.channel_id }}/messages
+    params:
+      channel_id: { required: true, type: string }
+      content: { required: true, type: string, description: "Message text (up to 2000 chars)" }
+      tts: { required: false, type: boolean }
+    body:
+      content: "{{ params.content }}"
+      tts: "{{ params.tts }}"
+
+  edit_message:
+    description: Edit a message
+    method: PATCH
+    path: /channels/{{ params.channel_id }}/messages/{{ params.message_id }}
+    params:
+      channel_id: { required: true, type: string }
+      message_id: { required: true, type: string }
+      content: { required: true, type: string }
+    body:
+      content: "{{ params.content }}"
+
+  delete_message:
+    description: Delete a message
+    method: DELETE
+    path: /channels/{{ params.channel_id }}/messages/{{ params.message_id }}
+    params:
+      channel_id: { required: true, type: string }
+      message_id: { required: true, type: string }
+
+  get_channel:
+    description: Get channel details
+    method: GET
+    path: /channels/{{ params.channel_id }}
+    params:
+      channel_id: { required: true, type: string }
+
+  list_channel_messages:
+    description: Get messages from a channel (pagination)
+    method: GET
+    path: /channels/{{ params.channel_id }}/messages
+    params:
+      channel_id: { required: true, type: string }
+      limit: { required: false, type: integer, description: "1-100, default 50" }
+      before: { required: false, type: string, description: "Message ID anchor (older)" }
+      after: { required: false, type: string, description: "Message ID anchor (newer)" }
+    query:
+      limit: "{{ params.limit }}"
+      before: "{{ params.before }}"
+      after: "{{ params.after }}"

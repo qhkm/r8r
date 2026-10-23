@@ -59,6 +59,7 @@ pub mod metrics;
 pub mod migrate;
 pub mod nodes;
 pub mod notifications;
+pub mod queue;
 pub mod repl;
 #[cfg(feature = "sandbox")]
 pub mod sandbox;

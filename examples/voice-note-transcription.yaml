@@ -1,0 +1,71 @@
+# Voice Note → Transcription → AI Reply
+#
+# Closes the voice-message loop: an inbound voice note (WhatsApp/Telegram)
+# is transcribed with Whisper, summarized by an agent, and replied to.
+#
+# Prerequisites:
+#   r8r credentials set openai <your-openai-key>
+#   r8r credentials set whatsapp <your-phone-number-id>
+#   r8r credentials set telegram <your-bot-token>
+#
+# Audio must arrive as a data URI, e.g. from the whatsapp inbound node
+# (download media → base64) or an HTTP upload:
+#   data:audio/ogg;base64,<...>
+
+name: voice-note-transcription
+description: Transcribe inbound voice note via Whisper and reply with a summary
+version: 1
+
+triggers:
+  - type: webhook
+    path: /voice-note
+  - type: whatsapp
+    config:
+      event: message
+      media: audio
+
+inputs:
+  audio_data:
+    type: string
+    description: Base64 audio as data URI (data:audio/ogg;base64,...)
+    required: true
+  sender_id:
+    type: string
+    description: Chat/phone to reply to
+    required: false
+
+nodes:
+  # 1) Whisper transcription — new multipart op in the openai integration
+  - id: transcribe
+    type: integration
+    config:
+      service: openai
+      operation: transcribe_audio
+      credential: openai
+      params:
+        audio: "{{ input.audio_data }}"
+
+  # 2) Summarize the transcript
+  - id: summarize
+    type: agent
+    config:
+      provider: openai
+      credential: openai
+      prompt: |
+        Ringkaskan transkrip voice note ini dalam 3 titik pendek (BM):
+        {{ nodes.transcribe.output.text }}
+    depends_on:
+      - transcribe
+
+  # 3) Reply on the same channel
+  - id: reply
+    type: integration
+    config:
+      service: whatsapp
+      operation: send_text
+      credential: whatsapp
+      params:
+        to: "{{ input.sender_id }}"
+        text: "📝 Transkripsi siap:\n{{ nodes.summarize.output }}"
+    depends_on:
+      - summarize

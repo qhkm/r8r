@@ -1,0 +1,106 @@
+version: 1
+name: hubspot
+display_name: HubSpot
+description: HubSpot CRM API — contacts, companies, deals, forms
+base_url: https://api.hubapi.com
+docs_url: https://developers.hubspot.com/docs/guides/api
+
+auth:
+  methods:
+    - type: bearer
+      description: HubSpot private app access token (created at https://app.hubspot.com/private-apps)
+
+headers:
+  Content-Type: application/json
+
+operations:
+  create_contact:
+    description: Create a new contact
+    method: POST
+    path: /crm/v3/objects/contacts
+    params:
+      email: { required: false, type: string }
+      firstname: { required: false, type: string }
+      lastname: { required: false, type: string }
+      phone: { required: false, type: string }
+      company: { required: false, type: string }
+    body:
+      properties:
+        email: "{{ params.email }}"
+        firstname: "{{ params.firstname }}"
+        lastname: "{{ params.lastname }}"
+        phone: "{{ params.phone }}"
+        company: "{{ params.company }}"
+
+  search_contacts:
+    description: Search contacts by email or name
+    method: POST
+    path: /crm/v3/objects/contacts/search
+    params:
+      query: { required: true, type: string, description: "Search term (email, name, phone)" }
+      limit: { required: false, type: integer, default: 10 }
+    body:
+      filterGroups:
+        - filters:
+            - propertyName: email
+              operator: CONTAINS_TOKEN
+              value: "{{ params.query }}"
+      limit: "{{ params.limit }}"
+
+  list_contacts:
+    description: List all contacts
+    method: GET
+    path: /crm/v3/objects/contacts
+    params:
+      limit: { required: false, type: integer, default: 100 }
+    query:
+      limit: "{{ params.limit }}"
+
+  create_deal:
+    description: Create a new deal
+    method: POST
+    path: /crm/v3/objects/deals
+    params:
+      dealname: { required: true, type: string }
+      amount: { required: false, type: number }
+      dealstage: { required: false, type: string, description: "Internal stage name, e.g. appointmentscheduled" }
+      pipeline: { required: false, type: string }
+    body:
+      properties:
+        dealname: "{{ params.dealname }}"
+        amount: "{{ params.amount }}"
+        dealstage: "{{ params.dealstage }}"
+        pipeline: "{{ params.pipeline }}"
+
+  create_company:
+    description: Create a new company
+    method: POST
+    path: /crm/v3/objects/companies
+    params:
+      name: { required: true, type: string }
+      domain: { required: false, type: string }
+      phone: { required: false, type: string }
+      industry: { required: false, type: string }
+    body:
+      properties:
+        name: "{{ params.name }}"
+        domain: "{{ params.domain }}"
+        phone: "{{ params.phone }}"
+        industry: "{{ params.industry }}"
+
+  submit_form:
+    description: Submit an external HubSpot form (lead capture)
+    method: POST
+    path: /submissions/v3/integration/submit/{{ params.portal_id }}/{{ params.form_id }}
+    params:
+      portal_id: { required: true, type: string, description: "HubSpot portal ID" }
+      form_id: { required: true, type: string }
+      email: { required: true, type: string }
+      fields: { required: false, type: object, description: "Additional form fields: {name: value}" }
+    body:
+      fields:
+        - name: email
+          value: "{{ params.email }}"
+      context:
+        pageUri: "https://r8r.local"
+        pageName: "r8r workflow"

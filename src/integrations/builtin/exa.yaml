@@ -1,0 +1,57 @@
+version: 1
+name: exa
+display_name: Exa
+description: Exa (formerly Metaphor) — neural web search & content retrieval for AI agents
+base_url: https://api.exa.ai
+docs_url: https://docs.exa.ai
+
+auth:
+  methods:
+    - type: api_key
+      header_name: x-api-key
+      description: Exa API key (from https://dashboard.exa.ai) — sent as `x-api-key` header
+
+operations:
+  search:
+    description: Semantic/keyword search across the web
+    method: POST
+    path: /search
+    params:
+      query: { required: true, type: string, description: "Search query" }
+      num_results: { required: false, type: integer, default: 10 }
+      search_type: { required: false, type: string, default: auto, enum: [auto, neural, keyword], description: "auto = neural + keyword hybrid" }
+      category: { required: false, type: string, description: "e.g. company, research paper, news, pdf" }
+      include_text: { required: false, type: boolean, default: true, description: "Include text snippet per result" }
+      contents: { required: false, type: boolean, default: false, description: "Fetch full page text (Exa Contents API)" }
+    body:
+      query: "{{ params.query }}"
+      numResults: "{{ params.num_results }}"
+      type: "{{ params.search_type }}"
+      category: "{{ params.category }}"
+      contents:
+        text: "{{ params.contents }}"
+
+  get_contents:
+    description: Fetch full text/contents of pages by URL or ID
+    method: POST
+    path: /contents
+    params:
+      ids: { required: true, type: array, description: "List of URLs or Exa document IDs" }
+      text: { required: false, type: boolean, default: true }
+    body:
+      ids: "{{ params.ids }}"
+      text: "{{ params.text }}"
+
+  find_similar:
+    description: Find pages similar to a URL
+    method: POST
+    path: /findSimilar
+    params:
+      url: { required: true, type: string }
+      num_results: { required: false, type: integer, default: 10 }
+      text: { required: false, type: boolean, default: true }
+    body:
+      url: "{{ params.url }}"
+      numResults: "{{ params.num_results }}"
+      contents:
+        text: "{{ params.text }}"

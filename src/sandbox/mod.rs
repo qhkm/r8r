@@ -20,12 +20,16 @@ pub mod docker;
 #[cfg(feature = "sandbox-firecracker")]
 pub mod firecracker;
 pub mod subprocess;
+#[cfg(feature = "sandbox-wasm")]
+pub mod wasm;
 
 #[cfg(feature = "sandbox-docker")]
 pub use docker::DockerBackend;
 #[cfg(feature = "sandbox-firecracker")]
 pub use firecracker::FirecrackerBackend;
 pub use subprocess::SubprocessBackend;
+#[cfg(feature = "sandbox-wasm")]
+pub use wasm::WasmSandbox;
 
 /// Trait for sandbox execution backends.
 ///

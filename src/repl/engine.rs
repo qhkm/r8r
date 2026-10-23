@@ -16,6 +16,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use super::conversation::Conversation;
+use super::guardrails::ReplGuardrails;
 use super::tools;
 
 const MAX_TOOL_CALLS_PER_TURN: usize = 20;
@@ -69,8 +70,10 @@ pub async fn run_turn(
     executor: &Arc<Executor>,
     tool_defs: &[Value],
     on_update: &StreamCallback,
+    guardrails: &tokio::sync::Mutex<ReplGuardrails>,
 ) -> TurnResult {
     conversation.add_user_message(user_input);
+    guardrails.lock().await.begin_turn();
 
     let mut tool_calls = Vec::new();
     let mut total_tool_calls = 0;
@@ -117,6 +120,19 @@ pub async fn run_turn(
             acc.prompt_tokens = Some(acc.prompt_tokens.unwrap_or(0) + u.prompt_tokens.unwrap_or(0));
             acc.completion_tokens =
                 Some(acc.completion_tokens.unwrap_or(0) + u.completion_tokens.unwrap_or(0));
+
+            // Guardrail: cost budget. Stop the turn when a limit is exceeded.
+            let model = llm_config.model.as_deref().unwrap_or("unknown");
+            if let Err(budget_msg) = guardrails.lock().await.record_usage(model, &u) {
+                conversation.add_assistant_message(&budget_msg);
+                on_update(StreamUpdate::Done);
+                return TurnResult {
+                    response: budget_msg,
+                    tool_calls,
+                    cancelled: false,
+                    usage: accumulated_usage,
+                };
+            }
         }
 
         match stream_result {
@@ -151,19 +167,40 @@ pub async fn run_turn(
                 }
 
                 let args: Value = serde_json::from_str(&arguments).unwrap_or(json!({}));
-                on_update(StreamUpdate::ToolCallStart {
-                    name: name.clone(),
-                    args: args.clone(),
-                });
 
-                let result = tools::execute_tool_with_config(
-                    &name,
-                    &args,
-                    storage,
-                    executor,
-                    Some(llm_config),
-                )
-                .await;
+                // Guardrail: tool permission matrix.
+                let result = match guardrails.lock().await.check_tool(&name) {
+                    Ok(()) => {
+                        on_update(StreamUpdate::ToolCallStart {
+                            name: name.clone(),
+                            args: args.clone(),
+                        });
+                        tools::execute_tool_with_config(
+                            &name,
+                            &args,
+                            storage,
+                            executor,
+                            Some(llm_config),
+                        )
+                        .await
+                    }
+                    Err(blocked) => {
+                        on_update(StreamUpdate::ToolCallStart {
+                            name: name.clone(),
+                            args: args.clone(),
+                        });
+                        let result = json!({
+                            "error": blocked,
+                            "blocked_by_guardrail": true,
+                        })
+                        .to_string();
+                        on_update(StreamUpdate::ToolCallResult {
+                            name: name.clone(),
+                            result: result.clone(),
+                        });
+                        result
+                    }
+                };
                 on_update(StreamUpdate::ToolCallResult {
                     name: name.clone(),
                     result: result.clone(),
@@ -190,19 +227,40 @@ pub async fn run_turn(
 
                 let args = arguments;
                 let call_id = format!("text_{}", total_tool_calls);
-                on_update(StreamUpdate::ToolCallStart {
-                    name: name.clone(),
-                    args: args.clone(),
-                });
 
-                let result = tools::execute_tool_with_config(
-                    &name,
-                    &args,
-                    storage,
-                    executor,
-                    Some(llm_config),
-                )
-                .await;
+                // Guardrail: tool permission matrix.
+                let result = match guardrails.lock().await.check_tool(&name) {
+                    Ok(()) => {
+                        on_update(StreamUpdate::ToolCallStart {
+                            name: name.clone(),
+                            args: args.clone(),
+                        });
+                        tools::execute_tool_with_config(
+                            &name,
+                            &args,
+                            storage,
+                            executor,
+                            Some(llm_config),
+                        )
+                        .await
+                    }
+                    Err(blocked) => {
+                        on_update(StreamUpdate::ToolCallStart {
+                            name: name.clone(),
+                            args: args.clone(),
+                        });
+                        let result = json!({
+                            "error": blocked,
+                            "blocked_by_guardrail": true,
+                        })
+                        .to_string();
+                        on_update(StreamUpdate::ToolCallResult {
+                            name: name.clone(),
+                            result: result.clone(),
+                        });
+                        result
+                    }
+                };
                 on_update(StreamUpdate::ToolCallResult {
                     name: name.clone(),
                     result: result.clone(),

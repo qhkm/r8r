@@ -1,6 +1,6 @@
 [package]
 name = "r8r"
-version = "0.4.1"
+version = "0.8.0"
 edition = "2021"
 description = "Agent-first Rust workflow automation engine"
 license = "AGPL-3.0-only AND Apache-2.0"
@@ -34,7 +34,7 @@ exclude = [
 ]
 
 [features]
-default = ["ce"]
+default = ["ce", "document"]
 
 # Edition features
 ce = []                                          # Community Edition (AGPL-3.0)
@@ -44,10 +44,16 @@ ee = ["enterprise", "redis", "storage-postgres"] # Full Enterprise Edition bundl
 
 # Infrastructure features
 redis = ["dep:redis"]
+kafka = ["dep:kafka"]              # Kafka consumer trigger (pure-Rust client)
+aws = ["dep:quick-xml", "dep:hmac", "dep:sha2"]   # SQS/SNS triggers (SigV4 via stdlib crypto)
+imap = ["dep:async-imap", "dep:tokio-rustls", "dep:webpki-roots", "dep:mailparse"]  # IMAP mailbox trigger (pure Rust, rustls)
+whatsapp-inbound = ["dep:hmac", "dep:sha2"]  # Meta Cloud API inbound webhook (X-Hub-Signature-256)
 sandbox = ["dep:tempfile"]
 sandbox-docker = ["sandbox", "dep:bollard"]
 sandbox-firecracker = ["sandbox"]
 storage-postgres = ["dep:sqlx"]
+document = ["dep:pdf-extract"]
+sandbox-wasm = ["sandbox", "dep:wasmtime", "dep:wasmtime-wasi", "dep:wasmtime-environ"]
 
 [[bin]]
 name = "r8r"
@@ -158,6 +164,19 @@ tempfile = { version = "3", optional = true }
 # PostgreSQL storage backend (optional, enable with --features storage-postgres)
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "chrono", "uuid", "json"], optional = true }
 
+# External event-source triggers (optional)
+kafka = { version = "0.10", optional = true }                        # Kafka consumer (pure Rust, no C deps)
+quick-xml = { version = "0.37", optional = true }                    # SQS XML response parsing (feature aws)
+hmac = { version = "0.12", optional = true }                         # SigV4 HMAC-SHA256 (feature aws)
+sha2 = { version = "0.10", optional = true }                         # SigV4 payload SHA-256 (feature aws)
+async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"], optional = true }  # IMAP client (pure Rust)
+tokio-rustls = { version = "0.26", optional = true }                 # IMAP TLS via rustls (no OpenSSL)
+webpki-roots = { version = "0.26", optional = true }                 # TLS root certificates (no system store)
+mailparse = { version = "0.15", optional = true }                    # MIME/RFC822 email parsing
+pdf-extract = { version = "0.12", optional = true }                 # Pure-Rust PDF text extraction
+wasmtime = { version = "47", optional = true }
+wasmtime-wasi = { version = "47", default-features = false, features = ["p1"], optional = true }
+wasmtime-environ = { version = "47", optional = true }
 
 [profile.release]
 strip = true
@@ -170,3 +189,4 @@ tokio-test = "0.4"
 tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
+wat = "1.256.0"

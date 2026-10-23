@@ -1,0 +1,95 @@
+version: 1
+name: xero
+display_name: Xero
+description: Xero Accounting API — bank feeds, transactions, accounts, invoices (popular for MY/SG/AU SME)
+base_url: https://api.xero.com
+docs_url: https://developer.xero.com/documentation/api/accounting/
+
+auth:
+  methods:
+    - type: oauth2
+      authorization_url: https://login.xero.com/identity/connect/authorize
+      token_url: https://identity.xero.com/connect/token
+      scopes:
+        - accounting.transactions
+        - accounting.contacts
+        - accounting.settings
+        - offline_access
+        - openid
+        - profile
+        - email
+      flows:
+        - authorization_code
+    - type: bearer
+      description: Xero OAuth2 access token (BYOK self-host)
+
+headers:
+  Accept: application/json
+  Content-Type: application/json
+
+operations:
+  get_tenants:
+    description: List connected Xero organisations (tenantId + tenantName). Use tenant_id as Xero-tenant-id in other ops
+    method: GET
+    path: /connections
+
+  list_accounts:
+    description: List chart of accounts (bank accounts have Type=BANK and Balances; filter with agent/transform)
+    method: GET
+    path: /api.xro/2.0/Accounts
+    params:
+      tenant_id: { required: true, type: string, description: "Xero tenant ID (from get_tenants)" }
+    headers:
+      Xero-tenant-id: "{{ params.tenant_id }}"
+
+  list_bank_transactions:
+    description: List bank transactions (optionally filtered by URL-encoded Xero where clause)
+    method: GET
+    path: /api.xro/2.0/BankTransactions
+    params:
+      tenant_id: { required: true, type: string, description: "Xero tenant ID (from get_tenants)" }
+      page: { required: false, type: number, default: 1 }
+      recent: { required: false, type: boolean, default: true }
+      where: { required: false, type: string, description: "URL-encoded Xero filter, e.g. Status%3D%3D%22AUTHORISED%22 (unbatched items)" }
+    headers:
+      Xero-tenant-id: "{{ params.tenant_id }}"
+    query:
+      page: "{{ params.page }}"
+      recent: "{{ params.recent }}"
+      where: "{{ params.where }}"
+
+  create_bank_transaction:
+    description: Create bank transaction(s). Pass an ARRAY of Xero BankTransaction objects (agent-generated); returns created items
+    method: POST
+    path: /api.xro/2.0/BankTransactions
+    params:
+      tenant_id: { required: true, type: string, description: "Xero tenant ID (from get_tenants)" }
+      transactions: { required: true, type: array, description: "[{\"Type\":\"SPEND\",\"Contact\":{\"Name\":\"ACME\"},\"LineItems\":[{\"Description\":\"office supplies\",\"Quantity\":1,\"UnitAmount\":120.50,\"AccountCode\":\"610\"}],\"BankAccount\":{\"Code\":\"090\"}}]" }
+    headers:
+      Xero-tenant-id: "{{ params.tenant_id }}"
+    body: "{{ params.transactions }}"
+
+  create_invoice:
+    description: Create invoice(s) — ACCREC sales / ACCPAY purchase. Pass an ARRAY of Xero Invoice objects
+    method: POST
+    path: /api.xro/2.0/Invoices
+    params:
+      tenant_id: { required: true, type: string, description: "Xero tenant ID (from get_tenants)" }
+      invoices: { required: true, type: array, description: "[{\"Type\":\"ACCREC\",\"Contact\":{\"Name\":\"ACME\"},\"LineItems\":[{\"Description\":\"Consulting\",\"Quantity\":1,\"UnitAmount\":8000}],\"Status\":\"DRAFT\",\"Date\":\"2026-08-18\"}]" }
+    headers:
+      Xero-tenant-id: "{{ params.tenant_id }}"
+    body: "{{ params.invoices }}"
+
+  list_invoices:
+    description: List invoices (optionally filtered by status via URL-encoded where clause)
+    method: GET
+    path: /api.xro/2.0/Invoices
+    params:
+      tenant_id: { required: true, type: string, description: "Xero tenant ID (from get_tenants)" }
+      page: { required: false, type: number, default: 1 }
+      where: { required: false, type: string, description: "URL-encoded Xero filter, e.g. Status%3D%3D%22AUTHORISED%22" }
+    headers:
+      Xero-tenant-id: "{{ params.tenant_id }}"
+    query:
+      page: "{{ params.page }}"
+      where: "{{ params.where }}"

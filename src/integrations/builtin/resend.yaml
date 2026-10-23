@@ -1,0 +1,62 @@
+version: 1
+name: resend
+display_name: Resend
+description: Resend email API — send transactional/marketing emails with HTML support
+base_url: https://api.resend.com
+docs_url: https://resend.com/docs/api-reference
+
+auth:
+  methods:
+    - type: bearer
+      description: Resend API key (created at https://resend.com/api-keys)
+
+headers:
+  Content-Type: application/json
+
+operations:
+  send_email:
+    description: Send an email
+    method: POST
+    path: /emails
+    params:
+      from: { required: true, type: string, description: "Sender address, e.g. Acme <onboarding@resend.dev>" }
+      to: { required: true, type: array, description: "Recipient email addresses" }
+      subject: { required: true, type: string }
+      text: { required: false, type: string, description: "Plain text body" }
+      html: { required: false, type: string, description: "HTML body" }
+      reply_to: { required: false, type: array }
+      cc: { required: false, type: array }
+      bcc: { required: false, type: array }
+    body:
+      from: "{{ params.from }}"
+      to: "{{ params.to }}"
+      subject: "{{ params.subject }}"
+      text: "{{ params.text }}"
+      html: "{{ params.html }}"
+      reply_to: "{{ params.reply_to }}"
+      cc: "{{ params.cc }}"
+      bcc: "{{ params.bcc }}"
+
+  get_email:
+    description: Retrieve a single email
+    method: GET
+    path: /emails/{{ params.id }}
+    params:
+      id: { required: true, type: string }
+
+  list_domains:
+    description: List all domains
+    method: GET
+    path: /domains
+    params: {}
+
+  create_domain:
+    description: Register a new domain
+    method: POST
+    path: /domains
+    params:
+      name: { required: true, type: string, description: "Domain name, e.g. acme.com" }
+      region: { required: false, type: string, default: us-east-1 }
+    body:
+      name: "{{ params.name }}"
+      region: "{{ params.region }}"

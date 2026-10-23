@@ -1,0 +1,94 @@
+version: 1
+name: youtube
+display_name: YouTube
+description: YouTube Data API v3 — videos, search, playlists, comments
+base_url: https://www.googleapis.com/youtube/v3
+docs_url: https://developers.google.com/youtube/v3/docs
+
+auth:
+  methods:
+    - type: api_key
+      description: YouTube Data API key (from Google Cloud Console) — sent as `key` query param
+
+operations:
+  search_videos:
+    description: Search for videos
+    method: GET
+    path: /search
+    params:
+      query: { required: false, type: string, description: "Search term (must provide query or channel_id)" }
+      channel_id: { required: false, type: string }
+      max_results: { required: false, type: integer, default: 10 }
+      order: { required: false, type: string, default: relevance, enum: [date, rating, relevance, title, videoCount, viewCount] }
+      published_after: { required: false, type: string, description: "RFC3339, e.g. 2026-01-01T00:00:00Z" }
+      type: { required: false, type: string, default: video, enum: [video, channel, playlist] }
+    query:
+      part: snippet
+      q: "{{ params.query }}"
+      channelId: "{{ params.channel_id }}"
+      maxResults: "{{ params.max_results }}"
+      order: "{{ params.order }}"
+      publishedAfter: "{{ params.published_after }}"
+      type: "{{ params.type }}"
+      key: "{{ credential }}"
+
+  get_video:
+    description: Fetch video details with stats
+    method: GET
+    path: /videos
+    params:
+      video_id: { required: true, type: string }
+    query:
+      part: snippet,statistics,contentDetails
+      id: "{{ params.video_id }}"
+      key: "{{ credential }}"
+
+  get_transcript_hint:
+    description: Fetch video captions availability
+    method: GET
+    path: /captions
+    params:
+      video_id: { required: true, type: string }
+    query:
+      part: snippet
+      videoId: "{{ params.video_id }}"
+      key: "{{ credential }}"
+
+  list_playlist_items:
+    description: List videos in a playlist
+    method: GET
+    path: /playlistItems
+    params:
+      playlist_id: { required: true, type: string }
+      max_results: { required: false, type: integer, default: 20 }
+    query:
+      part: snippet,contentDetails
+      playlistId: "{{ params.playlist_id }}"
+      maxResults: "{{ params.max_results }}"
+      key: "{{ credential }}"
+
+  list_channel_videos:
+    description: List uploads from a channel
+    method: GET
+    path: /playlistItems
+    params:
+      channel_id: { required: true, type: string }
+      max_results: { required: false, type: integer, default: 20 }
+    query:
+      part: snippet
+      playlistId: "{{ params.channel_id }}"
+      maxResults: "{{ params.max_results }}"
+      key: "{{ credential }}"
+
+  list_comments:
+    description: List top-level comments on a video
+    method: GET
+    path: /commentThreads
+    params:
+      video_id: { required: true, type: string }
+      max_results: { required: false, type: integer, default: 20 }
+    query:
+      part: snippet
+      videoId: "{{ params.video_id }}"
+      maxResults: "{{ params.max_results }}"
+      key: "{{ credential }}"

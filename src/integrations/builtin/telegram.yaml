@@ -1,0 +1,103 @@
+version: 1
+name: telegram
+display_name: Telegram
+description: Telegram Bot API integration
+base_url: https://api.telegram.org
+docs_url: https://core.telegram.org/bots/api
+
+auth:
+  methods:
+    - type: bearer
+      description: Bot token (e.g. 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11) — embedded in URL path
+
+operations:
+  get_me:
+    description: Get basic information about the bot
+    method: GET
+    path: /bot{{ credential }}/getMe
+    params: {}
+
+  send_message:
+    description: Send a text message to a chat
+    method: POST
+    path: /bot{{ credential }}/sendMessage
+    params:
+      chat_id: { required: true, type: string, description: "Chat ID or @username" }
+      text: { required: true, type: string, description: "Message text" }
+      parse_mode: { required: false, type: string, enum: [HTML, Markdown, MarkdownV2] }
+      disable_web_page_preview: { required: false, type: boolean }
+    body:
+      chat_id: "{{ params.chat_id }}"
+      text: "{{ params.text }}"
+      parse_mode: "{{ params.parse_mode }}"
+      disable_web_page_preview: "{{ params.disable_web_page_preview }}"
+
+  send_photo:
+    description: Send a photo to a chat
+    method: POST
+    path: /bot{{ credential }}/sendPhoto
+    params:
+      chat_id: { required: true, type: string, description: "Chat ID or @username" }
+      photo: { required: true, type: string, description: "Photo URL or file_id" }
+      caption: { required: false, type: string }
+    body:
+      chat_id: "{{ params.chat_id }}"
+      photo: "{{ params.photo }}"
+      caption: "{{ params.caption }}"
+
+  edit_message_text:
+    description: Edit a text message
+    method: POST
+    path: /bot{{ credential }}/editMessageText
+    params:
+      chat_id: { required: true, type: string }
+      message_id: { required: true, type: integer }
+      text: { required: true, type: string }
+    body:
+      chat_id: "{{ params.chat_id }}"
+      message_id: "{{ params.message_id }}"
+      text: "{{ params.text }}"
+
+  delete_message:
+    description: Delete a message
+    method: POST
+    path: /bot{{ credential }}/deleteMessage
+    params:
+      chat_id: { required: true, type: string }
+      message_id: { required: true, type: integer }
+    body:
+      chat_id: "{{ params.chat_id }}"
+      message_id: "{{ params.message_id }}"
+
+  forward_message:
+    description: Forward a message from one chat to another
+    method: POST
+    path: /bot{{ credential }}/forwardMessage
+    params:
+      chat_id: { required: true, type: string, description: "Target chat ID" }
+      from_chat_id: { required: true, type: string }
+      message_id: { required: true, type: integer }
+    body:
+      chat_id: "{{ params.chat_id }}"
+      from_chat_id: "{{ params.from_chat_id }}"
+      message_id: "{{ params.message_id }}"
+
+  set_webhook:
+    description: Set the webhook URL for the bot
+    method: POST
+    path: /bot{{ credential }}/setWebhook
+    params:
+      url: { required: true, type: string, description: "HTTPS webhook URL" }
+    body:
+      url: "{{ params.url }}"
+
+  get_updates:
+    description: Get incoming updates (polling mode)
+    method: GET
+    path: /bot{{ credential }}/getUpdates
+    params:
+      timeout: { required: false, type: integer, default: 0 }
+      limit: { required: false, type: integer, default: 100 }
+    query:
+      timeout: "{{ params.timeout }}"
+      limit: "{{ params.limit }}"

@@ -10,6 +10,8 @@ mod middleware;
 mod openapi;
 mod webhook;
 mod websocket;
+#[cfg(feature = "whatsapp-inbound")]
+mod whatsapp;
 
 pub use middleware::{
     access_log_middleware, api_auth_middleware, health_auth_middleware, request_id_middleware,
@@ -17,6 +19,8 @@ pub use middleware::{
 };
 pub use openapi::generate_openapi_spec;
 pub use webhook::{compute_signature, verify_signature, SignatureConfig, SignatureScheme};
+#[cfg(feature = "whatsapp-inbound")]
+pub use whatsapp::whatsapp_routes;
 
 use std::sync::Arc;
 
@@ -217,7 +221,7 @@ impl AppState {
 
 /// Create the API router (without state applied - call with_state on the result).
 pub fn create_api_routes() -> Router<AppState> {
-    Router::new()
+    let router = Router::new()
         .route("/api/health", get(health_check))
         .route("/api/metrics", get(prometheus_metrics))
         .route("/api/openapi.json", get(openapi_spec))
@@ -236,7 +240,12 @@ pub fn create_api_routes() -> Router<AppState> {
         .route("/api/audit", get(list_audit_entries_handler))
         .route("/api/approvals", get(list_approvals_handler))
         .route("/api/approvals/{id}", get(get_approval_handler))
-        .route("/api/approvals/{id}/decide", post(decide_approval_handler))
+        .route("/api/approvals/{id}/decide", post(decide_approval_handler));
+
+    #[cfg(feature = "whatsapp-inbound")]
+    let router = router.merge(whatsapp_routes());
+
+    router
 }
 
 /// Create routes that require the monitored app state (WebSocket).

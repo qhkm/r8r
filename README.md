@@ -94,13 +94,21 @@ curl -X POST localhost:8080/api/workflows/hello-world/execute \
 
 ### Cloud / Server Mode
 
-Run `r8r server` for the full-featured automation server — REST API, web dashboard, MCP server, webhooks, cron triggers, and credential management.
+Run `r8r server` for the full-featured automation server — REST API, web dashboard, MCP server, webhooks, cron triggers, Kafka/SQS/IMAP event sources, and credential management.
 
 ```bash
 r8r server --workflows ./workflows
 ```
 
-This is the primary mode today. Supports SQLite (default) or PostgreSQL (`--features storage-postgres`) for execution history and state.
+This is the primary mode today. Supports SQLite (default) or PostgreSQL (`--features storage-postgres`) for execution history and state. IMAP mailbox polling triggers are available via `--features imap`.
+
+WhatsApp Cloud API inbound webhooks are opt-in via `--features whatsapp-inbound`. Configure Meta to use `GET /webhooks/whatsapp` for verification and `POST /webhooks/whatsapp` for delivery. Set `WHATSAPP_VERIFY_TOKEN` (required) and `WHATSAPP_APP_SECRET` (optional but strongly recommended for signature verification). Message and delivery updates publish `whatsapp.inbound` and `whatsapp.status` events:
+
+```json
+{"event":"whatsapp.inbound","data":{"wa_id":"60123456789","message_type":"text","text_body":"Hello"}}
+```
+
+If the event backend is unavailable, delivery returns HTTP 500 so Meta can retry instead of silently dropping the event.
 
 ### Edge / Runner Mode (Coming Soon)
 
@@ -216,6 +224,7 @@ r8r-mcp
 | Node | Purpose |
 |------|---------|
 | `http` | REST API calls |
+| **`document`** | **Extract digital PDF text or transcribe scans/images with a vision model** |
 | `transform` | Data transformation (Rhai expressions) |
 | **`agent`** | **AI reasoning — call OpenAI, Anthropic, Ollama, or any LLM** |
 | **`sandbox`** | **Execute Python, Node, or Bash in isolated environments** |
@@ -319,6 +328,15 @@ r8r refine <name> <description>       # Refine existing workflow
 # Security
 r8r credentials set <name>            # Store secret
 r8r credentials list                  # List (masked)
+
+# Job Queue (distributed workers)
+r8r enqueue <workflow>                # Push a workflow run onto the queue
+r8r enqueue <workflow> -i '{"x":1}'   # With input JSON
+r8r enqueue <workflow> --version 2    # Pin a specific workflow version
+r8r enqueue <workflow> --idempotency-key k  # Dedupe-safe key
+r8r worker                            # Start a worker (4 concurrent consumers)
+r8r worker --once                     # Process one job, then exit (cron/systemd)
+r8r worker -c 8 --redis-url redis://host:6379  # Redis-backed queue
 ```
 
 While a prompt is running, the REPL TUI shows staged progress: planning, active tool calls, latest completed tool, and reply drafting, alongside elapsed time.

@@ -1,0 +1,161 @@
+version: 1
+name: meta-graph
+display_name: Meta Graph API
+description: Meta Graph API v21.0 — Facebook/Instagram/Threads pages, posts, photos, media & Ads Manager
+base_url: https://graph.facebook.com/v21.0
+docs_url: https://developers.facebook.com/docs/graph-api
+
+auth:
+  methods:
+    - type: oauth2
+      authorization_url: https://www.facebook.com/v21.0/dialog/oauth
+      token_url: https://graph.facebook.com/v21.0/oauth/access_token
+      scopes:
+        - pages_show_list
+        - pages_read_engagement
+        - pages_manage_posts
+        - pages_manage_photos
+        - ads_management
+        - ads_read
+        - business_management
+        - instagram_basic
+        - instagram_content_publish
+      flows:
+        - authorization_code
+    - type: bearer
+      description: Long-lived user or page access token (from Meta developer app)
+
+headers:
+  Content-Type: application/x-www-form-urlencoded
+
+operations:
+  get_me:
+    description: Verify the access token and get the current user's identity
+    method: GET
+    path: /me
+    query:
+      fields: id,name
+
+  list_pages:
+    description: List Facebook Pages managed by the token owner (includes page access tokens)
+    method: GET
+    path: /me/accounts
+    query:
+      fields: id,name,access_token,category,tasks
+
+  publish_post:
+    description: Publish a text post to a Page or Group
+    method: POST
+    path: /{{ params.page_id }}/feed
+    params:
+      page_id: { required: true, type: string, description: "Page/Group ID (numeric or page_name)" }
+      message: { required: true, type: string, description: "Post text content" }
+      link: { required: false, type: string, description: "Link URL to attach" }
+    body_type: form
+    body:
+      message: "{{ params.message }}"
+      link: "{{ params.link }}"
+
+  publish_photo:
+    description: Publish a photo to a Page (from public URL or binary)
+    method: POST
+    path: /{{ params.page_id }}/photos
+    params:
+      page_id: { required: true, type: string, description: "Page/Group ID" }
+      url: { required: true, type: string, description: "Public photo URL" }
+      caption: { required: false, type: string }
+    body_type: form
+    body:
+      url: "{{ params.url }}"
+      caption: "{{ params.caption }}"
+
+  list_ad_accounts:
+    description: List ad accounts accessible to the token
+    method: GET
+    path: /me/adaccounts
+    query:
+      fields: id,name,account_status,currency,amount_spent
+
+  list_campaigns:
+    description: List campaigns in an ad account
+    method: GET
+    path: /act_{{ params.ad_account_id }}/campaigns
+    params:
+      ad_account_id: { required: true, type: string, description: "Ad account ID (numeric, without act_ prefix)" }
+    query:
+      fields: id,name,status,objective,daily_budget,lifetime_budget
+
+  create_campaign:
+    description: Create a campaign in an ad account (default special_ad_categories=[] to avoid OPT_IN_REQUIRED errors)
+    method: POST
+    path: /act_{{ params.ad_account_id }}/campaigns
+    params:
+      ad_account_id: { required: true, type: string, description: "Ad account ID (numeric, without act_ prefix)" }
+      name: { required: true, type: string }
+      objective: { required: true, type: string, description: "e.g. OUTCOME_AWARENESS, OUTCOME_TRAFFIC, OUTCOME_SALES, OUTCOME_LEADS" }
+      status: { required: false, type: string, default: PAUSED, description: "ACTIVE or PAUSED" }
+      special_ad_categories: { required: false, type: array, description: "Default [] — set to e.g. [HOUSING] only when promoting special-ads inventory" }
+    body_type: form
+    body:
+      name: "{{ params.name }}"
+      objective: "{{ params.objective }}"
+      status: "{{ params.status }}"
+      special_ad_categories: "{{ params.special_ad_categories }}"
+
+  # ── Threads API (same Graph API v21.0, Threads user token: scopes threads_basic, threads_content_publish) ──
+  threads_get_me:
+    description: Get the Threads user ID (numeric, use as threads_user_id in other ops) and username
+    method: GET
+    path: /me
+    query:
+      fields: id,username
+
+  threads_create_post:
+    description: Create a Threads post container (draft). Returns an id (creation_id) which must be published via threads_publish
+    method: POST
+    path: /{{ params.threads_user_id }}/threads
+    params:
+      threads_user_id: { required: true, type: string, description: "Threads user ID (from threads_get_me)" }
+      text: { required: true, type: string, description: "Post text (max ~500 chars)" }
+      media_type: { required: false, type: string, default: TEXT, description: "TEXT, IMAGE, VIDEO or CAROUSEL" }
+      image_url: { required: false, type: string, description: "Public URL of image (required when media_type=IMAGE)" }
+      video_url: { required: false, type: string, description: "Public URL of video (required when media_type=VIDEO)" }
+      link_attachment: { required: false, type: string, description: "URL to attach as link card" }
+      reply_to_id: { required: false, type: string, description: "Media ID or container ID to reply to" }
+    body_type: form
+    body:
+      text: "{{ params.text }}"
+      media_type: "{{ params.media_type }}"
+      image_url: "{{ params.image_url }}"
+      video_url: "{{ params.video_url }}"
+      link_attachment: "{{ params.link_attachment }}"
+      reply_to_id: "{{ params.reply_to_id }}"
+
+  threads_publish:
+    description: Publish a Threads post container created by threads_create_post. Returns the media ID
+    method: POST
+    path: /{{ params.threads_user_id }}/threads_publish
+    params:
+      threads_user_id: { required: true, type: string, description: "Threads user ID (from threads_get_me)" }
+      creation_id: { required: true, type: string, description: "Container id returned by threads_create_post" }
+    body_type: form
+    body:
+      creation_id: "{{ params.creation_id }}"
+
+  threads_media_status:
+    description: Check a Threads container/media status (FINISHED or ERROR with error_message)
+    method: GET
+    path: /{{ params.container_id }}
+    query:
+      fields: status,error_message
+    params:
+      container_id: { required: true, type: string, description: "Container or media ID to check" }
+
+  threads_media:
+    description: Fetch a published Threads post details, including permalink and shortcode
+    method: GET
+    path: /{{ params.media_id }}
+    query:
+      fields: id,shortcode,permalink,username,text,timestamp
+    params:
+      media_id: { required: true, type: string, description: "Media ID returned by threads_publish" }

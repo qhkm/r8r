@@ -1,0 +1,72 @@
+version: 1
+name: google-drive
+display_name: Google Drive
+description: Google Drive API v3 — files, folders, search, permissions
+base_url: https://www.googleapis.com/drive/v3
+docs_url: https://developers.google.com/drive/api/reference
+
+auth:
+  methods:
+    - type: oauth2
+      authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+      token_url: https://oauth2.googleapis.com/token
+      scopes: [https://www.googleapis.com/auth/drive]
+      flows: [local_callback]
+    - type: bearer
+      description: OAuth2 access token
+
+operations:
+  list_files:
+    description: List files matching a query
+    method: GET
+    path: /files
+    params:
+      query: { required: false, type: string, description: "Drive query, e.g. name contains 'report'" }
+      page_size: { required: false, type: integer, default: 100 }
+      order_by: { required: false, type: string, default: modifiedTime desc }
+    query:
+      q: "{{ params.query }}"
+      pageSize: "{{ params.page_size }}"
+      orderBy: "{{ params.order_by }}"
+      fields: files(id,name,mimeType,modifiedTime,size,webViewLink)
+
+  get_file:
+    description: Fetch file metadata
+    method: GET
+    path: /files/{{ params.file_id }}
+    params:
+      file_id: { required: true, type: string }
+    query:
+      fields: id,name,mimeType,modifiedTime,size,webViewLink,parents
+
+  create_folder:
+    description: Create a new folder
+    method: POST
+    path: /files
+    params:
+      name: { required: true, type: string }
+      parent_id: { required: false, type: string, description: "Parent folder ID (root if omitted)" }
+    body:
+      name: "{{ params.name }}"
+      mimeType: application/vnd.google-apps.folder
+      parents: ["{{ params.parent_id }}"]
+
+  delete_file:
+    description: Move a file to trash
+    method: DELETE
+    path: /files/{{ params.file_id }}
+    params:
+      file_id: { required: true, type: string }
+
+  create_permission:
+    description: Share a file/folder with a user or group
+    method: POST
+    path: /files/{{ params.file_id }}/permissions
+    params:
+      file_id: { required: true, type: string }
+      email: { required: true, type: string }
+      role: { required: true, type: string, default: reader, enum: [owner, organizer, fileOrganizer, writer, commenter, reader] }
+    body:
+      type: user
+      role: "{{ params.role }}"
+      emailAddress: "{{ params.email }}"

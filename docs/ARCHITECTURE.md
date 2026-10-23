@@ -115,7 +115,10 @@ r8r combines:
 │  │  • Cron     │  │  • HTTP     │  │  • Queue    │              │
 │  │  • Webhook  │  │  • WhatsApp │  │  • Workers  │              │
 │  │  • Manual   │  │  • GSheets  │  │  • Retry    │              │
-│  │  • Event    │  │  • Transform│  │  • Timeout  │              │
+│  │  • Kafka    │  │  • Transform│  │  • Timeout  │              │
+│  │  • SQS/SNS  │  │  • Discord  │  │             │              │
+│  │  • IMAP     │  │  • Telegram │  │             │              │
+│  │  • Event    │  │  • Telegram │  │             │              │
 │  └─────────────┘  └─────────────┘  └─────────────┘              │
 │                                                                  │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
@@ -232,7 +235,7 @@ CREATE TABLE node_executions (
 | `approval` | Pause execution until approved/rejected via MCP |
 | `set` | Set variables |
 | **`agent`** | **Call ZeptoClaw for AI-powered decisions** |
-| **`sandbox`** | **Execute Python/Node/Bash code in isolated environments** |
+| **`sandbox`** | **Execute Python/Node/Bash/WASM code in isolated environments** |
 
 ### Agent Node (ZeptoClaw Integration)
 
@@ -283,26 +286,63 @@ nodes:
 - Natural language processing
 - Anything requiring "reasoning"
 
-### Integration Nodes (Phase 1 - Malaysian Focus)
+### Integration Layer — Built-in Services (32)
 
-| Node | Description |
-|------|-------------|
-| `whatsapp` | WhatsApp Cloud API |
-| `google-sheets` | Google Sheets read/write |
-| `telegram` | Telegram Bot API |
-| `email` | SMTP/Resend/SendGrid |
-| `webhook` | Receive webhooks |
+Service definitions deklaratif dalam `src/integrations/builtin/*.yaml` (kompil via `include_str!` ke `src/integrations/loader.rs`), dipanggil dari workflow melalui node `integration` (`service` + `operation` + `params`). User-defined integrations dalam `integrations/` — auto-scan, hot-reload, override builtin.
 
-### Integration Nodes (Phase 2)
+| Service | Deskripsi | Status |
+|---------|-----------|--------|
+| `telegram` | Bot API (send/edit/forward/delete, webhook, get_updates) | ✅ Shipped |
+| `whatsapp` | Cloud API (text/template/image, get_phone_numbers) | ✅ Shipped |
+| `google-sheets` | Read/append/update values, create_spreadsheet | ✅ Shipped |
+| `google-drive` | Drive files | ✅ Shipped |
+| `google-calendar` | Calendar events | ✅ Shipped |
+| `slack` | Slack API | ✅ Shipped |
+| `discord` | Bot (send/edit/delete, get_guilds) | ✅ Shipped |
+| `notion` | Notion API | ✅ Shipped |
+| `airtable` | CRUD records, list_bases | ✅ Shipped |
+| `stripe` | Payments | ✅ Shipped |
+| `shopify` | Shopify Admin (base_url per-tenant) | ✅ Shipped |
+| `hubspot` | CRM | ✅ Shipped |
+| `github` | GitHub API | ✅ Shipped |
+| `openai` | LLM | ✅ Shipped |
+| `resend` | Email | ✅ Shipped |
+| `twilio` | SMS/WhatsApp (basic auth) | ✅ Shipped |
+| `x` | X/Twitter | ✅ Shipped |
+| `linkedin` | LinkedIn | ✅ Shipped |
+| `youtube` | YouTube Data API (key dalam query) | ✅ Shipped |
+| `typeform` | Typeform | ✅ Shipped |
+| `cal.com` | Cal.com (key dalam query) | ✅ Shipped |
+| `supabase` | PostgREST (base_url per-tenant) | ✅ Shipped |
+| `exa` | Web search (x-api-key header) | ✅ Shipped |
+| `pdl` | People Data Labs (key dalam query) | ✅ Shipped |
+| `apollo` | B2B people/company search (X-Api-Key) | ✅ Shipped |
+| `coingecko` | Crypto prices (public, no auth) | ✅ Shipped |
+| `defillama` | Protocol TVL (public, no auth) | ✅ Shipped |
+| `stablecoins` | DeFiLlama stablecoins (subdomain berasingan, public) | ✅ Shipped |
+| `yields` | DeFiLlama yield pools (subdomain berasingan, public) | ✅ Shipped |
+| `elevenlabs` | TTS & voices (xi-api-key) | ✅ Shipped |
+| `browserbase` | Headless browser sessions (X-BB-API-Key) | ✅ Shipped |
+| `apify` | Scraping actors & datasets (Bearer) | ✅ Shipped |
+| `runware` | Image/video/audio/3D gen — Seedance, Kling, Flux etc (Bearer) | ✅ Shipped |
+| `meta-graph` | Meta Graph API v21: pages, posts, photos, ads (OAuth2/Bearer) | ✅ Shipped |
+| `email` | SMTP/Resend/SendGrid (node berdedikasi) | ✅ Shipped (node) |
+| `webhook` | Receive webhooks | ✅ Shipped (trigger) |
+| `kafka` | Kafka consumer (event source, pure-Rust client) | ✅ Shipped (trigger) |
+| `sqs` | AWS SQS long-poll consumer + SNS publisher (SigV4 manual) | ✅ Shipped (trigger) |
+| `imap` | IMAP mailbox polling → email → AI workflows (pure-Rust: async-imap + tokio-rustls) | ✅ Shipped (trigger) |
 
-| Node | Description |
-|------|-------------|
-| `slack` | Slack API |
-| `discord` | Discord webhooks/bot |
-| `notion` | Notion API |
-| `airtable` | Airtable API |
-| `stripe` | Stripe payments |
-| `shopify` | Shopify API |
+### Roadmap Integrations (rujukan katalog Monid — direct API, bukan aggregator)
+
+Katalog Monid (monid.ai/tools) dijadikan rujukan permintaan pasaran; integrasi dibina direct ke API service (BYOK), BUKAN guna Monid sebagai backend. Batch 13-Ogo-2026 sudah shipped: `exa`, `apollo`, `pdl`, `coingecko`, `defillama`, `stablecoins`, `yields`, `elevenlabs`, `browserbase`, `apify`. Batch 16-Ogo-2026 shipped: `runware`, `meta-graph`. Calon seterusnya:
+
+| Kelas | Calon | Nota |
+|-------|-------|------|
+| Media/AI | `minimax` | Speech & generative |
+| Sosial | `reddit`, `tiktok` | Platform social (OAuth); FB/IG diliputi `meta-graph` |
+| Blockchain | `quicknode` | RPC/data access |
+
+---
 
 ---
 
@@ -464,6 +504,25 @@ impl Executor {
     }
 }
 ```
+
+### Job Queue & Distributed Workers
+
+For decoupled, retryable background execution, r8r ships a job queue layer (`src/queue/`):
+
+- **`JobQueue` trait** — backend-agnostic (`enqueue`/`dequeue`/`ack`/`requeue`/`pending_len`/`requeue_stale`).
+- **`MemoryQueue`** — in-process FIFO (default; zero dependencies; used in tests).
+- **`RedisQueue`** — reliable producer/consumer via `BRPOPLPUSH` (`--features redis`). Pending and in-flight jobs live in separate lists; crashed workers are recovered through `requeue_stale` on startup. Key names: `r8r:queue:<name>:pending` / `:processing`.
+- **`Worker`** — dequeue → load workflow → execute → ack/requeue loop, with graceful shutdown and bounded retries (`MAX_ATTEMPTS = 3`). Executions reuse the normal `Executor` + storage, so node behavior is identical to direct runs.
+- **CLI** — `r8r enqueue <workflow>` pushes runs; `r8r worker [-c N] [--once]` consumes them. Backend resolution: `--redis-url` flag > `R8R_REDIS_URL` > `REDIS_URL` > in-memory fallback.
+
+```
+┌──────────┐   enqueue    ┌──────────────────┐   dequeue    ┌──────────────┐
+│ Producer │ ───────────► │  Job Queue       │ ───────────► │  Worker(s)   │
+│ (CLI/cron│             │  (Memory|Redis)  │              │  ─ Executor  │
+│  /API)   │              └──────────────────┘              └──────────────┘
+```
+
+Design notes: at-least-once semantics with bounded retry (idempotency keys on `RunJob` enable safe consumers); distributed workers share a Redis-backed queue; `MemoryQueue` is intentionally per-process (suited for embedded/single-binary deployments).
 
 ### Retry & Error Handling
 
@@ -661,6 +720,7 @@ r8r/
 │   ├── sandbox/             # Code execution sandbox
 │   │   ├── mod.rs           # SandboxBackend trait, types, errors
 │   │   ├── subprocess.rs    # SubprocessBackend (feature: sandbox)
+│   │   ├── wasm.rs          # WasmSandbox (feature: sandbox-wasm)
 │   │   ├── docker.rs        # DockerBackend (feature: sandbox-docker)
 │   │   └── firecracker.rs   # FirecrackerBackend (feature: sandbox-firecracker)
 │   ├── triggers/            # Trigger implementations
@@ -679,9 +739,11 @@ r8r/
 │   └── config/              # Configuration
 │       ├── mod.rs
 │       └── types.rs
-├── ui/                      # React frontend (optional)
+├── ui/                      # React frontend (optional) — Vite + React 19 + ReactFlow 11
 │   ├── package.json
 │   └── src/
+│       ├── components/      # VisualWorkflowCanvas (ReactFlow), TriggerEditor (trigger config), WorkflowEditor (guided/visual)
+│       └── lib/workflowYaml.ts  # definition ↔ canvas converters (js-yaml)
 ├── examples/                # Example workflows
 │   ├── order-notification.yaml
 │   └── inventory-alert.yaml

@@ -76,6 +76,10 @@ pub struct CredentialStore {
     /// Master key for encryption (not serialized, zeroized on drop)
     #[serde(skip)]
     master_key: Option<SecureMasterKey>,
+    /// Test-only override for where the store is persisted (never serialized).
+    #[serde(skip)]
+    #[doc(hidden)]
+    path_override: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for CredentialStore {
@@ -94,6 +98,11 @@ impl CredentialStore {
     /// Get the path to the credentials file.
     pub fn path() -> PathBuf {
         Config::data_dir().join("credentials.json")
+    }
+
+    /// Resolve the path this store writes to (honors test path_override).
+    fn effective_path(&self) -> PathBuf {
+        self.path_override.clone().unwrap_or_else(Self::path)
     }
 
     /// Get the path to the master key file.
@@ -218,7 +227,7 @@ impl CredentialStore {
 
     /// Save credentials to disk.
     pub async fn save(&self) -> Result<()> {
-        let path = Self::path();
+        let path = self.effective_path();
 
         let content = serde_json::to_string_pretty(&self)
             .map_err(|e| Error::Storage(format!("Failed to serialize credentials: {}", e)))?;
@@ -464,7 +473,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_credential_roundtrip() {
-        let mut store = CredentialStore::default();
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = CredentialStore {
+            path_override: Some(tmp.path().join("credentials.json")),
+            ..CredentialStore::default()
+        };
         store
             .set("test-service", Some("api_key"), "secret123")
             .await
@@ -496,8 +509,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_encrypted_credential_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
         let mut store = CredentialStore {
             master_key: Some(SecureMasterKey::new(vec![0u8; 32])),
+            path_override: Some(tmp.path().join("credentials.json")),
             ..CredentialStore::default()
         };
 
@@ -517,7 +532,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_migration() {
-        let mut store = CredentialStore::default();
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = CredentialStore {
+            path_override: Some(tmp.path().join("credentials.json")),
+            ..CredentialStore::default()
+        };
 
         // Create a legacy credential (no master key)
         store

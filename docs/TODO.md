@@ -55,6 +55,11 @@
 - [x] Workflow import/export CLI
 - [x] REST Approval API — CRUD endpoints (`GET/POST /api/approvals`) for human-in-the-loop without MCP
 
+### HTTP Node & AI Ops (18-Ogo-2026)
+- [x] HTTP node `body_type: multipart` — data URI → binary file part (filename ikut MIME), text/other → text part, null di-skip
+- [x] OpenAI `transcribe_audio` op — whisper-1 via `/audio/transcriptions` (multipart) → voice message → transcription pipeline
+- [x] 7 contoh workflows dalam `examples/` — voice-note-transcription, negative-review-to-ticket (filter node), 5 compliance templates (regulation-impact, document-check, cross-check, gap-analysis, evidence-mapping) — n8n coverage **88/88 = 100%**
+
 ### Workflow Features
 - [x] Workflow templates/blueprints (5 built-in, custom templates supported)
 - [x] Parameterized workflows (with type validation & defaults)
@@ -74,6 +79,7 @@
 ### UI & Developer Experience
 - [x] Web dashboard for monitoring
 - [x] Visual workflow editor
+- [x] Visual editor upgrade: open/edit existing workflows (YAML→canvas via js-yaml), full 30-node palette, trigger config (manual/cron/webhook/event), JSON node config panel
 - [x] Non-builder dashboard UX (overview, runs, approvals, audit)
 - [x] Guided workflow studio (template + plain-language form + publish)
 - [x] CLI autocomplete
@@ -196,13 +202,14 @@ Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style
 ## Backlog
 
 ### Event Triggers
-- [ ] Kafka consumer trigger
-- [ ] SQS/SNS triggers
+- [x] Kafka consumer trigger
+- [x] SQS/SNS triggers
+- [x] IMAP mailbox polling trigger (pure-Rust: async-imap + tokio-rustls)
 
 ### Node Types
-- [ ] `discord` - Discord messaging
-- [ ] `google-sheets` - Google Sheets integration
-- [ ] `telegram` - Telegram Bot API
+- [x] `discord` - Discord messaging
+- [x] `google-sheets` - Google Sheets integration
+- [x] `telegram` - Telegram Bot API
 
 ### Sandbox v2
 - [x] File artifacts — `collect_artifacts: true` + `R8R_OUTPUT_DIR` env; collected per-execution in subprocess and Docker backends
@@ -210,12 +217,12 @@ Adopt a safer agent-native CLI flow without drifting into Temporal/Inngest-style
 - [x] Package caching — `packages: [...]` in sandbox node config; pip/npm install prefix for subprocess and Docker; `image:` override for custom Docker images
 - [ ] Warm pools — pre-started containers/VMs for sub-100ms cold starts (backlogged)
 - [ ] Firecracker guest agent reference implementation
-- [ ] WASM backend (`sandbox-wasm`) — for trusted, high-frequency tool execution
+- [x] WASM backend (`sandbox-wasm`) — for trusted, high-frequency tool execution; wasmtime in-process, base64 wasm32-wasi modules, epoch-based timeout, artifact dir preopen at `/`
 
 ### Scalability
-- [ ] Distributed execution (multiple workers)
+- [x] Distributed execution (multiple workers)
 - [x] PostgreSQL storage backend (`--features storage-postgres`, `Storage` trait, `Arc<dyn Storage>` everywhere)
-- [ ] Redis-based job queue
+- [x] Redis-based job queue
 
 ### Deployment & Operations (Self-Hosted)
 - [x] AWS ECS/Fargate reference architecture for per-client deployments (one service per client)
@@ -251,7 +258,7 @@ The following features are intentionally **not** on the roadmap to maintain r8r'
 We welcome contributions! Pick an item from "Planned" or "Backlog" and open an issue to discuss before starting work.
 
 Priority areas (next):
-1. New node types — discord, telegram, google-sheets
-2. New triggers — Kafka, SQS/SNS
-3. Scalability — distributed workers, Redis job queue
+1. New node types — discord, telegram, google-sheets ✅
+2. New triggers — Kafka, SQS/SNS, IMAP ✅
+3. Scalability — distributed workers, Redis job queue ✅
 4. Enterprise — multi-tenancy, RBAC, SSO

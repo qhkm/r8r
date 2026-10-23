@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "js-yaml": "^4.3.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-syntax-highlighter": "^16.1.0",

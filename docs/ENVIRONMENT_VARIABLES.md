@@ -148,6 +148,22 @@ export R8R_MAX_CONCURRENT_REQUESTS=500
 export R8R_MAX_REQUEST_BODY_BYTES=10485760  # 10 MiB
 ```
 
+## WhatsApp Cloud API
+
+These settings apply only when built with `--features whatsapp-inbound`.
+
+### `WHATSAPP_VERIFY_TOKEN`
+
+**Default**: None
+
+**Description**: Required shared token for Meta's `GET /webhooks/whatsapp` verification handshake. Requests are rejected when it is unset or does not match.
+
+### `WHATSAPP_APP_SECRET`
+
+**Default**: None
+
+**Description**: Meta app secret used to verify `X-Hub-Signature-256` on inbound webhook requests. Optional, but strongly recommended; unsigned requests are accepted with a warning when it is unset.
+
 ---
 
 ## Request Tracing

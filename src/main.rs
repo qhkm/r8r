@@ -6,6 +6,7 @@
  */
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{generate, Shell};
+use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
@@ -95,6 +96,18 @@ enum Commands {
         /// so the next `r8r chat` picks up the new [llm] settings.
         #[arg(long, conflicts_with = "resume")]
         reset: bool,
+        /// Max LLM cost per turn in USD (guardrail)
+        #[arg(long, value_name = "USD")]
+        max_cost: Option<f64>,
+        /// Max LLM cost per session in USD (guardrail)
+        #[arg(long, value_name = "USD")]
+        max_cost_per_session: Option<f64>,
+        /// Allowlist tool name (repeatable; when set, only these tools run)
+        #[arg(long, value_name = "TOOL")]
+        allow_tool: Vec<String>,
+        /// Denylist tool name (repeatable; always blocked)
+        #[arg(long, value_name = "TOOL")]
+        deny_tool: Vec<String>,
     },
     /// Generate or refine a workflow from a natural language description (shorthand)
     Prompt {
@@ -243,6 +256,35 @@ enum Commands {
     Migrate {
         #[command(subcommand)]
         command: MigrateCommand,
+    },
+    /// Enqueue a workflow run into the job queue (processed by `r8r worker`)
+    Enqueue {
+        /// Workflow name or ID
+        name: String,
+        /// JSON input data
+        #[arg(short, long)]
+        input: Option<String>,
+        /// Pin a specific workflow version (default: latest)
+        #[arg(long)]
+        version: Option<u32>,
+        /// Idempotency key — duplicate keys are rejected
+        #[arg(long)]
+        idempotency_key: Option<String>,
+        /// Redis URL (defaults to REDIS_URL env var)
+        #[arg(long)]
+        redis_url: Option<String>,
+    },
+    /// Run a distributed worker that consumes jobs from the queue
+    Worker {
+        /// Number of concurrent consumers (default: 4)
+        #[arg(short, long, default_value_t = 4)]
+        concurrency: usize,
+        /// Redis URL (defaults to REDIS_URL env var)
+        #[arg(long)]
+        redis_url: Option<String>,
+        /// Process one job then exit (useful for cron/systemd)
+        #[arg(long)]
+        once: bool,
     },
 }
 
@@ -597,8 +639,25 @@ async fn run_command(
     output: &r8r::cli::output::Output,
 ) -> anyhow::Result<()> {
     match command {
-        None => cmd_chat(None, false).await?,
-        Some(Commands::Chat { resume, reset }) => cmd_chat(resume, reset).await?,
+        None => cmd_chat(None, false, None, None, vec![], vec![]).await?,
+        Some(Commands::Chat {
+            resume,
+            reset,
+            max_cost,
+            max_cost_per_session,
+            allow_tool,
+            deny_tool,
+        }) => {
+            cmd_chat(
+                resume,
+                reset,
+                max_cost,
+                max_cost_per_session,
+                allow_tool,
+                deny_tool,
+            )
+            .await?
+        }
         Some(Commands::Workflows { action }) => match action {
             WorkflowActions::List => cmd_workflows_list(output).await?,
             WorkflowActions::Create { file } => cmd_workflows_create(&file, output).await?,
@@ -776,6 +835,29 @@ async fn run_command(
                 cmd_migrate_n8n(&file, output.as_deref(), &format)?;
             }
         },
+        Some(Commands::Enqueue {
+            name,
+            input,
+            version,
+            idempotency_key,
+            redis_url,
+        }) => {
+            cmd_enqueue(
+                &name,
+                input.as_deref(),
+                version,
+                idempotency_key.as_deref(),
+                redis_url.as_deref(),
+            )
+            .await?;
+        }
+        Some(Commands::Worker {
+            concurrency,
+            redis_url,
+            once,
+        }) => {
+            cmd_worker(concurrency, redis_url.as_deref(), once).await?;
+        }
     }
 
     Ok(())
@@ -835,7 +917,14 @@ fn cmd_completions(shell: CompletionShell) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_chat(resume: Option<String>, reset: bool) -> anyhow::Result<()> {
+async fn cmd_chat(
+    resume: Option<String>,
+    reset: bool,
+    max_cost: Option<f64>,
+    max_cost_per_session: Option<f64>,
+    allow_tool: Vec<String>,
+    deny_tool: Vec<String>,
+) -> anyhow::Result<()> {
     if reset {
         let storage = get_storage()?;
         storage.delete_repl_llm_config().await?;
@@ -844,7 +933,21 @@ async fn cmd_chat(resume: Option<String>, reset: bool) -> anyhow::Result<()> {
         );
         return Ok(());
     }
-    r8r::repl::run_repl(resume).await
+    let cli_guardrails = if max_cost.is_some()
+        || max_cost_per_session.is_some()
+        || !allow_tool.is_empty()
+        || !deny_tool.is_empty()
+    {
+        Some(r8r::repl::guardrails::GuardrailsConfig {
+            allow_tools: allow_tool,
+            deny_tools: deny_tool,
+            max_cost_per_turn: max_cost,
+            max_cost_per_session,
+        })
+    } else {
+        None
+    };
+    r8r::repl::run_repl(resume, cli_guardrails).await
 }
 
 // ============================================================================
@@ -2225,6 +2328,20 @@ fn build_registry() -> r8r::nodes::NodeRegistry {
                     Arc::new(SubprocessBackend::new())
                 }
             }
+            #[cfg(feature = "sandbox-wasm")]
+            "wasm" => match r8r::sandbox::WasmSandbox::new() {
+                Ok(wb) => {
+                    tracing::info!("Using WASM sandbox backend");
+                    Arc::new(wb)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "WASM sandbox init failed: {}. Falling back to subprocess.",
+                        e
+                    );
+                    Arc::new(SubprocessBackend::new())
+                }
+            },
             _ => Arc::new(SubprocessBackend::new()),
         };
 
@@ -4473,6 +4590,140 @@ fn cmd_migrate_n8n(
             eprintln!("Written to {:?}", path);
         }
         None => print!("{}", full_output),
+    }
+
+    Ok(())
+}
+
+/// Resolve the queue backend: Redis when a URL is available (and the feature
+/// is enabled), otherwise an in-process MemoryQueue.
+///
+/// CLI flag wins over `R8R_REDIS_URL` env var, which wins over `REDIS_URL`.
+/// Returns the queue plus a human-readable backend name for CLI output.
+fn resolve_queue_backend(
+    redis_url: Option<&str>,
+) -> anyhow::Result<(Arc<dyn r8r::queue::JobQueue>, &'static str)> {
+    let candidate = redis_url
+        .map(str::to_string)
+        .or_else(|| std::env::var("R8R_REDIS_URL").ok())
+        .or_else(|| std::env::var("REDIS_URL").ok());
+    match candidate {
+        Some(url) => {
+            #[cfg(feature = "redis")]
+            {
+                let queue = r8r::queue::redis::RedisQueue::new(&url)
+                    .map_err(|e| anyhow::anyhow!("Redis queue init failed: {e}"))?;
+                Ok((Arc::new(queue), "redis"))
+            }
+            #[cfg(not(feature = "redis"))]
+            {
+                anyhow::bail!(
+                    "Redis URL provided ({url}) but r8r was built without the `redis` feature. \
+                     Rebuild with `--features redis` or drop the URL to use the in-memory queue."
+                );
+            }
+        }
+        None => Ok((Arc::new(r8r::queue::memory::MemoryQueue::new()), "memory")),
+    }
+}
+
+/// `r8r enqueue <workflow> [--input JSON] [--version N] [--idempotency-key KEY]`
+///
+/// Pushes a workflow run onto the shared job queue. A worker (`r8r worker`)
+/// picks it up and executes it — possibly on a different machine when the
+/// queue is Redis-backed.
+async fn cmd_enqueue(
+    name: &str,
+    input: Option<&str>,
+    version: Option<u32>,
+    idempotency_key: Option<&str>,
+    redis_url: Option<&str>,
+) -> anyhow::Result<()> {
+    let storage = get_storage()?;
+    let stored = storage
+        .get_workflow(name)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Workflow '{}' not found", name))?;
+
+    // Resolve the version to pin: explicit flag, else latest.
+    let resolved_version = match version {
+        Some(v) => Some(v),
+        None => {
+            storage
+                .get_latest_workflow_version_number(&stored.id)
+                .await?
+        }
+    };
+
+    let input_value: serde_json::Value = match input {
+        Some(raw) => serde_json::from_str(raw)
+            .map_err(|e| anyhow::anyhow!("Invalid JSON in --input: {e}"))?,
+        None => serde_json::Value::Null,
+    };
+
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let mut job = r8r::queue::RunJob::new(
+        job_id.clone(),
+        stored.id.clone(),
+        resolved_version,
+        input_value,
+    )
+    .with_origin("cli");
+    if let Some(key) = idempotency_key {
+        job = job.with_idempotency_key(key);
+    }
+
+    let (queue, backend) = resolve_queue_backend(redis_url)?;
+    queue.enqueue(job).await?;
+
+    println!("Enqueued job {job_id}");
+    println!(
+        "  workflow: {} (v{})",
+        stored.name,
+        resolved_version.unwrap_or(1)
+    );
+    if let Some(key) = idempotency_key {
+        println!("  idempotency-key: {key}");
+    }
+    println!("  queue backend: {backend}");
+
+    Ok(())
+}
+
+/// `r8r worker [--concurrency N] [--redis-url URL] [--once]`
+///
+/// Starts a worker that consumes jobs from the shared queue. Runs until
+/// interrupted (Ctrl-C for graceful shutdown). With `--once`, processes at
+/// most one job then exits — handy for cron-driven workers.
+async fn cmd_worker(concurrency: usize, redis_url: Option<&str>, once: bool) -> anyhow::Result<()> {
+    use r8r::queue::worker::Worker;
+    use std::sync::Arc;
+
+    let storage = Arc::new(get_storage()?);
+    let registry = build_registry();
+    let (queue, backend) = resolve_queue_backend(redis_url)?;
+
+    let mut worker = Worker::new(queue.clone(), storage.clone(), registry, concurrency);
+
+    if once {
+        println!("worker (single-shot): waiting for a job...");
+        match worker
+            .process_one(std::time::Duration::from_secs(1))
+            .await?
+        {
+            true => println!("1 job processed"),
+            false => println!("no jobs in queue; exiting"),
+        }
+        return Ok(());
+    }
+
+    println!("worker started: {concurrency} consumer(s), backend: {backend}");
+    worker.run().await?;
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            println!("\nshutting down gracefully...");
+            worker.shutdown().await;
+        }
     }
 
     Ok(())

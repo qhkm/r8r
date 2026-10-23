@@ -1,0 +1,48 @@
+version: 1
+name: runware
+display_name: Runware
+description: Runware — one API for image, video, audio, 3D & text generation (BYOK, hundreds of models incl. bytedance:seedance, klingai:kling-video, lightricks:ltx, bfl:flux)
+base_url: https://api.runware.ai/v1
+docs_url: https://runware.ai/docs/llms.txt
+
+auth:
+  methods:
+    - type: bearer
+      description: "Runware API key (from https://runware.ai/signup → API Keys) — sent as `Authorization: Bearer <API_KEY>`"
+
+headers:
+  Content-Type: application/json
+
+operations:
+  generate_video:
+    description: Generate video(s). Body = JSON array of task objects (taskType videoInference). Use deliveryMethod:async + webhookURL/get_response for long videos
+    method: POST
+    path: ""
+    params:
+      tasks:
+        required: true
+        type: array
+        description: "JSON array of videoInference tasks, e.g. [{taskType: videoInference, taskUUID: <uuid-v4>, model: bytedance:seedance@2.5, positivePrompt: ..., width: 1920, height: 1080, duration: 8, deliveryMethod: async}] — whole body dihantar terus"
+    body: "{{ params.tasks }}"
+
+  generate_image:
+    description: Generate image(s). Body = JSON array of task objects (taskType imageInference)
+    method: POST
+    path: ""
+    params:
+      tasks:
+        required: true
+        type: array
+        description: "JSON array of imageInference tasks, e.g. [{taskType: imageInference, taskUUID: <uuid-v4>, model: xai:grok-imagine@image-quality, positivePrompt: ..., width: 1024, height: 1024, numberResults: 1}] — whole body dihantar terus"
+    body: "{{ params.tasks }}"
+
+  get_response:
+    description: "Poll status/results of an async task (status: processing|success|error; includes videoURL/imageURL when done)"
+    method: POST
+    path: ""
+    params:
+      tasks:
+        required: true
+        type: array
+        description: "JSON array with one getResponse task, e.g. [{taskType: getResponse, taskUUID: <uuid-v4>}] — whole body dihantar terus"
+    body: "{{ params.tasks }}"

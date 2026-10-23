@@ -22,11 +22,15 @@ This document describes all built-in node types available in r8r.
   - [Dedupe](#dedupe)
   - [Aggregate](#aggregate)
   - [Summarize](#summarize)
+  - [Document](#document)
 - [Integration Nodes](#integration-nodes)
   - [Agent](#agent)
   - [SubWorkflow](#subworkflow)
   - [Email](#email)
   - [Slack](#slack)
+  - [Telegram](#telegram)
+  - [Google Sheets](#google-sheets)
+  - [Discord](#discord)
   - [Database](#database)
   - [S3](#s3)
   - [Sandbox](#sandbox)
@@ -72,11 +76,36 @@ nodes:
 | `url` | string | Yes | - | URL to request |
 | `method` | string | No | GET | HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD) |
 | `headers` | object | No | - | HTTP headers |
-| `body` | any | No | - | Request body (JSON) |
+| `body` | any | No | - | Request body (JSON; untuk multipart: object, lihat `body_type`) |
+| `body_type` | string | No | json | `json` \| `form` (urlencoded) \| `multipart` |
 | `timeout_seconds` | number | No | 30 | Request timeout |
 | `raw_response` | boolean | No | false | Return raw text instead of parsing JSON |
 | `credential` | string | No | - | Credential name from credential store |
 | `auth_type` | string | No | bearer | Authentication type (bearer, basic, api_key, header:name) |
+
+**Body modes**:
+
+- `json` (default) — body dihantar sebagai JSON (`Content-Type: application/json`).
+- `form` — body object → `application/x-www-form-urlencoded`.
+- `multipart` — body object → `multipart/form-data`. String yang bermula
+  `data:<mime>;base64,<...>` menjadi binary file part (filename dijana dari MIME,
+  cth. `data:audio/ogg;base64,...` → `file0.ogg`); nilai lain menjadi text part;
+  `null` di-skip. Sesuai untuk OpenAI Whisper / upload fail.
+
+```yaml
+nodes:
+  - id: transcribe
+    type: http
+    config:
+      url: "https://api.openai.com/v1/audio/transcriptions"
+      method: POST
+      headers:
+        Authorization: "Bearer {{ env.OPENAI_API_KEY }}"
+      body_type: multipart
+      body:
+        model: whisper-1
+        file: "{{ input.audio_data_uri }}"
+```
 
 **Output**:
 
@@ -514,6 +543,59 @@ nodes:
 
 ---
 
+### Document
+
+Extract text from a digital PDF locally or transcribe a scan/photo with an OpenAI-compatible vision model. This node is available when the `document` feature is enabled; it is included in the default feature set.
+
+**Type**: `document`
+
+```yaml
+# Extract the text layer from the first IMAP attachment without an API call.
+- id: extract-pdf
+  type: document
+  config:
+    data_field: attachments.0.data
+    mode: pdf_text
+    max_pages: 200
+
+# OCR an image with a BYOK OpenAI-compatible endpoint.
+- id: ocr-scan
+  type: document
+  config:
+    data_field: attachments.0.data
+    mode: vision
+    mime: image/png
+    output: json
+    prompt: "Return a JSON object containing the invoice number and total."
+    provider: openai
+    model: gpt-4o-mini
+    credential: openai
+```
+
+Exactly one of `data`, `data_field`, or `url` must be set. `data` and values resolved through `data_field` use standard base64 encoding. Dotted paths can traverse objects and arrays, such as `attachments.0.data`; JSON-string node input is parsed before path resolution.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `data` | string | One source | - | Base64-encoded document bytes |
+| `data_field` | string | One source | - | Dotted path to base64 data in node input |
+| `url` | string | One source | - | URL to download, bounded by `max_bytes` |
+| `mode` | string | Yes | - | `pdf_text` or `vision` |
+| `max_pages` | integer | No | `200` | Maximum PDF pages extracted |
+| `prompt` | string | No | Verbatim transcription instruction | Vision extraction instruction |
+| `output` | string | No | `text` | `text` or strict `json` vision response |
+| `provider` | string | No | `openai` | `openai` or an OpenAI-compatible `custom` provider |
+| `model` | string | No | `gpt-4o-mini` | Vision model name |
+| `api_url` | string | Custom only | OpenAI chat completions URL | API endpoint; required for `custom` |
+| `credential` | string | No | `openai`, then `llm` | Credential resolved through workflow BYOK credentials |
+| `mime` | string | No | `application/octet-stream` | MIME type used in the vision data URI |
+| `max_bytes` | integer | No | `10485760` | Maximum decoded or downloaded input size |
+
+`pdf_text` is local, deterministic, and intended for PDFs with a text layer. A scanned PDF can legitimately return empty page text; route that result to `vision` when OCR is needed. Its output contains `text`, per-page `pages`, `page_count`, and `source: pdf_text`.
+
+`vision` sends a chat-completions request containing a text part and an `image_url` data URI. Its output contains `text`, `source: vision`, `model`, and provider `usage`. With `output: json`, parsed object data is also returned under `json`; invalid or non-object model output produces `json: null` while preserving the raw `text`.
+
+---
+
 ## Integration Nodes
 
 ### Agent
@@ -629,6 +711,82 @@ nodes:
 
 ---
 
+### Built-in Integration Services
+
+Service definitions deklaratif (YAML) dalam `src/integrations/builtin/` — dipanggil dari workflow melalui node integration (`service` + `operation` + `params`). Senarai penuh service `r8r integrations list` / API `GET /integrations`.
+
+**Configuration**:
+
+```yaml
+nodes:
+  - id: notify-telegram
+    type: integration
+    config:
+      service: telegram
+      operation: send_message
+      credential: telegram_bot
+      params:
+        chat_id: "{{ input.chat_id }}"
+        text: "Order #{{ input.order_id }} diterima ✅"
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `service` | string | Yes | Nama service (rujuk senarai bawah) |
+| `operation` | string | Yes | Operation yang tersedia untuk service tersebut |
+| `credential` | string | No | Nama credential dalam credential store (fallback: nama service) |
+| `params` | object | No | Parameter operation (template `{{ input }}`, `{{ nodes.* }}` disokong) |
+
+**Built-in services (32)**:
+
+| Service | Deskripsi ringkas | Ops contoh |
+|---------|-------------------|------------|
+| `github` | GitHub API | repos, issues, PR |
+| `slack` | Slack API | post message, reply |
+| `openai` | LLM API | chat completion, embeddings |
+| `stripe` | Payments | charges, customers |
+| `notion` | Notion API | pages, databases |
+| `telegram` | Bot API | send_message, send_photo, edit_message_text, delete_message, forward_message, set_webhook, get_updates |
+| `whatsapp` | Cloud API (Graph v21.0) | send_text, send_template, send_image, get_phone_numbers |
+| `google-sheets` | Spreadsheets | get/append/update values, create_spreadsheet |
+| `airtable` | Airtable API | CRUD records, list_bases |
+| `discord` | Bot (`Authorization: Bot <token>`) | send/edit/delete message, get_guilds |
+| `resend` | Email API | send_email |
+| `twilio` | SMS/WhatsApp (basic auth) | send_sms, send_whatsapp |
+| `shopify` | Shopify Admin (base_url per-tenant) | orders, products |
+| `hubspot` | CRM API | contacts, companies |
+| `x` | X/Twitter API | post tweet, search |
+| `linkedin` | LinkedIn API | post share |
+| `youtube` | YouTube Data API (key dalam query) | search videos |
+| `google-drive` | Drive API | list, get files |
+| `google-calendar` | Calendar API | list/create events |
+| `typeform` | Typeform API | forms, responses |
+| `cal.com` | Cal.com API (key dalam query) | bookings |
+| `supabase` | PostgREST (base_url per-tenant) | insert, select |
+| `exa` | Web search & contents (x-api-key header) | search, get_contents |
+| `pdl` | People Data Labs (key dalam query) | person_enrich, person_search |
+| `apollo` | B2B people/company (X-Api-Key) | match_person, search_people, search_companies |
+| `coingecko` | Harga crypto (public, no auth) | get_price, search, trending |
+| `defillama` | Protocol TVL (public, no auth) | get_protocols, get_protocol |
+| `stablecoins` | DeFiLlama stablecoins (public) | get_stablecoins |
+| `yields` | DeFiLlama yield pools (public) | get_pools |
+| `elevenlabs` | TTS & voices (xi-api-key) | text_to_speech, list_voices, list_models |
+| `browserbase` | Headless browser (X-BB-API-Key) | create_session, list_sessions, get_session, get_session_logs, get_session_live_urls, update_session |
+| `apify` | Scraping actors & datasets (Bearer) | run_actor, get_run, list_runs, get_dataset_items |
+| `runware` | Image/video/audio/3D gen — Seedance, Kling, Flux (Bearer) | generate_video, generate_image, get_response |
+| `meta-graph` | Meta Graph API v21: FB/IG pages, posts, ads (OAuth2/Bearer) | get_me, list_pages, publish_post, publish_photo, list_ad_accounts, list_campaigns, create_campaign |
+
+**Nota auth**:
+- Telegram letak token dalam path (`/bot{{ credential }}/sendMessage`) — credential wajib.
+- Discord credential mesti sertakan prefix `Bot <token>`.
+- Twilio credential format `AccountSID:AuthToken` (basic auth).
+- Google/shopify/supabase: base_url/header boleh template per-tenant.
+- `exa`/`elevenlabs` guna header nama khusus (`x-api-key`, `xi-api-key`), `browserbase` guna `X-BB-API-Key`, `apollo` guna `X-Api-Key` — credential disuntik automatik oleh `build_http_config` lepas `param` tersebut.
+- `defillama`, `stablecoins`, `yields` public — credential tak diperlukan.
+- `apify` run_actor: whole-body `input` dihantar terus sebagai actor input (tanpa wrapper).
+
+---
+
 ### Email
 
 Send emails via SMTP or API providers.
@@ -708,6 +866,124 @@ nodes:
 | `reply_broadcast` | boolean | No | Also post to channel when replying |
 | `webhook_url` | string | No | Webhook URL (alternative to token) |
 | `credential` | string | No | OAuth token credential name |
+
+---
+
+### Telegram
+
+Send messages to Telegram chats via the Bot API.
+
+**Type**: `telegram`
+
+**Configuration**:
+
+```yaml
+nodes:
+  - id: notify-telegram
+    type: telegram
+    config:
+      chat_id: "@my_channel"
+      text: "Order #{{ input.order_id }} diterima ✅"
+      parse_mode: "HTML"
+      disable_notification: false
+      credential: telegram_bot
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `chat_id` | string/number | Yes | Target chat ID (`@username` atau numeric) |
+| `text` | string | Yes | Message text |
+| `parse_mode` | string | No | `HTML` atau `MarkdownV2` |
+| `disable_notification` | boolean | No | Hantar tanpa bunyi |
+| `disable_web_page_preview` | boolean | No | Matikan link preview |
+| `reply_to_message_id` | number | No | Balas dalam thread |
+| `token` | string | No | Bot token (inline) |
+| `credential` | string | No | Credential name untuk bot token |
+
+**Output**: `{ success, message_id, chat, date }`
+
+---
+
+### Google Sheets
+
+Read, append, or update values in Google Sheets via Sheets API v4.
+
+**Type**: `google-sheets`
+
+**Configuration**:
+
+```yaml
+nodes:
+  - id: append-sheet
+    type: google-sheets
+    config:
+      action: append  # read, append, update
+      spreadsheet_id: "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+      range: "Sheet1!A1"
+      values:
+        - ["Nama", "Skor"]
+        - ["Ali", 90]
+      credential: google_sheets_oauth
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `action` | string | No | `read` (default), `append`, `update` |
+| `spreadsheet_id` | string | Yes | ID spreadsheet (dari URL) |
+| `range` | string | Yes | Range A1 notation (e.g., `Sheet1!A1:C10`) |
+| `values` | array | No* | Rows untuk append/update (*wajib untuk append/update) |
+| `token` | string | No | Access token (inline) |
+| `credential` | string | No | Credential name — OAuth2 access token diutamakan, plain token sebagai fallback |
+
+**Output** (read): `{ success, range, values: [[...]] }`
+**Output** (append/update): `{ success, updates: { updated_range, updated_rows } }`
+
+---
+
+### Discord
+
+Send messages to Discord channels via Bot API atau webhook.
+
+**Type**: `discord`
+
+**Configuration** (Bot token):
+
+```yaml
+nodes:
+  - id: notify-discord
+    type: discord
+    config:
+      channel_id: "123456789012345678"
+      text: "New order: {{ input.order_id }}"
+      embeds:
+        - title: "Report"
+          description: "Daily report sedia"
+          color: 3447003
+      credential: discord_bot
+```
+
+**Configuration** (webhook — tanpa token):
+
+```yaml
+nodes:
+  - id: notify-discord-webhook
+    type: discord
+    config:
+      webhook_url: "https://discord.com/api/webhooks/xxx/yyy"
+      text: "Hello from r8r!"
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel_id` | string | Yes* | Channel ID (*wajib jika guna bot token) |
+| `text` | string | Yes | Message content |
+| `embeds` | array | No | Rich embeds |
+| `token` | string | No | Bot token (inline) |
+| `credential` | string | No | Credential name untuk bot token — **nilai mesti sertakan prefix `Bot `** |
+| `webhook_url` | string | No | Webhook URL (alternative — tiada token diperlukan) |
+
+**Output** (api): `{ success, method: "api", channel_id, message_id }`
+**Output** (webhook): `{ success, method: "webhook" }`
 
 ---
 
@@ -842,7 +1118,7 @@ nodes:
   - id: compute
     type: sandbox
     config:
-      runtime: python3        # python3, node, bash
+      runtime: python3        # python3, node, bash, wasm (base64 module, sandbox-wasm feature)
       timeout_seconds: 30     # default: 30
       memory_mb: 256           # optional, enforced by Docker backend
       network: false           # default: false (no network access)
@@ -859,7 +1135,7 @@ nodes:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `runtime` | string | (required) | Runtime to use: `python3`, `node`, `bash` |
+| `runtime` | string | (required) | Runtime to use: `python3`, `node`, `bash`. With the `sandbox-wasm` feature, also `wasm` (code = base64 wasm32-wasi module). |
 | `code` | string | (required) | Code to execute (supports `{{ }}` templates) |
 | `timeout_seconds` | integer | `30` | Maximum execution time |
 | `memory_mb` | integer | none | Memory limit (Docker only) |

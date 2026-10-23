@@ -1,0 +1,91 @@
+# Compliance: Regulation Update → Affected Requirements
+#
+# When a regulation changes (e.g. a new CIDB/JKR circular), determine which
+# compliance requirements in the knowledge base are affected and flag the
+# impacted client profiles.
+#
+# Pattern: agent + RAG template. Point the agent at a law/reg KB via
+# retrieval (search node) or paste the update text + KB excerpt; the agent
+# maps to affected requirement IDs with structured output.
+#
+# Prerequisites:
+#   r8r credentials set openai <your-openai-key>
+#   r8r credentials set google-sheets <your-sheets-token>   # KB/registry
+
+name: compliance-regulation-impact
+description: Regulation update → affected requirements + impacted profiles
+version: 1
+
+triggers:
+  - type: webhook
+    path: /reg-update
+
+inputs:
+  update_text:
+    type: string
+    description: Teks pindaan/pekeliling baharu
+    required: true
+  regulation_ref:
+    type: string
+    description: Rujukan undang-undang (cth. LPA 1976 s.25A)
+    required: false
+
+nodes:
+  # 1) Ambil senarai keperluan semasa dari registry requirement (Google Sheets)
+  - id: fetch-requirements
+    type: integration
+    config:
+      service: google-sheets
+      operation: get_values
+      credential: google-sheets
+      params:
+        spreadsheet_id: "{{ env.REQ_REGISTRY_SHEET }}"
+        range: "requirements!A:F"
+
+  # 2) Agent menilai kesan terhadap setiap requirement
+  - id: impact-analysis
+    type: agent
+    config:
+      provider: openai
+      credential: openai
+      prompt: |
+        Pindaan peraturan berikut: {{ inputs.reg_update_text }}
+
+        Senarai keperluan semasa:
+        {{ nodes.fetch-requirements.output }}
+
+        Untuk setiap keperluan, tentukan sama ada terjejas oleh pindaan ini.
+        Jawab JSON sahaja.
+      response_format: json
+      json_schema:
+        type: object
+        required:
+          - affected
+          - unaffected
+        properties:
+          affected:
+            type: array
+            items:
+              type: object
+              properties:
+                req_id: { type: string }
+                action: { type: string, description: "kemaskini / gugur / baharu" }
+                reason: { type: string }
+          unaffected:
+            type: array
+            items: { type: string }
+    depends_on:
+      - fetch-requirements
+
+  # 3) Ringkasan siap untuk disemak
+  - id: summary
+    type: transform
+    config:
+      expression: |
+        ({
+          "regulation": inputs.reg_update_text,
+          "affected": nodes["impact-analysis"].output.affected,
+          "impacted_count": nodes["impact-analysis"].output.affected.length
+        })
+    depends_on:
+      - impact-analysis

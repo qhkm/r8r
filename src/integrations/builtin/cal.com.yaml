@@ -1,0 +1,90 @@
+version: 1
+name: cal.com
+display_name: Cal.com
+description: Cal.com API v1 — event types, bookings, availability
+base_url: https://api.cal.com/v1
+docs_url: https://cal.com/docs/enterprise-features/api
+
+auth:
+  methods:
+    - type: api_key
+      description: Cal.com API key (created at https://app.cal.com/settings/developer/api-keys) — sent as `apiKey` query param
+
+operations:
+  list_event_types:
+    description: List all event types
+    method: GET
+    path: /event-types
+    params:
+      user: { required: false, type: string, description: "Username to filter by" }
+    query:
+      apiKey: "{{ credential }}"
+      username: "{{ params.user }}"
+
+  get_event_type:
+    description: Fetch a single event type
+    method: GET
+    path: /event-types/{{ params.id }}
+    params:
+      id: { required: true, type: integer }
+    query:
+      apiKey: "{{ credential }}"
+
+  list_bookings:
+    description: List bookings
+    method: GET
+    path: /bookings
+    params:
+      status: { required: false, type: string, enum: [upcoming, past, cancelled] }
+      user: { required: false, type: string }
+      from: { required: false, type: string, description: "YYYY-MM-DD" }
+      to: { required: false, type: string }
+    query:
+      apiKey: "{{ credential }}"
+      status: "{{ params.status }}"
+      user: "{{ params.user }}"
+      from: "{{ params.from }}"
+      to: "{{ params.to }}"
+
+  get_booking:
+    description: Fetch a single booking
+    method: GET
+    path: /bookings/{{ params.id }}
+    params:
+      id: { required: true, type: integer }
+    query:
+      apiKey: "{{ credential }}"
+
+  create_booking:
+    description: Create a booking (schedules an appointment)
+    method: POST
+    path: /bookings
+    params:
+      event_type_id: { required: true, type: integer }
+      attendee_name: { required: true, type: string }
+      attendee_email: { required: true, type: string }
+      start: { required: true, type: string, description: "ISO date-time, e.g. 2026-08-20T10:00:00.000Z" }
+      end: { required: true, type: string }
+      location: { required: false, type: string, default: integrations:cal:default, description: "Location type, e.g. integrations:google:meet" }
+      notes: { required: false, type: string }
+    body:
+      eventTypeId: "{{ params.event_type_id }}"
+      name: "{{ params.attendee_name }}"
+      email: "{{ params.attendee_email }}"
+      start: "{{ params.start }}"
+      end: "{{ params.end }}"
+      location: "{{ params.location }}"
+      notes: "{{ params.notes }}"
+
+  get_availability:
+    description: Fetch user availability slots for a day
+    method: GET
+    path: /availability/{{ params.user_id }}
+    params:
+      user_id: { required: true, type: integer }
+      date_from: { required: true, type: string, description: "YYYY-MM-DD" }
+      date_to: { required: true, type: string }
+    query:
+      apiKey: "{{ credential }}"
+      dateFrom: "{{ params.date_from }}"
+      dateTo: "{{ params.date_to }}"

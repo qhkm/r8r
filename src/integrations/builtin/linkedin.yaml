@@ -1,0 +1,66 @@
+version: 1
+name: linkedin
+display_name: LinkedIn
+description: LinkedIn API v2 — profile, posts, company pages
+base_url: https://api.linkedin.com/v2
+docs_url: https://learn.microsoft.com/en-us/linkedin/
+
+auth:
+  methods:
+    - type: bearer
+      description: LinkedIn access token (OAuth2 user token with w_member_social scope)
+
+headers:
+  Content-Type: application/json
+  X-Restli-Protocol-Version: "2.0.0"
+
+operations:
+  get_me:
+    description: Get the authenticated user's profile
+    method: GET
+    path: /userinfo
+    params: {}
+
+  get_own_profile:
+    description: Get own profile (legacy v2 endpoint)
+    method: GET
+    path: /me
+    params:
+      fields: { required: false, type: string, description: "Comma-separated projection, e.g. id,localizedFirstName" }
+    query:
+      projection: "({{ params.fields }})"
+
+  create_post:
+    description: Create a text post on LinkedIn
+    method: POST
+    path: /rest/posts
+    params:
+      author: { required: true, type: string, description: "Author URN, e.g. urn:li:person:abc123" }
+      commentary: { required: true, type: string, description: "Post text" }
+      visibility: { required: false, type: string, default: PUBLIC, enum: [PUBLIC, LOGGED_IN, CONNECTIONS] }
+    body:
+      author: "{{ params.author }}"
+      commentary: "{{ params.commentary }}"
+      distribution:
+        feedDistribution: MAIN_FEED
+        targetEntities: []
+      visibility: "{{ params.visibility }}"
+      lifecycleState: PUBLISHED
+      isReshareDisabledByAuthor: false
+
+  get_company:
+    description: Fetch company details
+    method: GET
+    path: /organizations/{{ params.company_id }}
+    params:
+      company_id: { required: true, type: string, description: "Company URN ID" }
+
+  search_companies:
+    description: Search companies (via company lookup)
+    method: GET
+    path: /companySearch
+    params:
+      query: { required: true, type: string }
+    query:
+      q: criteria
+      companyName: "{{ params.query }}"

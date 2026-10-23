@@ -1,0 +1,92 @@
+version: 1
+name: google-calendar
+display_name: Google Calendar
+description: Google Calendar API v3 — events, calendars, availability
+base_url: https://www.googleapis.com/calendar/v3
+docs_url: https://developers.google.com/calendar/api/reference
+
+auth:
+  methods:
+    - type: oauth2
+      authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+      token_url: https://oauth2.googleapis.com/token
+      scopes: [https://www.googleapis.com/auth/calendar.events]
+      flows: [local_callback]
+    - type: bearer
+      description: OAuth2 access token
+
+operations:
+  list_calendars:
+    description: List all calendars the user has access to
+    method: GET
+    path: /users/me/calendarList
+    params: {}
+
+  list_events:
+    description: List events in a calendar within a time range
+    method: GET
+    path: /calendars/{{ params.calendar_id }}/events
+    params:
+      calendar_id: { required: true, type: string, description: "Email of calendar or 'primary'" }
+      time_min: { required: false, type: string, description: "RFC3339 start, e.g. 2026-08-13T00:00:00+08:00" }
+      time_max: { required: false, type: string }
+      max_results: { required: false, type: integer, default: 100 }
+      order_by: { required: false, type: string, default: startTime, enum: [startTime, updated] }
+      single_events: { required: false, type: boolean, default: true }
+    query:
+      timeMin: "{{ params.time_min }}"
+      timeMax: "{{ params.time_max }}"
+      maxResults: "{{ params.max_results }}"
+      orderBy: "{{ params.order_by }}"
+      singleEvents: "{{ params.single_events }}"
+
+  create_event:
+    description: Create a new calendar event
+    method: POST
+    path: /calendars/{{ params.calendar_id }}/events
+    params:
+      calendar_id: { required: true, type: string }
+      summary: { required: true, type: string, description: "Event title" }
+      description: { required: false, type: string }
+      start: { required: true, type: string, description: "Start time RFC3339, e.g. 2026-08-13T10:00:00+08:00" }
+      end: { required: true, type: string, description: "End time RFC3339" }
+      location: { required: false, type: string }
+      attendees: { required: false, type: array, description: "List of email addresses" }
+    body:
+      summary: "{{ params.summary }}"
+      description: "{{ params.description }}"
+      location: "{{ params.location }}"
+      start: { dateTime: "{{ params.start }}" }
+      end: { dateTime: "{{ params.end }}" }
+      attendees: "{{ params.attendees }}"
+
+  get_event:
+    description: Fetch a single event
+    method: GET
+    path: /calendars/{{ params.calendar_id }}/events/{{ params.event_id }}
+    params:
+      calendar_id: { required: true, type: string }
+      event_id: { required: true, type: string }
+
+  delete_event:
+    description: Delete an event
+    method: DELETE
+    path: /calendars/{{ params.calendar_id }}/events/{{ params.event_id }}
+    params:
+      calendar_id: { required: true, type: string }
+      event_id: { required: true, type: string }
+
+  update_event:
+    description: Update an event (summary, time)
+    method: PATCH
+    path: /calendars/{{ params.calendar_id }}/events/{{ params.event_id }}
+    params:
+      calendar_id: { required: true, type: string }
+      event_id: { required: true, type: string }
+      summary: { required: false, type: string }
+      start: { required: false, type: string }
+      end: { required: false, type: string }
+    body:
+      summary: "{{ params.summary }}"
+      start: { dateTime: "{{ params.start }}" }
+      end: { dateTime: "{{ params.end }}" }

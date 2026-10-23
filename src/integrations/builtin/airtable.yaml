@@ -1,0 +1,88 @@
+version: 1
+name: airtable
+display_name: Airtable
+description: Airtable API integration
+base_url: https://api.airtable.com/v0
+docs_url: https://airtable.com/developers/web/api/introduction
+
+auth:
+  methods:
+    - type: bearer
+      description: Personal access token (pat...)
+
+headers:
+  Content-Type: application/json
+
+operations:
+  list_records:
+    description: List records from a table
+    method: GET
+    path: /{{ params.base_id }}/{{ params.table_name }}
+    params:
+      base_id: { required: true, type: string, description: "Base ID (app...)" }
+      table_name: { required: true, type: string, description: "Table name or ID" }
+      max_records: { required: false, type: integer }
+      page_size: { required: false, type: integer }
+      filter_by_formula: { required: false, type: string }
+      sort: { required: false, type: array }
+      view: { required: false, type: string }
+    query:
+      maxRecords: "{{ params.max_records }}"
+      pageSize: "{{ params.page_size }}"
+      filterByFormula: "{{ params.filter_by_formula }}"
+      sort: "{{ params.sort }}"
+      view: "{{ params.view }}"
+
+  get_record:
+    description: Get a single record by ID
+    method: GET
+    path: /{{ params.base_id }}/{{ params.table_name }}/{{ params.record_id }}
+    params:
+      base_id: { required: true, type: string }
+      table_name: { required: true, type: string }
+      record_id: { required: true, type: string, description: "Record ID (rec...)" }
+
+  create_records:
+    description: Create one or more records
+    method: POST
+    path: /{{ params.base_id }}/{{ params.table_name }}
+    params:
+      base_id: { required: true, type: string }
+      table_name: { required: true, type: string }
+      records: { required: true, type: array, description: "Array of {fields: {...}} objects" }
+      typecast: { required: false, type: boolean }
+    query:
+      typecast: "{{ params.typecast }}"
+    body:
+      records: "{{ params.records }}"
+
+  update_records:
+    description: Update one or more records by ID
+    method: PATCH
+    path: /{{ params.base_id }}/{{ params.table_name }}
+    params:
+      base_id: { required: true, type: string }
+      table_name: { required: true, type: string }
+      records: { required: true, type: array, description: "Array of {id, fields} objects" }
+    body:
+      records: "{{ params.records }}"
+
+  delete_records:
+    description: Delete records by ID
+    method: DELETE
+    path: /{{ params.base_id }}/{{ params.table_name }}
+    params:
+      base_id: { required: true, type: string }
+      table_name: { required: true, type: string }
+      records: { required: true, type: array, description: "Array of record IDs" }
+    query:
+      records: "{{ params.records }}"
+
+  list_bases:
+    description: List all bases accessible to the token
+    method: GET
+    path: /meta/bases
+    params:
+      page_size: { required: false, type: integer }
+    query:
+      pageSize: "{{ params.page_size }}"

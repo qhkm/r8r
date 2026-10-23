@@ -1,0 +1,77 @@
+version: 1
+name: x
+display_name: X (Twitter)
+description: X API v2 — tweets, search, likes, follows
+base_url: https://api.x.com/2
+docs_url: https://docs.x.com/x-api
+
+auth:
+  methods:
+    - type: bearer
+      description: X API bearer token (from developer portal)
+
+headers:
+  Content-Type: application/json
+
+operations:
+  create_tweet:
+    description: Post a new tweet
+    method: POST
+    path: /tweets
+    params:
+      text: { required: true, type: string, description: "Tweet text (max 280 chars)" }
+      reply_to: { required: false, type: string, description: "Tweet ID to reply to" }
+      quote_tweet: { required: false, type: string, description: "Tweet ID to quote" }
+    body:
+      text: "{{ params.text }}"
+      reply:
+        in_reply_to_tweet_id: "{{ params.reply_to }}"
+      quote_tweet_id: "{{ params.quote_tweet }}"
+
+  get_tweet:
+    description: Fetch a single tweet
+    method: GET
+    path: /tweets/{{ params.id }}
+    params:
+      id: { required: true, type: string }
+    query:
+      tweet.fields: created_at,public_metrics,author_id
+
+  delete_tweet:
+    description: Delete a tweet
+    method: DELETE
+    path: /tweets/{{ params.id }}
+    params:
+      id: { required: true, type: string }
+
+  search_recent:
+    description: Search recent tweets (last 7 days)
+    method: GET
+    path: /tweets/search/recent
+    params:
+      query: { required: true, type: string, description: "Search query (supports operators, e.g. lang:ms)" }
+      max_results: { required: false, type: integer, default: 10 }
+    query:
+      query: "{{ params.query }}"
+      max_results: "{{ params.max_results }}"
+      tweet.fields: author_id,created_at,public_metrics
+
+  get_user:
+    description: Look up a user by username
+    method: GET
+    path: /users/by/username/{{ params.username }}
+    params:
+      username: { required: true, type: string }
+    query:
+      user.fields: id,name,username,description,public_metrics,verified
+
+  get_user_tweets:
+    description: Fetch recent tweets from a user
+    method: GET
+    path: /users/{{ params.user_id }}/tweets
+    params:
+      user_id: { required: true, type: string }
+      max_results: { required: false, type: integer, default: 10 }
+    query:
+      max_results: "{{ params.max_results }}"
+      tweet.fields: created_at,public_metrics

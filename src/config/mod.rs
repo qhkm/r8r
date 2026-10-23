@@ -33,6 +33,10 @@ pub struct Config {
     #[serde(default)]
     pub agent: AgentConfig,
 
+    /// REPL configuration
+    #[serde(default)]
+    pub repl: ReplConfig,
+
     /// Sandbox execution configuration
     #[cfg(feature = "sandbox")]
     #[serde(default)]
@@ -94,6 +98,14 @@ pub struct StorageConfig {
     /// Path to SQLite database
     #[serde(default)]
     pub database_path: Option<PathBuf>,
+}
+
+/// REPL configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReplConfig {
+    /// REPL guardrails (tool permission matrix + cost budgets)
+    #[serde(default)]
+    pub guardrails: crate::repl::guardrails::GuardrailsConfig,
 }
 
 /// ZeptoClaw agent integration configuration.
@@ -356,6 +368,10 @@ impl Config {
 
     /// Get the data directory.
     pub fn data_dir() -> PathBuf {
+        // Allow overriding data dir via env (used by tests to isolate storage)
+        if let Ok(dir) = std::env::var("R8R_DATA_DIR") {
+            return PathBuf::from(dir);
+        }
         dirs::data_dir()
             .map(|d| d.join("r8r"))
             .unwrap_or_else(|| PathBuf::from(".r8r"))

@@ -55,6 +55,37 @@ impl IntegrationLoader {
         const BUILTIN_OPENAI: &str = include_str!("builtin/openai.yaml");
         const BUILTIN_STRIPE: &str = include_str!("builtin/stripe.yaml");
         const BUILTIN_NOTION: &str = include_str!("builtin/notion.yaml");
+        const BUILTIN_TELEGRAM: &str = include_str!("builtin/telegram.yaml");
+        const BUILTIN_WHATSAPP: &str = include_str!("builtin/whatsapp.yaml");
+        const BUILTIN_GOOGLE_SHEETS: &str = include_str!("builtin/google-sheets.yaml");
+        const BUILTIN_AIRTABLE: &str = include_str!("builtin/airtable.yaml");
+        const BUILTIN_DISCORD: &str = include_str!("builtin/discord.yaml");
+        const BUILTIN_RESEND: &str = include_str!("builtin/resend.yaml");
+        const BUILTIN_TWILIO: &str = include_str!("builtin/twilio.yaml");
+        const BUILTIN_SHOPIFY: &str = include_str!("builtin/shopify.yaml");
+        const BUILTIN_HUBSPOT: &str = include_str!("builtin/hubspot.yaml");
+        const BUILTIN_X: &str = include_str!("builtin/x.yaml");
+        const BUILTIN_LINKEDIN: &str = include_str!("builtin/linkedin.yaml");
+        const BUILTIN_YOUTUBE: &str = include_str!("builtin/youtube.yaml");
+        const BUILTIN_GOOGLE_DRIVE: &str = include_str!("builtin/google-drive.yaml");
+        const BUILTIN_GOOGLE_CALENDAR: &str = include_str!("builtin/google-calendar.yaml");
+        const BUILTIN_TYPEFORM: &str = include_str!("builtin/typeform.yaml");
+        const BUILTIN_CALCOM: &str = include_str!("builtin/cal.com.yaml");
+        const BUILTIN_SUPABASE: &str = include_str!("builtin/supabase.yaml");
+        const BUILTIN_EXA: &str = include_str!("builtin/exa.yaml");
+        const BUILTIN_COINGECKO: &str = include_str!("builtin/coingecko.yaml");
+        const BUILTIN_ELEVENLABS: &str = include_str!("builtin/elevenlabs.yaml");
+        const BUILTIN_PDL: &str = include_str!("builtin/pdl.yaml");
+        const BUILTIN_APOLLO: &str = include_str!("builtin/apollo.yaml");
+        const BUILTIN_DEFILLAMA: &str = include_str!("builtin/defillama.yaml");
+        const BUILTIN_STABLECOINS: &str = include_str!("builtin/stablecoins.yaml");
+        const BUILTIN_YIELDS: &str = include_str!("builtin/yields.yaml");
+        const BUILTIN_BROWSERBASE: &str = include_str!("builtin/browserbase.yaml");
+        const BUILTIN_APIFY: &str = include_str!("builtin/apify.yaml");
+        const BUILTIN_RUNWARE: &str = include_str!("builtin/runware.yaml");
+        const BUILTIN_META_GRAPH: &str = include_str!("builtin/meta-graph.yaml");
+        const BUILTIN_XERO: &str = include_str!("builtin/xero.yaml");
+        const BUILTIN_QUICKBOOKS: &str = include_str!("builtin/quickbooks.yaml");
 
         for (name, yaml) in [
             ("github", BUILTIN_GITHUB),
@@ -62,21 +93,66 @@ impl IntegrationLoader {
             ("openai", BUILTIN_OPENAI),
             ("stripe", BUILTIN_STRIPE),
             ("notion", BUILTIN_NOTION),
+            ("telegram", BUILTIN_TELEGRAM),
+            ("whatsapp", BUILTIN_WHATSAPP),
+            ("google-sheets", BUILTIN_GOOGLE_SHEETS),
+            ("airtable", BUILTIN_AIRTABLE),
+            ("discord", BUILTIN_DISCORD),
+            ("resend", BUILTIN_RESEND),
+            ("twilio", BUILTIN_TWILIO),
+            ("shopify", BUILTIN_SHOPIFY),
+            ("hubspot", BUILTIN_HUBSPOT),
+            ("x", BUILTIN_X),
+            ("linkedin", BUILTIN_LINKEDIN),
+            ("youtube", BUILTIN_YOUTUBE),
+            ("google-drive", BUILTIN_GOOGLE_DRIVE),
+            ("google-calendar", BUILTIN_GOOGLE_CALENDAR),
+            ("typeform", BUILTIN_TYPEFORM),
+            ("cal.com", BUILTIN_CALCOM),
+            ("supabase", BUILTIN_SUPABASE),
+            ("exa", BUILTIN_EXA),
+            ("coingecko", BUILTIN_COINGECKO),
+            ("elevenlabs", BUILTIN_ELEVENLABS),
+            ("pdl", BUILTIN_PDL),
+            ("apollo", BUILTIN_APOLLO),
+            ("defillama", BUILTIN_DEFILLAMA),
+            ("stablecoins", BUILTIN_STABLECOINS),
+            ("yields", BUILTIN_YIELDS),
+            ("browserbase", BUILTIN_BROWSERBASE),
+            ("apify", BUILTIN_APIFY),
+            ("runware", BUILTIN_RUNWARE),
+            ("meta-graph", BUILTIN_META_GRAPH),
+            ("xero", BUILTIN_XERO),
+            ("quickbooks", BUILTIN_QUICKBOOKS),
         ] {
-            match serde_yaml::from_str::<IntegrationDefinition>(yaml) {
-                Ok(def) => {
-                    debug!(name = %def.name, "loaded built-in integration");
-                    builtin.insert(def.name.clone(), def);
-                }
-                Err(e) => {
-                    warn!(builtin_name = name, error = %e, "failed to parse built-in YAML");
-                }
-            }
+            let def = Self::parse_builtin_yaml(name, yaml);
+            builtin.insert(def.name.clone(), def);
         }
 
         Self {
             builtin,
             user_cache: RwLock::new(UserDefinitionCache::new()),
+        }
+    }
+
+    /// Parses one built-in YAML definition. Built-ins ship inside the binary, so a
+    /// malformed definition is a r8r bug and must fail loudly (panic) — NOT be
+    /// silently dropped, which previously hid broken YAML behind a warn! and
+    /// produced confusing "missing integration" failures at runtime.
+    fn parse_builtin_yaml(name: &str, yaml: &str) -> IntegrationDefinition {
+        match serde_yaml::from_str::<IntegrationDefinition>(yaml) {
+            Ok(def) => {
+                debug!(name = %def.name, "loaded built-in integration");
+                def
+            }
+            Err(e) => {
+                panic!(
+                    "invalid built-in integration YAML '{}': {}\n\
+                     This is a r8r bug — built-in YAML is compiled into the binary.\n\
+                     --- YAML ---\n{}",
+                    name, e, yaml
+                );
+            }
         }
     }
 
@@ -262,7 +338,20 @@ mod tests {
         let loader = IntegrationLoader::new();
         let names = loader.list_all();
 
-        for expected in &["github", "slack", "openai", "stripe", "notion"] {
+        for expected in &[
+            "github",
+            "slack",
+            "openai",
+            "stripe",
+            "notion",
+            "telegram",
+            "whatsapp",
+            "google-sheets",
+            "airtable",
+            "discord",
+            "runware",
+            "meta-graph",
+        ] {
             assert!(
                 names.contains(&expected.to_string()),
                 "list should contain {}, got: {:?}",
@@ -270,7 +359,18 @@ mod tests {
                 names
             );
         }
-        assert_eq!(names.len(), 5, "expected 5 built-ins, got: {:?}", names);
+        assert_eq!(names.len(), 36, "expected 36 built-ins, got: {:?}", names);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid built-in integration YAML")]
+    fn test_malformed_builtin_yaml_panics() {
+        // Guardrail: broken built-in YAML must fail loudly (panic with context),
+        // NOT be silently dropped via warn! (which hid the bug before).
+        IntegrationLoader::parse_builtin_yaml(
+            "test-broken",
+            "version: 1\nname: broken\nauth:\n  methods:\n    - type: token\n      description: colon : followed by text", // invalid YAML: unquoted `: `
+        );
     }
 
     #[test]
@@ -302,7 +402,8 @@ mod tests {
         assert!(openai.operations.contains_key("chat_completion"));
         assert!(openai.operations.contains_key("create_embedding"));
         assert!(openai.operations.contains_key("list_models"));
-        assert_eq!(openai.operations.len(), 3);
+        assert!(openai.operations.contains_key("transcribe_audio"));
+        assert_eq!(openai.operations.len(), 4);
     }
 
     #[test]

@@ -17,6 +17,7 @@ use tracing::{error, info, warn};
 
 use crate::engine::ExecutionMetadata;
 use crate::mcp::tools::inject_approval_decision_into_checkpoint;
+use crate::metrics;
 use crate::workflow::parse_workflow;
 
 use super::events::{BridgeEvent, BridgeEventEnvelope};
@@ -38,7 +39,7 @@ pub async fn handle_incoming_event(
 ) {
     match event_type {
         "zeptoclaw.health.ping" => {
-            handle_health_ping(bridge, client_tx).await;
+            handle_health_ping(correlation_id, bridge, client_tx).await;
         }
         "zeptoclaw.approval.decision" => {
             handle_approval_decision(data, bridge).await;
@@ -55,8 +56,14 @@ pub async fn handle_incoming_event(
 /// Handle a health ping from ZeptoClaw.
 ///
 /// Updates `last_ping` and responds with a `HealthStatus` event containing
-/// stub values (will be wired to real metrics in Task 4).
-async fn handle_health_ping(bridge: &BridgeState, client_tx: &mpsc::Sender<String>) {
+/// real runtime metrics: process uptime, active executions, pending approvals,
+/// and loaded workflows. The response echoes the incoming correlation id so
+/// ZeptoClaw can match ping/response pairs.
+async fn handle_health_ping(
+    correlation_id: Option<&str>,
+    bridge: &BridgeState,
+    client_tx: &mpsc::Sender<String>,
+) {
     // Update last ping timestamp
     {
         let mut last_ping = bridge.last_ping.lock().await;
@@ -64,16 +71,47 @@ async fn handle_health_ping(bridge: &BridgeState, client_tx: &mpsc::Sender<Strin
     }
     info!("Bridge: received health ping, updated last_ping");
 
+    // Gather real runtime metrics.
+    let uptime_secs = metrics::uptime_secs();
+    let active_executions = metrics::active_executions();
+
+    let (pending_approvals, workflows_loaded) = match bridge.storage_backend().await {
+        Some(storage) => {
+            let pending = match storage
+                .list_approval_requests(Some("pending"), 1000, 0)
+                .await
+            {
+                Ok(requests) => requests.len(),
+                Err(e) => {
+                    warn!("Bridge: failed to count pending approvals: {}", e);
+                    0
+                }
+            };
+            let workflows = match storage.list_workflows().await {
+                Ok(workflows) => workflows.len(),
+                Err(e) => {
+                    warn!("Bridge: failed to count loaded workflows: {}", e);
+                    0
+                }
+            };
+            (pending, workflows)
+        }
+        None => {
+            info!("Bridge: no storage backend configured, reporting zero-loaded metrics");
+            (0, 0)
+        }
+    };
+
     // Respond with health status
     let status = BridgeEvent::HealthStatus {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_secs: 0, // TODO: wire to real uptime in Task 4
-        active_executions: 0,
-        pending_approvals: 0,
-        workflows_loaded: 0,
+        uptime_secs,
+        active_executions,
+        pending_approvals,
+        workflows_loaded,
     };
 
-    let envelope = BridgeEventEnvelope::new(status, None);
+    let envelope = BridgeEventEnvelope::new(status, correlation_id.map(str::to_string));
     match serde_json::to_string(&envelope) {
         Ok(json) => {
             if let Err(e) = client_tx.send(json).await {

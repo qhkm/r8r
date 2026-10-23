@@ -1,0 +1,76 @@
+version: 1
+name: supabase
+display_name: Supabase
+description: Supabase PostgREST API — database CRUD via REST
+base_url: https://{{ params.project_ref }}.supabase.co/rest/v1
+docs_url: https://supabase.com/docs/guides/api
+
+auth:
+  methods:
+    - type: api_key
+      header_name: Authorization
+      description: Supabase service role key (or anon key) — used for both apikey header and Authorization
+
+headers:
+  apikey: "{{ credential }}"
+  Content-Type: application/json
+
+operations:
+  select:
+    description: Query rows from a table
+    method: GET
+    path: /{{ params.table }}
+    params:
+      project_ref: { required: true, type: string, description: "Project ref, e.g. abcdefghijklmnopqrst" }
+      table: { required: true, type: string }
+      select: { required: false, type: string, default: "*", description: "Columns to return, e.g. id,name" }
+      filter: { required: false, type: string, description: "PostgREST filter, e.g. status=eq.active" }
+      limit: { required: false, type: integer, default: 100 }
+      order: { required: false, type: string, description: "Order, e.g. created_at.desc" }
+    query:
+      select: "{{ params.select }}"
+      limit: "{{ params.limit }}"
+      order: "{{ params.order }}"
+
+  insert:
+    description: Insert rows into a table
+    method: POST
+    path: /{{ params.table }}
+    params:
+      project_ref: { required: true, type: string }
+      table: { required: true, type: string }
+      rows: { required: true, type: array, description: "Array of row objects to insert" }
+      returning: { required: false, type: string, default: minimal, enum: [minimal, representation] }
+    body: "{{ params.rows }}"
+
+  update:
+    description: Update rows matching a filter
+    method: PATCH
+    path: /{{ params.table }}
+    params:
+      project_ref: { required: true, type: string }
+      table: { required: true, type: string }
+      values: { required: true, type: object, description: "Columns to update, e.g. {status: active}" }
+      filter: { required: true, type: string, description: "PostgREST filter, e.g. id=eq.42" }
+    body: "{{ params.values }}"
+
+  delete:
+    description: Delete rows matching a filter
+    method: DELETE
+    path: /{{ params.table }}
+    params:
+      project_ref: { required: true, type: string }
+      table: { required: true, type: string }
+      filter: { required: true, type: string, description: "PostgREST filter, e.g. id=eq.42" }
+    query:
+      limit: 1
+
+  call_rpc:
+    description: Call a Postgres function (RPC)
+    method: POST
+    path: /rpc/{{ params.function }}
+    params:
+      project_ref: { required: true, type: string }
+      function: { required: true, type: string, description: "Function name" }
+      args: { required: false, type: object, description: "Function arguments as JSON object" }
+    body: "{{ params.args }}"

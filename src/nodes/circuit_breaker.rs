@@ -230,10 +230,12 @@ impl CircuitBreakerRegistry {
         }
 
         // Need write lock to potentially insert
-        let mut breakers = self.breakers.write().unwrap();
-        breakers
-            .entry(endpoint.to_string())
-            .or_insert_with(|| CircuitBreaker::with_config(self.default_config.clone()));
+        {
+            let mut breakers = self.breakers.write().unwrap();
+            breakers
+                .entry(endpoint.to_string())
+                .or_insert_with(|| CircuitBreaker::with_config(self.default_config.clone()));
+        }
 
         // Return a static reference (unsafe, but works for our use case)
         // This is safe because we never remove entries

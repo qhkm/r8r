@@ -5,9 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-08-15
+
+### Fixed
+
+- **Circuit-breaker deadlock on macOS** — `CircuitBreakerRegistry::get_or_create` no longer holds a write lock while acquiring a read lock on the same `RwLock` (glibc/Linux tolerated the pattern; `pthread_rwlock` on macOS deadlocked every run).
+- **Flaky `test_http_get`** — switched the external test endpoint from httpbin.org (frequent 503/rate-limit) to a stable JSON endpoint.
+- **Intel macOS (x86_64) release binaries** — release matrix now builds `x86_64-apple-darwin` (runner `macos-13`); installer detects `uname -m` on Darwin instead of assuming ARM. v0.5.0 assets backfilled.
 
 ### Added
+
+- **Real bridge health metrics** — ZeptoClaw `health.ping` now returns live runtime values (uptime, active executions, pending approvals, loaded workflows) instead of stub zeros.
+
+## [0.7.0] - 2026-08-15
+
+### Changed
+
+- **CI/release pipeline** — GitHub Actions bumped to v5 + Node 24 runtime; `aws-actions/configure-aws-credentials` → v6 (clears Node 20 deprecations).
+- **Intel macOS builds** — `x86_64-apple-darwin` now built on `macos-14` (arm64) runners via native cross-compilation; macos-13 runners were sunset by GitHub and could leave jobs queued indefinitely.
+
+## [0.8.0] - 2026-08-19
+
+### Added
+
+#### WASM Sandbox Backend
+
+- **In-process WASI execution** (`--features sandbox-wasm`) — wasmtime 47 runtime; base64 module in `SandboxRequest.code`; epoch-based interruption → `Timeout` error; 64 MiB memory cap; output artifacts via `$R8R_OUTPUT_DIR`; select via `sandbox.backend = "wasm"` (default subprocess).
+
+#### IMAP Trigger
+
+- **Email polling trigger** (`--features imap`) — pure-Rust TLS stack (async-imap + tokio-rustls); watches mailboxes (default UNSEEN), mark-seen/delete options, attachment capture via `include_attachments`.
+
+#### Document Node
+
+- **`document` node** (default feature) — `pdf_text` extraction (pure Rust) and `vision` OCR (BYOK credentials); input via base64 `data`, `data_field`, or `url`.
+
+#### WhatsApp Inbound Webhook
+
+- **Meta Cloud API webhook** (`--features whatsapp-inbound`) — `/webhooks/whatsapp` endpoint with `hub.verify_token` handshake + `X-Hub-Signature-256` verification; publishes `whatsapp.inbound` / `whatsapp.status` events.
+
+#### HTTP / Integrations
+
+- **Multipart request bodies** — `body_type: multipart` on HTTP nodes (data-URI → binary file parts); **OpenAI `transcribe_audio`** (whisper-1) operation.
+- **Operation-level headers** — headers now resolve `{{ params.* }}` per operation (e.g. `Xero-tenant-id`).
+- **New built-in integrations** — Runware (image/video generation), Threads ops added to meta-graph (me, create post, publish, media status), Xero + QuickBooks (bank feeds, invoices).
+- **7 example workflows** — voice-note transcription, review→ticket, compliance kit (regulation impact, document check, cross-check, gap analysis, evidence mapping).
+
+#### Platform / DX
+
+- **Visual workflow builder v2** — open/edit existing workflows (YAML/JSON ⇄ canvas), full 30-node palette grouped, trigger editor, JSON node config + delete, Save = API upsert.
+- **Built-in YAML loader fails loudly** — malformed built-in YAML panics at startup with file path + error instead of silently dropping the service.
+
+### Fixed
+
+- **Credential store isolation in tests** — test suite no longer overwrites the real `credentials.json` (path override + `R8R_DATA_DIR` support).
+- Clippy `useless_vec` in document test helper; loader ops count test updated for OpenAI `transcribe_audio`.
 
 #### PostgreSQL Storage Backend
 
@@ -35,6 +87,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`r8r_list_approvals` MCP tool** — now accepts `assignee` and `group` params for delegation filtering
 - **`r8r runs pending`** — now shows assignee/group routing info per approval
 - **SQLite migration** — `assignee` and `groups` columns added automatically via `ALTER TABLE` on startup
+
+#### Job Queue & Distributed Workers
+
+- **`JobQueue` trait** (`src/queue/mod.rs`) — backend-agnostic async trait: `enqueue`, `dequeue`, `ack`, `requeue`, `pending_len`, `requeue_stale`; `RunJob` payload with `job_id`, `workflow_id`, pinned `version`, `input`, `attempts`, `correlation_id`, `idempotency_key`, `origin`
+- **`MemoryQueue`** — in-process FIFO with blocking dequeue + notify wakeups; default backend, zero extra dependencies
+- **`RedisQueue`** (`--features redis`) — reliable producer/consumer via `BRPOPLPUSH` (pending/processing lists, stale-job recovery on worker startup, bounded retry)
+- **`Worker`** (`src/queue/worker.rs`) — dequeue → execute → ack/requeue loop; graceful shutdown (`ctrl_c`); `MAX_ATTEMPTS = 3` then drop; reuses `Executor` + `Storage` so node semantics match direct runs
+- **CLI** — `r8r enqueue <workflow>` (input JSON, version pin, idempotency key) and `r8r worker [-c N] [--once]` (single-shot mode for cron/systemd); backend resolution `--redis-url` > `R8R_REDIS_URL` > `REDIS_URL` > memory fallback
 
 #### JSON Schema & REPL Guardrails
 
@@ -192,6 +252,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive security audit with 335+ tests
 - AGPL-3.0 license with dual licensing option
 
+[0.8.0]: https://github.com/qhkm/r8r/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/qhkm/r8r/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/qhkm/r8r/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/qhkm/r8r/compare/v0.4.1...v0.5.0
 [0.3.0]: https://github.com/qhkm/r8r/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/qhkm/r8r/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/qhkm/r8r/releases/tag/v0.1.0

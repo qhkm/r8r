@@ -35,8 +35,11 @@ detect_platform() {
             esac
             ;;
         Darwin)
-            # ARM binary works on Intel Macs via Rosetta 2
-            TARGET="aarch64-apple-darwin"
+            case "${ARCH}" in
+                x86_64)        TARGET="x86_64-apple-darwin" ;;
+                arm64|aarch64) TARGET="aarch64-apple-darwin" ;;
+                *)             err "Unsupported architecture: ${ARCH}" ;;
+            esac
             ;;
         *)
             err "Unsupported OS: ${OS}. r8r supports Linux and macOS."

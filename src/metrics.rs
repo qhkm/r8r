@@ -24,17 +24,29 @@
 
 use metrics::{counter, gauge, histogram};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Global Prometheus handle for rendering metrics.
 static PROMETHEUS_HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
+
+/// Currently active (non-paused) workflow executions, as a queryable counter.
+///
+/// Mirrors the `r8r_active_executions` Prometheus gauge. The gauge can only be
+/// incremented/decremented — there is no read-back — so this atomic acts as
+/// the in-process source of truth for consumers like the bridge health status.
+static ACTIVE_EXECUTIONS: AtomicI64 = AtomicI64::new(0);
+
+/// Application start time, captured once by `init_metrics()`.
+static STARTED_AT: OnceLock<Instant> = OnceLock::new();
 
 /// Initialize the Prometheus metrics exporter.
 ///
 /// This should be called once at application startup.
 /// Returns the PrometheusHandle for rendering metrics.
 pub fn init_metrics() -> PrometheusHandle {
+    STARTED_AT.get_or_init(Instant::now);
     PROMETHEUS_HANDLE
         .get_or_init(|| {
             PrometheusBuilder::new()
@@ -86,12 +98,29 @@ pub fn record_workflow_duration(duration: Duration, workflow_name: &str) {
 
 /// Increment active executions gauge.
 pub fn inc_active_executions() {
+    ACTIVE_EXECUTIONS.fetch_add(1, Ordering::Relaxed);
     gauge!("r8r_active_executions").increment(1.0);
 }
 
 /// Decrement active executions gauge.
 pub fn dec_active_executions() {
+    ACTIVE_EXECUTIONS.fetch_sub(1, Ordering::Relaxed);
     gauge!("r8r_active_executions").decrement(1.0);
+}
+
+/// Current number of active workflow executions (never below zero).
+pub fn active_executions() -> usize {
+    ACTIVE_EXECUTIONS.load(Ordering::Relaxed).max(0) as usize
+}
+
+/// Seconds elapsed since the application started.
+///
+/// Returns 0 if `init_metrics()` has not been called yet.
+pub fn uptime_secs() -> u64 {
+    STARTED_AT
+        .get()
+        .map(|started| started.elapsed().as_secs())
+        .unwrap_or(0)
 }
 
 // =============================================================================
@@ -164,5 +193,14 @@ mod tests {
         // Note: In tests, metrics might already be initialized by other tests
         let result = render_metrics();
         assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_uptime_secs_after_init() {
+        init_metrics();
+        // STARTED_AT is captured by init_metrics(); immediately after
+        // initialization the uptime is a tiny value. The generous bound guards
+        // against slow CI runners while still catching obviously wrong values.
+        assert!(uptime_secs() < 3600);
     }
 }

@@ -1,0 +1,80 @@
+version: 1
+name: google-sheets
+display_name: Google Sheets
+description: Google Sheets API integration
+base_url: https://sheets.googleapis.com/v4/spreadsheets
+docs_url: https://developers.google.com/sheets/api/reference/rest
+
+auth:
+  methods:
+    - type: oauth2
+      authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+      token_url: https://oauth2.googleapis.com/token
+      scopes: [https://www.googleapis.com/auth/spreadsheets]
+      flows: [local_callback]
+    - type: bearer
+      description: OAuth2 access token (or API key for public sheets)
+
+operations:
+  get_values:
+    description: Read values from a spreadsheet range
+    method: GET
+    path: /{{ params.spreadsheet_id }}/values/{{ params.range }}
+    params:
+      spreadsheet_id: { required: true, type: string, description: "Sheet ID from URL" }
+      range: { required: true, type: string, description: "A1 notation, e.g. Sheet1!A1:C10" }
+      major_dimension: { required: false, type: string, enum: [ROWS, COLUMNS] }
+    query:
+      major_dimension: "{{ params.major_dimension }}"
+
+  append_values:
+    description: Append values to the end of a range
+    method: POST
+    path: /{{ params.spreadsheet_id }}/values/{{ params.range }}:append
+    params:
+      spreadsheet_id: { required: true, type: string }
+      range: { required: true, type: string }
+      values: { required: true, type: array, description: "Array of rows (arrays of values)" }
+      insert_data_option: { required: false, type: string, enum: [INSERT_ROWS, OVERWRITE], default: INSERT_ROWS }
+      value_input_option: { required: false, type: string, enum: [RAW, USER_ENTERED], default: RAW }
+    query:
+      insertDataOption: "{{ params.insert_data_option }}"
+      valueInputOption: "{{ params.value_input_option }}"
+    body:
+      majorDimension: ROWS
+      values: "{{ params.values }}"
+
+  update_values:
+    description: Overwrite values in a range
+    method: PUT
+    path: /{{ params.spreadsheet_id }}/values/{{ params.range }}
+    params:
+      spreadsheet_id: { required: true, type: string }
+      range: { required: true, type: string }
+      values: { required: true, type: array }
+      value_input_option: { required: false, type: string, enum: [RAW, USER_ENTERED], default: RAW }
+    query:
+      valueInputOption: "{{ params.value_input_option }}"
+    body:
+      majorDimension: ROWS
+      values: "{{ params.values }}"
+
+  create_spreadsheet:
+    description: Create a new spreadsheet
+    method: POST
+    path: ""
+    params:
+      title: { required: true, type: string }
+    body:
+      properties:
+        title: "{{ params.title }}"
+
+  batch_update:
+    description: Batch update a spreadsheet (add/modify sheets, formatting)
+    method: POST
+    path: /{{ params.spreadsheet_id }}:batchUpdate
+    params:
+      spreadsheet_id: { required: true, type: string }
+      requests: { required: true, type: array, description: "Array of update requests" }
+    body:
+      requests: "{{ params.requests }}"
