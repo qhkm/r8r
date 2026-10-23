@@ -849,9 +849,13 @@ impl Executor {
                                     emit_node_terminal_event(self.monitor.as_ref(), node_exec);
                                 } else {
                                     error!("Node '{}' failed: {}", nid, e);
-                                    failed = true;
-                                    failed_node_id = Some(nid.to_string());
-                                    error_msg = Some(e.to_string());
+                                    // Every sibling has already run, so keep
+                                    // recording the rest; report the first failure.
+                                    if !failed {
+                                        failed = true;
+                                        failed_node_id = Some(nid.to_string());
+                                        error_msg = Some(e.to_string());
+                                    }
 
                                     node_exec.status = ExecutionStatus::Failed;
                                     node_exec.error = Some(e.to_string());
@@ -859,17 +863,13 @@ impl Executor {
                                     self.maybe_save_node_execution(node_exec, store_traces)
                                         .await?;
                                     emit_node_terminal_event(self.monitor.as_ref(), node_exec);
-                                    break;
                                 }
                             }
                         }
                     }
 
-                    if failed {
-                        break;
-                    }
-
-                    // Save checkpoint after parallel chunk
+                    // Save checkpoint after parallel chunk — also on failure, so
+                    // siblings that succeeded are not re-run on resume.
                     self.save_checkpoint(
                         &execution_id,
                         chunk.last().unwrap_or(&""),
@@ -877,6 +877,10 @@ impl Executor {
                         checkpoints_enabled,
                     )
                     .await?;
+
+                    if failed {
+                        break;
+                    }
                 }
 
                 if failed {
@@ -5385,6 +5389,57 @@ nodes:
     // ============================================================================
     // Parallel Sibling Execution Tests
     // ============================================================================
+
+    #[tokio::test]
+    async fn test_parallel_failure_records_successful_siblings() {
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
+        let mut registry = NodeRegistry::new();
+        registry.register(Arc::new(AlwaysFailNode));
+        let executor = Executor::new(registry, storage.clone());
+
+        // branch-a fails and is processed first; branch-b succeeds.
+        let yaml = r#"
+name: parallel-partial-failure
+nodes:
+  - id: start
+    type: transform
+    config:
+      expression: '"go"'
+  - id: branch-a
+    type: always_fail
+    depends_on: [start]
+  - id: branch-b
+    type: transform
+    depends_on: [start]
+    config:
+      expression: '"b-done"'
+"#;
+
+        save_test_workflow(&*storage, "wf-parallel-partial", yaml).await;
+        let workflow = parse_workflow(yaml).unwrap();
+
+        let execution = executor
+            .execute(&workflow, "wf-parallel-partial", "test", Value::Null)
+            .await
+            .unwrap();
+        assert_eq!(execution.status, ExecutionStatus::Failed);
+
+        let node_execs = storage.get_node_executions(&execution.id).await.unwrap();
+        let b = node_execs
+            .iter()
+            .find(|n| n.node_id == "branch-b")
+            .expect("branch-b node execution recorded");
+        assert_eq!(b.status, ExecutionStatus::Completed);
+        assert_eq!(b.output, Some(json!("b-done")));
+
+        let checkpoint = storage
+            .get_latest_checkpoint(&execution.id)
+            .await
+            .unwrap()
+            .expect("checkpoint saved");
+        assert_eq!(checkpoint.node_outputs["branch-b"], json!("b-done"));
+        assert!(checkpoint.node_outputs.get("branch-a").is_none());
+    }
 
     #[tokio::test]
     async fn test_parallel_siblings_run_concurrently() {
