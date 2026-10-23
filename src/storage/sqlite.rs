@@ -131,8 +131,8 @@ impl SqliteStorage {
                 origin TEXT,
                 FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
             );
-            CREATE INDEX IF NOT EXISTS idx_executions_correlation ON executions(correlation_id);
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_executions_idempotency_unique ON executions(idempotency_key);
+            -- Trace-column indexes are created in ensure_execution_trace_columns,
+            -- after legacy databases have had those columns added.
 
             CREATE TABLE IF NOT EXISTS node_executions (
                 id TEXT PRIMARY KEY,
@@ -287,11 +287,11 @@ impl SqliteStorage {
         // Add correlation_id column if not exists
         if !Self::has_column(conn, "executions", "correlation_id")? {
             conn.execute("ALTER TABLE executions ADD COLUMN correlation_id TEXT", [])?;
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_executions_correlation ON executions(correlation_id)",
-                [],
-            )?;
         }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_executions_correlation ON executions(correlation_id)",
+            [],
+        )?;
         // Add idempotency_key column if not exists
         if !Self::has_column(conn, "executions", "idempotency_key")? {
             conn.execute("ALTER TABLE executions ADD COLUMN idempotency_key TEXT", [])?;
@@ -2621,6 +2621,53 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn test_init_schema_upgrades_legacy_executions_without_trace_columns() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE workflows (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                definition TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE executions (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                workflow_name TEXT NOT NULL,
+                workflow_version INTEGER,
+                status TEXT NOT NULL,
+                trigger_type TEXT NOT NULL,
+                input TEXT NOT NULL,
+                output TEXT,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                error TEXT,
+                FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
+            );
+            "#,
+        )
+        .unwrap();
+
+        SqliteStorage::init_schema_sync(&mut conn).unwrap();
+
+        assert!(SqliteStorage::has_column(&conn, "executions", "correlation_id").unwrap());
+        assert!(SqliteStorage::has_column(&conn, "executions", "idempotency_key").unwrap());
+        let mut stmt = conn.prepare("PRAGMA index_list(executions)").unwrap();
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert!(names.iter().any(|n| n == "idx_executions_correlation"));
+        assert!(names
+            .iter()
+            .any(|n| n == "idx_executions_idempotency_unique"));
     }
 
     #[test]
