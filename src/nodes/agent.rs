@@ -1024,7 +1024,8 @@ mod tests {
             agent: None,
         };
 
-        let (url, headers, body) = build_openai_request(&config, &AgentProvider::Openai, "Hello", "sk-test").unwrap();
+        let (url, headers, body) =
+            build_openai_request(&config, &AgentProvider::Openai, "Hello", "sk-test").unwrap();
 
         assert_eq!(url, "https://api.openai.com/v1/chat/completions");
         assert!(headers
@@ -1059,7 +1060,8 @@ mod tests {
             agent: None,
         };
 
-        let (_url, _headers, body) = build_openai_request(&config, &AgentProvider::Openai, "test", "sk-test").unwrap();
+        let (_url, _headers, body) =
+            build_openai_request(&config, &AgentProvider::Openai, "test", "sk-test").unwrap();
 
         assert_eq!(body["response_format"]["type"], "json_schema");
         assert!(body["response_format"]["json_schema"]["schema"].is_object());
@@ -1082,7 +1084,8 @@ mod tests {
             agent: None,
         };
 
-        let (_url, _headers, body) = build_openai_request(&config, &AgentProvider::Openai, "test", "sk-test").unwrap();
+        let (_url, _headers, body) =
+            build_openai_request(&config, &AgentProvider::Openai, "test", "sk-test").unwrap();
 
         assert_eq!(body["response_format"]["type"], "json_object");
     }
@@ -1105,7 +1108,8 @@ mod tests {
         };
 
         let (url, headers, body) =
-            build_anthropic_request(&config, &AgentProvider::Anthropic, "Hello", "sk-ant-test").unwrap();
+            build_anthropic_request(&config, &AgentProvider::Anthropic, "Hello", "sk-ant-test")
+                .unwrap();
 
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
         assert_eq!(
@@ -1141,7 +1145,8 @@ mod tests {
             agent: None,
         };
 
-        let (url, body) = build_ollama_request(&config, &AgentProvider::Ollama, "Classify this").unwrap();
+        let (url, body) =
+            build_ollama_request(&config, &AgentProvider::Ollama, "Classify this").unwrap();
 
         assert_eq!(url, "http://localhost:11434/api/chat");
         assert_eq!(body["model"], "llama3");
@@ -1281,7 +1286,8 @@ mod tests {
         creds.insert("my_key".to_string(), "sk-explicit".to_string());
         let ctx = NodeContext::new("exec-1", "test").with_credentials(creds);
 
-        let prov = effective_provider(&config); let result = resolve_credential(&config, &prov, &ctx).unwrap();
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx).unwrap();
         assert_eq!(result, Some("sk-explicit"));
     }
 
@@ -1306,7 +1312,8 @@ mod tests {
         creds.insert("openai".to_string(), "sk-fallback".to_string());
         let ctx = NodeContext::new("exec-1", "test").with_credentials(creds);
 
-        let prov = effective_provider(&config); let result = resolve_credential(&config, &prov, &ctx).unwrap();
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx).unwrap();
         assert_eq!(result, Some("sk-fallback"));
     }
 
@@ -1331,7 +1338,8 @@ mod tests {
         creds.insert("anthropic".to_string(), "sk-ant-fallback".to_string());
         let ctx = NodeContext::new("exec-1", "test").with_credentials(creds);
 
-        let prov = effective_provider(&config); let result = resolve_credential(&config, &prov, &ctx).unwrap();
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx).unwrap();
         assert_eq!(result, Some("sk-ant-fallback"));
     }
 
@@ -1353,7 +1361,8 @@ mod tests {
         };
 
         let ctx = NodeContext::new("exec-1", "test");
-        let prov = effective_provider(&config); let result = resolve_credential(&config, &prov, &ctx).unwrap();
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx).unwrap();
         assert!(result.is_none());
     }
 
@@ -1375,7 +1384,8 @@ mod tests {
         };
 
         let ctx = NodeContext::new("exec-1", "test");
-        let prov = effective_provider(&config); let result = resolve_credential(&config, &prov, &ctx).unwrap();
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx).unwrap();
         assert!(result.is_none());
     }
 
@@ -1397,7 +1407,8 @@ mod tests {
         };
 
         let ctx = NodeContext::new("exec-1", "test");
-        let prov = effective_provider(&config); let result = resolve_credential(&config, &prov, &ctx);
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("nonexistent"));
     }
@@ -1423,7 +1434,8 @@ mod tests {
         creds.insert("llm".to_string(), "sk-llm-generic".to_string());
         let ctx = NodeContext::new("exec-1", "test").with_credentials(creds);
 
-        let prov = effective_provider(&config); let result = resolve_credential(&config, &prov, &ctx).unwrap();
+        let prov = effective_provider(&config);
+        let result = resolve_credential(&config, &prov, &ctx).unwrap();
         assert_eq!(result, Some("sk-llm-generic"));
     }
 
@@ -1471,11 +1483,19 @@ mod tests {
             agent: None,
         };
 
-        assert!(resolve_endpoint(&make_config(AgentProvider::Openai), &AgentProvider::Openai).contains("api.openai.com"));
         assert!(
-            resolve_endpoint(&make_config(AgentProvider::Anthropic), &AgentProvider::Anthropic).contains("api.anthropic.com")
+            resolve_endpoint(&make_config(AgentProvider::Openai), &AgentProvider::Openai)
+                .contains("api.openai.com")
         );
-        assert!(resolve_endpoint(&make_config(AgentProvider::Ollama), &AgentProvider::Ollama).contains("localhost:11434"));
+        assert!(resolve_endpoint(
+            &make_config(AgentProvider::Anthropic),
+            &AgentProvider::Anthropic
+        )
+        .contains("api.anthropic.com"));
+        assert!(
+            resolve_endpoint(&make_config(AgentProvider::Ollama), &AgentProvider::Ollama)
+                .contains("localhost:11434")
+        );
     }
 
     // -----------------------------------------------------------------------
