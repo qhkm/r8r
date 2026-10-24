@@ -2598,6 +2598,26 @@ impl Executor {
                 ))
             })?;
 
+        // Deserialize checkpoint outputs
+        let checkpoint_outputs: std::collections::HashMap<String, Value> =
+            serde_json::from_value(checkpoint.node_outputs.clone()).unwrap_or_default();
+
+        // Resolve workflow
+        let (workflow, resolved_version) = self.resolve_workflow_for_execution(&original).await?;
+
+        // Claim the original execution so a concurrent or repeated resume of the
+        // same checkpoint cannot run the downstream nodes a second time.
+        if !self
+            .storage
+            .claim_execution_for_resume(execution_id)
+            .await?
+        {
+            return Err(Error::Execution(format!(
+                "Cannot resume execution '{}': it was already resumed or is no longer paused",
+                execution_id
+            )));
+        }
+
         info!(
             "Resuming execution {} from checkpoint at node {}",
             execution_id, checkpoint.node_id
@@ -2617,13 +2637,6 @@ impl Executor {
             None,
         )
         .await;
-
-        // Deserialize checkpoint outputs
-        let checkpoint_outputs: std::collections::HashMap<String, Value> =
-            serde_json::from_value(checkpoint.node_outputs.clone()).unwrap_or_default();
-
-        // Resolve workflow
-        let (workflow, resolved_version) = self.resolve_workflow_for_execution(&original).await?;
 
         // Resume execution using the checkpoint
         self.execute_with_checkpoint(
@@ -4858,6 +4871,74 @@ nodes:
         assert_eq!(resumed.status, ExecutionStatus::Completed);
         assert_eq!(resumed.trigger_type, "resume");
         assert_eq!(resumed.output, Some(serde_json::json!("final")));
+    }
+
+    #[tokio::test]
+    async fn test_resume_from_checkpoint_runs_at_most_once() {
+        let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
+        let executor = Executor::new(NodeRegistry::new(), storage.clone());
+
+        let yaml = r#"
+name: resume-once
+nodes:
+  - id: step1
+    type: transform
+    config:
+      expression: "1"
+  - id: step2
+    type: transform
+    depends_on: [step1]
+    config:
+      expression: '"after-resume"'
+"#;
+        save_test_workflow(&*storage, "wf-resume-once", yaml).await;
+
+        let paused = Execution {
+            id: "exec-paused".to_string(),
+            workflow_id: "wf-resume-once".to_string(),
+            workflow_name: "resume-once".to_string(),
+            workflow_version: None,
+            status: ExecutionStatus::Paused,
+            trigger_type: "test".to_string(),
+            input: Value::Null,
+            output: None,
+            started_at: Utc::now(),
+            finished_at: None,
+            error: None,
+            correlation_id: None,
+            idempotency_key: None,
+            origin: None,
+        };
+        storage.save_execution(&paused).await.unwrap();
+        storage
+            .save_checkpoint(&Checkpoint {
+                id: "cp-1".to_string(),
+                execution_id: "exec-paused".to_string(),
+                node_id: "step1".to_string(),
+                node_outputs: json!({ "step1": 1 }),
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+
+        let (a, b) = tokio::join!(
+            executor.resume_from_checkpoint("exec-paused"),
+            executor.resume_from_checkpoint("exec-paused"),
+        );
+        let results = [a, b];
+        let ok: Vec<_> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
+        assert_eq!(ok.len(), 1, "exactly one resume should win: {results:?}");
+        assert_eq!(ok[0].status, ExecutionStatus::Completed);
+        assert_eq!(ok[0].output, Some(json!("after-resume")));
+
+        let original = storage.get_execution("exec-paused").await.unwrap().unwrap();
+        assert_eq!(original.status, ExecutionStatus::Cancelled);
+
+        // A later sequential retry is rejected as well.
+        assert!(executor
+            .resume_from_checkpoint("exec-paused")
+            .await
+            .is_err());
     }
 
     #[tokio::test]

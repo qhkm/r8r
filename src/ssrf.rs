@@ -131,9 +131,8 @@ impl reqwest::dns::Resolve for SsrfSafeResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         Box::pin(async move {
             let host = name.as_str().to_string();
-            let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
-                .await?
-                .collect();
+            let addrs: Vec<std::net::SocketAddr> =
+                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
             if !is_ssrf_protection_enabled() {
                 return Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs);
             }
@@ -216,7 +215,13 @@ mod tests {
 
     #[test]
     fn test_special_ipv4_ranges() {
-        for ip in ["0.1.2.3", "100.64.0.1", "198.18.0.1", "224.0.0.1", "240.0.0.1"] {
+        for ip in [
+            "0.1.2.3",
+            "100.64.0.1",
+            "198.18.0.1",
+            "224.0.0.1",
+            "240.0.0.1",
+        ] {
             assert!(is_private_or_special_ip(&ip.parse().unwrap()), "{ip}");
         }
         assert!(!is_private_or_special_ip(&"1.1.1.1".parse().unwrap()));
