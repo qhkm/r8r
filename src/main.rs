@@ -4118,7 +4118,6 @@ async fn cmd_approve_deny(
     };
 
     checkpoint.node_outputs = serde_json::Value::Object(outputs);
-    storage.save_checkpoint(&checkpoint).await?;
 
     let decided_status = if decision == "approve" {
         "approved"
@@ -4131,7 +4130,24 @@ async fn cmd_approve_deny(
     updated.decision_comment = comment.map(String::from);
     updated.decided_by = Some(decided_by.to_string());
     updated.decided_at = Some(chrono::Utc::now());
-    storage.save_approval_request(&updated).await?;
+    // Decide (only if still pending) and save the checkpoint atomically.
+    let decided = storage
+        .decide_approval_with_checkpoint(
+            &updated.id,
+            decided_status,
+            decided_by,
+            comment,
+            updated.decided_at.unwrap_or_else(chrono::Utc::now),
+            &updated.node_id,
+            &checkpoint,
+        )
+        .await?;
+    if !decided {
+        anyhow::bail!(
+            "Approval {} was already decided by another request",
+            updated.id
+        );
+    }
 
     println!(
         "{} approval {} ({})",

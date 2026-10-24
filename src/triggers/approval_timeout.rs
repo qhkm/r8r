@@ -173,35 +173,53 @@ async fn process_expired_approvals(
                 "Could not find approval {} in checkpoint outputs, marking expired without resume",
                 approval.id
             );
-            approval.status = "expired".to_string();
-            approval.decided_by = Some("timeout".to_string());
-            approval.decided_at = Some(Utc::now());
-            storage.save_approval_request(&approval).await?;
+            // Only expire if still pending; a human may have just decided it.
+            storage
+                .decide_approval_request(
+                    &approval.id,
+                    "expired",
+                    "timeout",
+                    None,
+                    Utc::now(),
+                    &approval.node_id,
+                )
+                .await?;
             continue;
         };
 
         checkpoint.node_outputs = Value::Object(outputs);
-        if let Err(e) = storage.save_checkpoint(&checkpoint).await {
-            error!(
-                "Failed to save checkpoint for expired approval {}: {}",
-                approval.id, e
-            );
-            continue;
-        }
 
-        // Update approval request
+        // Decide (only if still pending) and save the checkpoint atomically, so
+        // a human decision that lands just before the timeout is not clobbered.
         let decided_status = if default_action == "approve" {
             "approved"
         } else {
             "rejected"
         };
-        approval.status = decided_status.to_string();
-        approval.node_id = node_id;
-        approval.decided_by = Some("timeout".to_string());
-        approval.decided_at = Some(Utc::now());
-        if let Err(e) = storage.save_approval_request(&approval).await {
-            error!("Failed to update expired approval {}: {}", approval.id, e);
-            continue;
+        match storage
+            .decide_approval_with_checkpoint(
+                &approval.id,
+                decided_status,
+                "timeout",
+                None,
+                Utc::now(),
+                &node_id,
+                &checkpoint,
+            )
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                info!(
+                    "Approval {} was decided before its timeout fired; skipping",
+                    approval.id
+                );
+                continue;
+            }
+            Err(e) => {
+                error!("Failed to update expired approval {}: {}", approval.id, e);
+                continue;
+            }
         }
 
         emit_audit(

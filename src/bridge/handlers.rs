@@ -236,22 +236,18 @@ async fn handle_approval_decision(data: &Value, bridge: &std::sync::Arc<BridgeSt
             };
 
             checkpoint.node_outputs = Value::Object(outputs);
-            if let Err(e) = storage.save_checkpoint(&checkpoint).await {
-                warn!(
-                    "Bridge: failed to persist checkpoint for approval {}: {}",
-                    approval_id, e
-                );
-                return;
-            }
 
+            // Decide and persist the checkpoint atomically so a concurrent
+            // loser cannot overwrite the winning decision.
             match storage
-                .decide_approval_request(
+                .decide_approval_with_checkpoint(
                     approval_id,
                     new_status,
                     decided_by,
                     comment,
                     Utc::now(),
                     &node_id,
+                    &checkpoint,
                 )
                 .await
             {

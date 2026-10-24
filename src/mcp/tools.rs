@@ -1333,12 +1333,6 @@ impl R8rService {
         };
 
         checkpoint.node_outputs = Value::Object(outputs);
-        if let Err(e) = self.storage.save_checkpoint(&checkpoint).await {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to update checkpoint with decision: {}",
-                e
-            ))]));
-        }
 
         let decided_status = if params.decision == "approve" {
             "approved"
@@ -1351,11 +1345,33 @@ impl R8rService {
         approval.decided_by = Some(params.decided_by.unwrap_or_else(|| "agent".to_string()));
         approval.decided_at = Some(chrono::Utc::now());
 
-        if let Err(e) = self.storage.save_approval_request(&approval).await {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to persist approval decision: {}",
-                e
-            ))]));
+        // Decide (only if still pending) and save the checkpoint atomically.
+        match self
+            .storage
+            .decide_approval_with_checkpoint(
+                &approval.id,
+                decided_status,
+                approval.decided_by.as_deref().unwrap_or("agent"),
+                approval.decision_comment.as_deref(),
+                approval.decided_at.unwrap_or_else(chrono::Utc::now),
+                &approval.node_id,
+                &checkpoint,
+            )
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Approval {} was already decided by another request",
+                    approval.id
+                ))]));
+            }
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to persist approval decision: {}",
+                    e
+                ))]));
+            }
         }
 
         emit_audit(
