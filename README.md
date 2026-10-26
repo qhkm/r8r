@@ -49,20 +49,20 @@ r8r:            LLM only where needed    →  $
 curl -sSf https://r8r.sh/install.sh | sh
 
 # Pin a specific release if needed
-curl -sSf https://r8r.sh/install.sh | R8R_VERSION=v0.3.1 sh
+curl -sSf https://r8r.sh/install.sh | R8R_VERSION=v0.7.0 sh
 
 # Or use Docker
 docker run -d -p 8080:8080 -v r8r-data:/data ghcr.io/qhkm/r8r
 
-# Or via Cargo (requires Rust)
-cargo install r8r
+# Or via Cargo (requires Rust; the `r8r` name on crates.io is a different project)
+cargo install --git https://github.com/qhkm/r8r r8r
 
 # Or build from source
 git clone https://github.com/qhkm/r8r.git && cd r8r
 cargo build --release
 ```
 
-The install script resolves the latest GitHub release automatically and falls back to `R8R_VERSION` when you want to pin a version.
+The install script resolves the latest release automatically and falls back to `R8R_VERSION` when you want to pin a version.
 
 Then create and run a workflow:
 

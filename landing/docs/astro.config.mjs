@@ -12,7 +12,7 @@ export default defineConfig({
         replacesTitle: true,
       },
       social: {
-        github: 'https://github.com/r8r/r8r',
+        github: 'https://github.com/qhkm/r8r',
       },
       sidebar: [
         {
