@@ -49,7 +49,7 @@ r8r:            LLM only where needed    →  $
 curl -sSf https://r8r.sh/install.sh | sh
 
 # Pin a specific release if needed
-curl -sSf https://r8r.sh/install.sh | R8R_VERSION=v0.8.2 sh
+curl -sSf https://r8r.sh/install.sh | R8R_VERSION=v0.8.3 sh
 
 # Or use Docker
 docker run -d -p 8080:8080 -v r8r-data:/data ghcr.io/qhkm/r8r
@@ -265,7 +265,7 @@ Most workflow tools assume a SaaS backend, a Node.js runtime, and an internet co
 **Offline install:** on a connected machine, download the release archive for your platform and the checksums file. Verify them, carry them across, and extract:
 
 ```bash
-VERSION=v0.8.2
+VERSION=v0.8.3
 TARGET=x86_64-unknown-linux-gnu   # or aarch64-unknown-linux-gnu, aarch64-apple-darwin, x86_64-apple-darwin
 BASE=https://pub-55a6f9724469496aa4f0bd4214b25331.r2.dev/releases/$VERSION
 curl -fLO "$BASE/r8r-$VERSION-$TARGET.tar.gz"
