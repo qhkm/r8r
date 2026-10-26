@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import WorkflowEditor from './components/WorkflowEditor'
+import '@fontsource/public-sans/latin-400.css'
+import '@fontsource/public-sans/latin-500.css'
+import '@fontsource/public-sans/latin-600.css'
+import '@fontsource/public-sans/latin-700.css'
+import '@fontsource/manrope/latin-500.css'
+import '@fontsource/manrope/latin-600.css'
+import '@fontsource/manrope/latin-700.css'
 import './index.css'
 
 type DashboardTab = 'overview' | 'workflows' | 'runs' | 'approvals' | 'audit'

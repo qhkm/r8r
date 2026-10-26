@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Dashboard works from an installed binary** — JS, CSS and fonts are now embedded at compile time. Before, they were read from `src/dashboard/static/assets` relative to the working directory, so installed binaries served the page without its scripts or styles.
+- **Dashboard asset path traversal** — asset lookup is now an exact match against the embedded files, so `..` paths can no longer reach files outside the assets directory.
+
+### Changed
+
+- **Bundled dashboard fonts** — Public Sans and Manrope ship with the dashboard instead of loading from Google Fonts, so it makes no external requests (works air-gapped).
+
 ## [0.8.2] - 2026-10-26
 
 ### Changed

@@ -112,6 +112,9 @@ percent-encoding = "2"
 notify = "8"
 notify-debouncer-mini = "0.6"
 
+# Embedded dashboard assets
+include_dir = "0.7"
+
 # Encoding
 base64 = "0.22"
 hex = "0.4"
