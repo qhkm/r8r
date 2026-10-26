@@ -86,7 +86,7 @@ impl Node for AggregateNode {
                 return Err(Error::Node(format!(
                     "Invalid aggregate mode '{}', expected array/object/first/last",
                     config.mode
-                )))
+                )));
             }
         };
 

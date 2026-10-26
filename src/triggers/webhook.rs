@@ -216,7 +216,7 @@ async fn handle_webhook(
     debounce_config: Option<DebounceConfig>,
     header_filters: Option<Vec<CompiledHeaderFilter>>,
     response_mode: Option<String>,
-) -> impl IntoResponse {
+) -> impl IntoResponse + use<> {
     info!("Webhook triggered for workflow '{}'", workflow_name);
 
     // Check header filters first
@@ -391,7 +391,7 @@ async fn execute_webhook_workflow(
     headers: HeaderMap,
     body_value: Value,
     response_mode: Option<String>,
-) -> impl IntoResponse {
+) -> impl IntoResponse + use<> {
     // Get workflow
     let stored = match state.storage.get_workflow(workflow_name).await {
         Ok(Some(w)) => w,

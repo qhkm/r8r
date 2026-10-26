@@ -83,7 +83,7 @@ impl DockerBackend {
             other => {
                 return Err(SandboxError::RuntimeNotFound {
                     runtime: other.to_string(),
-                })
+                });
             }
         };
 

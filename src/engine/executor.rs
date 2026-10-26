@@ -1103,7 +1103,9 @@ impl Executor {
                 if items.len() > max_items {
                     let message = format!(
                         "Node '{}' for_each has {} items, exceeding limit of {} (adjust settings.max_for_each_items)",
-                        node_id, items.len(), max_items
+                        node_id,
+                        items.len(),
+                        max_items
                     );
 
                     if let Some(recovery_output) = on_error_recovery_output(node) {
@@ -2002,7 +2004,9 @@ impl Executor {
                 if items.len() > max_items {
                     let message = format!(
                         "Node '{}' for_each has {} items, exceeding limit of {} (adjust settings.max_for_each_items)",
-                        node_id, items.len(), max_items
+                        node_id,
+                        items.len(),
+                        max_items
                     );
 
                     if let Some(recovery_output) = on_error_recovery_output(node) {

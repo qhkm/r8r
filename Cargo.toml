@@ -1,7 +1,7 @@
 [package]
 name = "r8r-engine"
 version = "0.8.0"
-edition = "2021"
+edition = "2024"
 description = "Agent-first Rust workflow automation engine"
 license = "AGPL-3.0-only AND Apache-2.0"
 repository = "https://github.com/qhkm/r8r"

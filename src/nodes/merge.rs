@@ -64,7 +64,7 @@ impl Node for MergeNode {
                 return Err(Error::Node(format!(
                     "Invalid merge mode '{}', expected append/combine/zip",
                     config.mode
-                )))
+                )));
             }
         };
 
@@ -123,7 +123,7 @@ fn merge_combine(sources: Vec<Value>) -> Result<Value> {
                 return Err(Error::Node(format!(
                     "merge combine mode requires object inputs, found {}",
                     type_name(&other)
-                )))
+                )));
             }
         }
     }

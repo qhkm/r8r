@@ -208,7 +208,7 @@ fn resolve_data_field(input: &Value, path: &str) -> Result<String> {
             _ => {
                 return Err(Error::Node(format!(
                     "Cannot resolve data_field '{path}': value before '{part}' is not an object or array"
-                )))
+                )));
             }
         };
     }

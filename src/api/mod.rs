@@ -961,7 +961,7 @@ async fn execute_workflow(
         }
         Err(e) => {
             return external_error_response_with_correlation(e, correlation_id.clone())
-                .into_response()
+                .into_response();
         }
     };
 
@@ -1314,7 +1314,7 @@ async fn publish_event(
                 "Event backend is not configured",
                 None,
             )
-            .into_response()
+            .into_response();
         }
     };
 
@@ -1372,7 +1372,7 @@ async fn create_workflow(
                 format!("Invalid workflow definition: {}", e),
                 None,
             )
-            .into_response()
+            .into_response();
         }
     };
 

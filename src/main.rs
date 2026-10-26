@@ -2287,63 +2287,62 @@ fn build_registry() -> r8r::nodes::NodeRegistry {
         use std::sync::Arc;
 
         let config = Config::load();
-        let sandbox_backend: Arc<dyn r8r::sandbox::SandboxBackend> = match config
-            .sandbox
-            .backend
-            .as_str()
-        {
-            #[cfg(feature = "sandbox-docker")]
-            "docker" => {
-                use r8r::sandbox::SandboxBackend as _;
-                match r8r::sandbox::DockerBackend::new(&config.sandbox.docker) {
-                    Ok(db) if db.available() => {
-                        tracing::info!("Using Docker sandbox backend");
-                        Arc::new(db)
+        let sandbox_backend: Arc<dyn r8r::sandbox::SandboxBackend> =
+            match config.sandbox.backend.as_str() {
+                #[cfg(feature = "sandbox-docker")]
+                "docker" => {
+                    use r8r::sandbox::SandboxBackend as _;
+                    match r8r::sandbox::DockerBackend::new(&config.sandbox.docker) {
+                        Ok(db) if db.available() => {
+                            tracing::info!("Using Docker sandbox backend");
+                            Arc::new(db)
+                        }
+                        Ok(_) => {
+                            tracing::warn!(
+                                "Docker unavailable, falling back to subprocess sandbox"
+                            );
+                            Arc::new(SubprocessBackend::new())
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Docker sandbox init failed: {}. Falling back to subprocess.",
+                                e
+                            );
+                            Arc::new(SubprocessBackend::new())
+                        }
                     }
-                    Ok(_) => {
-                        tracing::warn!("Docker unavailable, falling back to subprocess sandbox");
+                }
+                #[cfg(feature = "sandbox-firecracker")]
+                "firecracker" => {
+                    use r8r::sandbox::FirecrackerBackend;
+                    use r8r::sandbox::SandboxBackend as _;
+                    let fb = FirecrackerBackend::new(&config.sandbox.firecracker);
+                    if fb.available() {
+                        tracing::info!("Using Firecracker sandbox backend");
+                        Arc::new(fb)
+                    } else {
+                        tracing::warn!(
+                        "Firecracker unavailable (no /dev/kvm?), falling back to subprocess sandbox"
+                    );
                         Arc::new(SubprocessBackend::new())
+                    }
+                }
+                #[cfg(feature = "sandbox-wasm")]
+                "wasm" => match r8r::sandbox::WasmSandbox::new() {
+                    Ok(wb) => {
+                        tracing::info!("Using WASM sandbox backend");
+                        Arc::new(wb)
                     }
                     Err(e) => {
                         tracing::warn!(
-                            "Docker sandbox init failed: {}. Falling back to subprocess.",
+                            "WASM sandbox init failed: {}. Falling back to subprocess.",
                             e
                         );
                         Arc::new(SubprocessBackend::new())
                     }
-                }
-            }
-            #[cfg(feature = "sandbox-firecracker")]
-            "firecracker" => {
-                use r8r::sandbox::FirecrackerBackend;
-                use r8r::sandbox::SandboxBackend as _;
-                let fb = FirecrackerBackend::new(&config.sandbox.firecracker);
-                if fb.available() {
-                    tracing::info!("Using Firecracker sandbox backend");
-                    Arc::new(fb)
-                } else {
-                    tracing::warn!(
-                            "Firecracker unavailable (no /dev/kvm?), falling back to subprocess sandbox"
-                        );
-                    Arc::new(SubprocessBackend::new())
-                }
-            }
-            #[cfg(feature = "sandbox-wasm")]
-            "wasm" => match r8r::sandbox::WasmSandbox::new() {
-                Ok(wb) => {
-                    tracing::info!("Using WASM sandbox backend");
-                    Arc::new(wb)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "WASM sandbox init failed: {}. Falling back to subprocess.",
-                        e
-                    );
-                    Arc::new(SubprocessBackend::new())
-                }
-            },
-            _ => Arc::new(SubprocessBackend::new()),
-        };
+                },
+                _ => Arc::new(SubprocessBackend::new()),
+            };
 
         registry.register(Arc::new(r8r::nodes::SandboxNode::new(sandbox_backend)));
     }
@@ -2765,7 +2764,9 @@ async fn cmd_prompt(
             match line.to_lowercase().as_str() {
                 "yes" | "y" => {
                     if !result.valid {
-                        println!("Cannot save — workflow has validation errors. Provide feedback to fix or type 'no' to discard.");
+                        println!(
+                            "Cannot save — workflow has validation errors. Provide feedback to fix or type 'no' to discard."
+                        );
                         continue;
                     }
                     true
@@ -3267,7 +3268,10 @@ async fn cmd_test(
 
     let fixture_path = Path::new(file);
     if !fixture_path.exists() {
-        anyhow::bail!("Test fixture not found: {}\n\nCreate one with:\n  tests:\n    - name: \"my test\"\n      workflow: ./workflow.yaml\n      input: {{}}\n      expected: {{}}", file);
+        anyhow::bail!(
+            "Test fixture not found: {}\n\nCreate one with:\n  tests:\n    - name: \"my test\"\n      workflow: ./workflow.yaml\n      input: {{}}\n      expected: {{}}",
+            file
+        );
     }
 
     let fixture_dir = fixture_path.parent().unwrap_or(Path::new("."));

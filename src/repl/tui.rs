@@ -2600,7 +2600,11 @@ async fn handle_slash_command(
             let plan_text = format!(
                 "{}\n\nSteps:\n  1. Describe what nodes/services will be called\n  2. Review side effects below\n  3. Run with /run <workflow> or tell the AI what to do\n\nSide effects from write-capable tools:\n  • r8r_create_workflow — creates/overwrites a workflow\n  • r8r_execute / r8r_run_and_wait — triggers execution (may call HTTP, agent, etc.)\n  • r8r_approve — resolves a human-in-the-loop approval\n\nWrite gate: {}\nUse /arm to allow writes, /disarm to return to safe mode.",
                 header,
-                if app.writes_armed { "⚡ ARMED — writes allowed" } else { "🔒 SAFE — writes blocked (use /arm to allow)" }
+                if app.writes_armed {
+                    "⚡ ARMED — writes allowed"
+                } else {
+                    "🔒 SAFE — writes blocked (use /arm to allow)"
+                }
             );
             app.log_lines = plan_text.lines().map(|s| s.to_string()).collect();
             app.inspector_tab = InspectorTab::Log;

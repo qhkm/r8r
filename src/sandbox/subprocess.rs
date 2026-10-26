@@ -89,7 +89,7 @@ fn build_shell_cmd(
         other => {
             return Err(SandboxError::RuntimeNotFound {
                 runtime: other.to_string(),
-            })
+            });
         }
     };
 
