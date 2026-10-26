@@ -1,5 +1,5 @@
 use r8r::llm::{
-    parse_anthropic_sse_line, parse_ollama_ndjson_line, parse_openai_sse_line, StreamEvent,
+    StreamEvent, parse_anthropic_sse_line, parse_ollama_ndjson_line, parse_openai_sse_line,
 };
 
 #[test]

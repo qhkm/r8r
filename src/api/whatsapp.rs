@@ -9,14 +9,14 @@
 use std::collections::HashMap;
 
 use axum::{
+    Json, Router,
     body::Bytes,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{error, warn};
 
 use super::AppState;
@@ -123,7 +123,7 @@ mod tests {
     use std::sync::Arc;
 
     use axum::{
-        body::{to_bytes, Body},
+        body::{Body, to_bytes},
         http::Request,
     };
     use tower::ServiceExt;

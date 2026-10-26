@@ -10,7 +10,7 @@
 //! ensuring they conform to the expected structure before import.
 
 use jsonschema::Validator;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
 

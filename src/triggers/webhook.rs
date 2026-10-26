@@ -9,14 +9,14 @@
 //! Handles HTTP webhook triggers for workflows with debouncing support.
 
 use axum::{
+    Json, Router,
     body::Bytes,
     extract::State,
     http::{HeaderMap, Method, StatusCode},
     response::IntoResponse,
     routing::{any, get, post},
-    Json, Router,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -24,7 +24,7 @@ use tracing::{debug, error, info, warn};
 use crate::api::AppState;
 use crate::nodes::NodeRegistry;
 use crate::storage::Storage;
-use crate::workflow::{parse_workflow, DebounceConfig, HeaderFilter, Trigger};
+use crate::workflow::{DebounceConfig, HeaderFilter, Trigger, parse_workflow};
 
 /// Maximum allowed length for header filter regex patterns (ReDoS guard).
 const MAX_HEADER_PATTERN_LEN: usize = 128;
@@ -523,35 +523,41 @@ mod tests {
         headers.insert("X-Event-Type", HeaderValue::from_static("push"));
         headers.insert("X-Signature", HeaderValue::from_static("sha256=abc123"));
 
-        let filters = vec![CompiledHeaderFilter::compile(&HeaderFilter {
-            name: "X-Event-Type".to_string(),
-            value: Some("push".to_string()),
-            pattern: None,
-            required: true,
-        })
-        .unwrap()];
+        let filters = vec![
+            CompiledHeaderFilter::compile(&HeaderFilter {
+                name: "X-Event-Type".to_string(),
+                value: Some("push".to_string()),
+                pattern: None,
+                required: true,
+            })
+            .unwrap(),
+        ];
 
         assert!(check_header_filters(&filters, &headers));
 
         // Test with pattern filter
-        let filters_pattern = vec![CompiledHeaderFilter::compile(&HeaderFilter {
-            name: "X-Signature".to_string(),
-            value: None,
-            pattern: Some(r"^sha256=.*".to_string()),
-            required: true,
-        })
-        .unwrap()];
+        let filters_pattern = vec![
+            CompiledHeaderFilter::compile(&HeaderFilter {
+                name: "X-Signature".to_string(),
+                value: None,
+                pattern: Some(r"^sha256=.*".to_string()),
+                required: true,
+            })
+            .unwrap(),
+        ];
 
         assert!(check_header_filters(&filters_pattern, &headers));
 
         // Test with missing required header
-        let filters_missing = vec![CompiledHeaderFilter::compile(&HeaderFilter {
-            name: "X-Missing".to_string(),
-            value: None,
-            pattern: None,
-            required: true,
-        })
-        .unwrap()];
+        let filters_missing = vec![
+            CompiledHeaderFilter::compile(&HeaderFilter {
+                name: "X-Missing".to_string(),
+                value: None,
+                pattern: None,
+                required: true,
+            })
+            .unwrap(),
+        ];
 
         assert!(!check_header_filters(&filters_missing, &headers));
     }

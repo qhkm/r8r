@@ -17,7 +17,7 @@ pub mod websocket;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tracing::{info, warn};
 
 use crate::api::Monitor;

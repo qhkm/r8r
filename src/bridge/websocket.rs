@@ -13,19 +13,19 @@
 
 use std::sync::Arc;
 
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+use axum::Router;
 use axum::extract::State;
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
+use super::BridgeState;
 use super::events::{Ack, BridgeEventEnvelope};
 use super::handlers::handle_incoming_event;
-use super::BridgeState;
 
 /// Sentinel message: tells the sender task to close with code 4002.
 const CLOSE_SENTINEL: &str = "__CLOSE_4002__";

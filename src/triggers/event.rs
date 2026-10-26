@@ -25,7 +25,7 @@ use crate::nodes::NodeRegistry;
 use crate::storage::Storage;
 use crate::triggers::delayed::DelayedEvent;
 use crate::triggers::event_backend::EventBackend;
-use crate::workflow::{parse_workflow, EventRouting, Trigger};
+use crate::workflow::{EventRouting, Trigger, parse_workflow};
 
 /// Event message structure for pub/sub.
 #[derive(Debug, Clone, Serialize, Deserialize)]

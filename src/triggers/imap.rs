@@ -23,8 +23,8 @@ use std::time::Duration;
 use async_imap::Client;
 use base64::Engine as _;
 use futures_util::StreamExt;
-use mailparse::{addrparse, dateparse, parse_mail, DispositionType, MailAddr, ParsedMail};
-use serde_json::{json, Value};
+use mailparse::{DispositionType, MailAddr, ParsedMail, addrparse, dateparse, parse_mail};
+use serde_json::{Value, json};
 use tokio_rustls::rustls;
 use tracing::{debug, warn};
 
@@ -524,10 +524,12 @@ mod tests {
         let event = mail_to_event(&parse(raw), None, "INBOX", false, 16);
 
         assert!(event["text"].as_str().unwrap().contains("Plain body"));
-        assert!(event["html"]
-            .as_str()
-            .unwrap()
-            .contains("<p>HTML body.</p>"));
+        assert!(
+            event["html"]
+                .as_str()
+                .unwrap()
+                .contains("<p>HTML body.</p>")
+        );
     }
 
     #[test]

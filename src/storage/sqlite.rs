@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
-use rusqlite::{params, params_from_iter, types::Value as SqlValue, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value as SqlValue};
 use tokio::sync::Mutex;
 
 use super::models::*;
@@ -2803,21 +2803,27 @@ mod tests {
 
         storage.delete_workflow("cascade-workflow").await.unwrap();
 
-        assert!(storage
-            .get_execution("exec-cascade")
-            .await
-            .unwrap()
-            .is_none());
-        assert!(storage
-            .get_node_executions("exec-cascade")
-            .await
-            .unwrap()
-            .is_empty());
-        assert!(storage
-            .list_workflow_versions("cascade-workflow")
-            .await
-            .unwrap()
-            .is_empty());
+        assert!(
+            storage
+                .get_execution("exec-cascade")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            storage
+                .get_node_executions("exec-cascade")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            storage
+                .list_workflow_versions("cascade-workflow")
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2862,9 +2868,11 @@ mod tests {
             .collect::<rusqlite::Result<Vec<_>>>()
             .unwrap();
         assert!(names.iter().any(|n| n == "idx_executions_correlation"));
-        assert!(names
-            .iter()
-            .any(|n| n == "idx_executions_idempotency_unique"));
+        assert!(
+            names
+                .iter()
+                .any(|n| n == "idx_executions_idempotency_unique")
+        );
     }
 
     #[test]

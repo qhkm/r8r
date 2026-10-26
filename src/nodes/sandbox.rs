@@ -12,13 +12,13 @@
 use async_trait::async_trait;
 use base64::Engine;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info};
 
-use super::template::{render_template, RenderMode};
+use super::template::{RenderMode, render_template};
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
 use crate::sandbox::{SandboxBackend, SandboxError, SandboxRequest};

@@ -10,22 +10,22 @@ use crate::engine::Executor;
 use crate::llm::{self, LlmConfig, LlmProvider};
 use crate::repl::conversation::Conversation;
 use crate::repl::engine::{self, StreamUpdate, TurnResult};
-use crate::repl::input::{parse_input, slash_commands, InputCommand};
+use crate::repl::input::{InputCommand, parse_input, slash_commands};
 use crate::repl::tools;
 use crate::storage::{ExecutionTrace, ReplMessage, Storage};
 use crate::workflow::parse_workflow;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
-use ratatui::Terminal;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
@@ -3396,7 +3396,7 @@ pub fn handle_key_event(_app: &mut ReplApp, _key: KeyEvent) {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn test_app() -> ReplApp {
         ReplApp::new(

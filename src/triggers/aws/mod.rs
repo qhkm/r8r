@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hmac::{Hmac, Mac};
-use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use reqwest::Url;
 use serde_json::json;
 use sha2::{Digest, Sha256};

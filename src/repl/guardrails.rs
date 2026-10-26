@@ -245,9 +245,10 @@ mod tests {
         // ~10k prompt tokens on gpt-4o-mini ≈ $0.0015; stay under budget.
         assert!(g.record_usage("gpt-4o-mini", &usage(10_000, 500)).is_ok());
         // ~200k prompt tokens ≈ $0.03 > $0.01 budget.
-        assert!(g
-            .record_usage("gpt-4o-mini", &usage(200_000, 10_000))
-            .is_err());
+        assert!(
+            g.record_usage("gpt-4o-mini", &usage(200_000, 10_000))
+                .is_err()
+        );
     }
 
     #[test]
@@ -260,9 +261,10 @@ mod tests {
         g.begin_turn();
         assert!(g.record_usage("gpt-4o-mini", &usage(10_000, 500)).is_ok());
         g.begin_turn();
-        assert!(g
-            .record_usage("gpt-4o-mini", &usage(90_000, 5_000))
-            .is_err());
+        assert!(
+            g.record_usage("gpt-4o-mini", &usage(90_000, 5_000))
+                .is_err()
+        );
     }
 
     #[test]
@@ -281,8 +283,9 @@ mod tests {
             ..Default::default()
         });
         g.begin_turn();
-        assert!(g
-            .record_usage("ollama/llama3", &usage(1_000_000, 1_000_000))
-            .is_ok());
+        assert!(
+            g.record_usage("ollama/llama3", &usage(1_000_000, 1_000_000))
+                .is_ok()
+        );
     }
 }

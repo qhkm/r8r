@@ -1,4 +1,4 @@
-use r8r::cli::diagnostics::{classify_error, fuzzy_match, Diagnostic, DiagnosticKind};
+use r8r::cli::diagnostics::{Diagnostic, DiagnosticKind, classify_error, fuzzy_match};
 
 #[test]
 fn test_classify_workflow_not_found() {

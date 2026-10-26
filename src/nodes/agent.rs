@@ -16,11 +16,11 @@
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
-use super::template::{render_template, RenderMode};
+use super::template::{RenderMode, render_template};
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
 use crate::validation::SchemaValidator;
@@ -1028,12 +1028,14 @@ mod tests {
             build_openai_request(&config, &AgentProvider::Openai, "Hello", "sk-test").unwrap();
 
         assert_eq!(url, "https://api.openai.com/v1/chat/completions");
-        assert!(headers
-            .get(reqwest::header::AUTHORIZATION)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with("Bearer "));
+        assert!(
+            headers
+                .get(reqwest::header::AUTHORIZATION)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("Bearer ")
+        );
         assert_eq!(body["model"], "gpt-4o");
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(body["messages"][0]["content"], "You are helpful.");
@@ -1487,11 +1489,13 @@ mod tests {
             resolve_endpoint(&make_config(AgentProvider::Openai), &AgentProvider::Openai)
                 .contains("api.openai.com")
         );
-        assert!(resolve_endpoint(
-            &make_config(AgentProvider::Anthropic),
-            &AgentProvider::Anthropic
-        )
-        .contains("api.anthropic.com"));
+        assert!(
+            resolve_endpoint(
+                &make_config(AgentProvider::Anthropic),
+                &AgentProvider::Anthropic
+            )
+            .contains("api.anthropic.com")
+        );
         assert!(
             resolve_endpoint(&make_config(AgentProvider::Ollama), &AgentProvider::Ollama)
                 .contains("localhost:11434")

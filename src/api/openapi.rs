@@ -6,7 +6,7 @@
  */
 //! OpenAPI specification for the r8r API.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Generate the OpenAPI 3.1 specification for the r8r API.
 pub fn generate_openapi_spec() -> Value {

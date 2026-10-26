@@ -9,10 +9,10 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
@@ -484,15 +484,19 @@ mod tests {
     #[test]
     fn pdf_text_extracts_each_page() {
         let result = extract_pdf_text(&minimal_pdf(), 200).unwrap();
-        assert!(result.data["text"]
-            .as_str()
-            .unwrap()
-            .contains("Hello r8r document"));
+        assert!(
+            result.data["text"]
+                .as_str()
+                .unwrap()
+                .contains("Hello r8r document")
+        );
         assert_eq!(result.data["page_count"], 1);
-        assert!(result.data["pages"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("Hello r8r document"));
+        assert!(
+            result.data["pages"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Hello r8r document")
+        );
     }
 
     #[tokio::test]
@@ -506,10 +510,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.data["page_count"], 1);
-        assert!(result.data["text"]
-            .as_str()
-            .unwrap()
-            .contains("Hello r8r document"));
+        assert!(
+            result.data["text"]
+                .as_str()
+                .unwrap()
+                .contains("Hello r8r document")
+        );
     }
 
     #[tokio::test]
@@ -523,10 +529,12 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(result.data["pages"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("Hello r8r document"));
+        assert!(
+            result.data["pages"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Hello r8r document")
+        );
     }
 
     #[test]
@@ -544,10 +552,12 @@ mod tests {
         assert_eq!(body["model"], DEFAULT_MODEL);
         assert_eq!(body["messages"][0]["content"][0]["text"], "Read it");
         assert_eq!(body["messages"][0]["content"][1]["type"], "image_url");
-        assert!(body["messages"][0]["content"][1]["image_url"]["url"]
-            .as_str()
-            .unwrap()
-            .starts_with("data:image/png;base64,"));
+        assert!(
+            body["messages"][0]["content"][1]["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
         assert_eq!(body["response_format"]["type"], "json_object");
     }
 

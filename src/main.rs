@@ -5,7 +5,7 @@
  * LICENSE-AGPL for a copy of the license.
  */
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -1531,7 +1531,7 @@ async fn cmd_workflows_export_all(output_dir: &str) -> anyhow::Result<()> {
 }
 
 async fn cmd_workflows_dag(name: &str, show_order: bool) -> anyhow::Result<()> {
-    use r8r::workflow::{parse_workflow, WorkflowDag};
+    use r8r::workflow::{WorkflowDag, parse_workflow};
 
     let storage = get_storage()?;
 
@@ -1613,14 +1613,14 @@ async fn cmd_workflows_dag(name: &str, show_order: bool) -> anyhow::Result<()> {
 
 async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     use r8r::api::{
-        api_auth_middleware, create_api_routes, create_concurrency_limit, create_cors_layer,
-        create_monitored_routes, create_request_body_limit, ApiAuthConfig, AppState, Monitor,
-        MonitoredAppState,
+        ApiAuthConfig, AppState, Monitor, MonitoredAppState, api_auth_middleware,
+        create_api_routes, create_concurrency_limit, create_cors_layer, create_monitored_routes,
+        create_request_body_limit,
     };
     use r8r::shutdown::ShutdownCoordinator;
     use r8r::triggers::{
-        create_webhook_routes, ApprovalTimeoutChecker, DelayedEventProcessor, EventSubscriber,
-        NativeEventBackend, Scheduler,
+        ApprovalTimeoutChecker, DelayedEventProcessor, EventSubscriber, NativeEventBackend,
+        Scheduler, create_webhook_routes,
     };
     use std::sync::Arc;
     use tower_http::trace::TraceLayer;
@@ -2287,62 +2287,63 @@ fn build_registry() -> r8r::nodes::NodeRegistry {
         use std::sync::Arc;
 
         let config = Config::load();
-        let sandbox_backend: Arc<dyn r8r::sandbox::SandboxBackend> =
-            match config.sandbox.backend.as_str() {
-                #[cfg(feature = "sandbox-docker")]
-                "docker" => {
-                    use r8r::sandbox::SandboxBackend as _;
-                    match r8r::sandbox::DockerBackend::new(&config.sandbox.docker) {
-                        Ok(db) if db.available() => {
-                            tracing::info!("Using Docker sandbox backend");
-                            Arc::new(db)
-                        }
-                        Ok(_) => {
-                            tracing::warn!(
-                                "Docker unavailable, falling back to subprocess sandbox"
-                            );
-                            Arc::new(SubprocessBackend::new())
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Docker sandbox init failed: {}. Falling back to subprocess.",
-                                e
-                            );
-                            Arc::new(SubprocessBackend::new())
-                        }
+        let sandbox_backend: Arc<dyn r8r::sandbox::SandboxBackend> = match config
+            .sandbox
+            .backend
+            .as_str()
+        {
+            #[cfg(feature = "sandbox-docker")]
+            "docker" => {
+                use r8r::sandbox::SandboxBackend as _;
+                match r8r::sandbox::DockerBackend::new(&config.sandbox.docker) {
+                    Ok(db) if db.available() => {
+                        tracing::info!("Using Docker sandbox backend");
+                        Arc::new(db)
                     }
-                }
-                #[cfg(feature = "sandbox-firecracker")]
-                "firecracker" => {
-                    use r8r::sandbox::FirecrackerBackend;
-                    use r8r::sandbox::SandboxBackend as _;
-                    let fb = FirecrackerBackend::new(&config.sandbox.firecracker);
-                    if fb.available() {
-                        tracing::info!("Using Firecracker sandbox backend");
-                        Arc::new(fb)
-                    } else {
-                        tracing::warn!(
-                        "Firecracker unavailable (no /dev/kvm?), falling back to subprocess sandbox"
-                    );
+                    Ok(_) => {
+                        tracing::warn!("Docker unavailable, falling back to subprocess sandbox");
                         Arc::new(SubprocessBackend::new())
-                    }
-                }
-                #[cfg(feature = "sandbox-wasm")]
-                "wasm" => match r8r::sandbox::WasmSandbox::new() {
-                    Ok(wb) => {
-                        tracing::info!("Using WASM sandbox backend");
-                        Arc::new(wb)
                     }
                     Err(e) => {
                         tracing::warn!(
-                            "WASM sandbox init failed: {}. Falling back to subprocess.",
+                            "Docker sandbox init failed: {}. Falling back to subprocess.",
                             e
                         );
                         Arc::new(SubprocessBackend::new())
                     }
-                },
-                _ => Arc::new(SubprocessBackend::new()),
-            };
+                }
+            }
+            #[cfg(feature = "sandbox-firecracker")]
+            "firecracker" => {
+                use r8r::sandbox::FirecrackerBackend;
+                use r8r::sandbox::SandboxBackend as _;
+                let fb = FirecrackerBackend::new(&config.sandbox.firecracker);
+                if fb.available() {
+                    tracing::info!("Using Firecracker sandbox backend");
+                    Arc::new(fb)
+                } else {
+                    tracing::warn!(
+                        "Firecracker unavailable (no /dev/kvm?), falling back to subprocess sandbox"
+                    );
+                    Arc::new(SubprocessBackend::new())
+                }
+            }
+            #[cfg(feature = "sandbox-wasm")]
+            "wasm" => match r8r::sandbox::WasmSandbox::new() {
+                Ok(wb) => {
+                    tracing::info!("Using WASM sandbox backend");
+                    Arc::new(wb)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "WASM sandbox init failed: {}. Falling back to subprocess.",
+                        e
+                    );
+                    Arc::new(SubprocessBackend::new())
+                }
+            },
+            _ => Arc::new(SubprocessBackend::new()),
+        };
 
         registry.register(Arc::new(r8r::nodes::SandboxNode::new(sandbox_backend)));
     }

@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
 /// Characters that must be percent-encoded inside a URL query *value*
 /// (RFC 3986 `query` production, plus the sub-delims/space that would
@@ -36,7 +36,7 @@ pub const QUERY_VALUE_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'[')
     .add(b']');
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tracing::debug;
 
 use crate::error::{Error, Result};

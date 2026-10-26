@@ -13,10 +13,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{debug, info, warn};
 
-use super::template::{render_body, render_template, RenderMode};
+use super::template::{RenderMode, render_body, render_template};
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
 use crate::ssrf;

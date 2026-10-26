@@ -7,10 +7,10 @@
 //! Crypto node - encryption, decryption, and hashing utilities.
 
 use async_trait::async_trait;
-use ring::digest::{digest, SHA256, SHA384, SHA512};
+use ring::digest::{SHA256, SHA384, SHA512, digest};
 use ring::hmac;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
@@ -111,11 +111,11 @@ impl Node for CryptoNode {
                 format_output(&hmac_result, &config.output_format)
             }
             CryptoOperation::Base64Encode => {
-                use base64::{engine::general_purpose::STANDARD, Engine};
+                use base64::{Engine, engine::general_purpose::STANDARD};
                 STANDARD.encode(data.as_bytes())
             }
             CryptoOperation::Base64Decode => {
-                use base64::{engine::general_purpose::STANDARD, Engine};
+                use base64::{Engine, engine::general_purpose::STANDARD};
                 let decoded = STANDARD
                     .decode(data.trim())
                     .map_err(|e| Error::Node(format!("Invalid base64 data: {}", e)))?;
@@ -236,7 +236,7 @@ fn compute_hmac(data: &str, secret: &str, algorithm: &HashAlgorithm) -> Vec<u8> 
 fn format_output(data: &[u8], format: &str) -> String {
     match format {
         "base64" => {
-            use base64::{engine::general_purpose::STANDARD, Engine};
+            use base64::{Engine, engine::general_purpose::STANDARD};
             STANDARD.encode(data)
         }
         _ => hex::encode(data),
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_base64_encode_decode() {
-        use base64::{engine::general_purpose::STANDARD, Engine};
+        use base64::{Engine, engine::general_purpose::STANDARD};
         let original = "hello world";
         let encoded = STANDARD.encode(original.as_bytes());
         assert_eq!(encoded, "aGVsbG8gd29ybGQ=");

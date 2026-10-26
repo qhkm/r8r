@@ -13,8 +13,8 @@
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
-use r8r::bridge::websocket::create_bridge_routes;
 use r8r::bridge::BridgeState;
+use r8r::bridge::websocket::create_bridge_routes;
 use serde_json::json;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite;

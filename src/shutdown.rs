@@ -10,8 +10,8 @@
 //! by listening for SIGTERM/SIGINT signals and coordinating the shutdown process
 //! across the application.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::signal;
 use tokio::sync::Notify;
 use tracing::{info, warn};

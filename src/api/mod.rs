@@ -14,25 +14,25 @@ mod websocket;
 mod whatsapp;
 
 pub use middleware::{
-    access_log_middleware, api_auth_middleware, health_auth_middleware, request_id_middleware,
-    ApiAuthConfig, HealthAuthConfig, RequestId, REQUEST_ID_HEADER,
+    ApiAuthConfig, HealthAuthConfig, REQUEST_ID_HEADER, RequestId, access_log_middleware,
+    api_auth_middleware, health_auth_middleware, request_id_middleware,
 };
 pub use openapi::generate_openapi_spec;
-pub use webhook::{compute_signature, verify_signature, SignatureConfig, SignatureScheme};
+pub use webhook::{SignatureConfig, SignatureScheme, compute_signature, verify_signature};
 #[cfg(feature = "whatsapp-inbound")]
 pub use whatsapp::whatsapp_routes;
 
 use std::sync::Arc;
 
 use axum::{
+    Json, Router,
     extract::{DefaultBodyLimit, Path, State},
     http::{HeaderValue, Method, StatusCode},
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{error, warn};
@@ -908,7 +908,7 @@ async fn execute_workflow(
     let correlation_id = request
         .correlation_id
         .clone()
-        .or_else(|| request_id.as_ref().map(|r| r.0 .0.clone()));
+        .or_else(|| request_id.as_ref().map(|r| r.0.0.clone()));
 
     // Check if shutdown is requested
     if state.shutdown.is_shutdown_requested() {
@@ -1420,7 +1420,7 @@ async fn create_workflow(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::{to_bytes, Body};
+    use axum::body::{Body, to_bytes};
     use axum::http::Request;
     use serde_json::json;
     use tower::ServiceExt;

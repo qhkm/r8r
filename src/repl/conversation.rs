@@ -8,7 +8,7 @@
 //!
 //! Tracks multi-turn messages and manages context window size.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Manages the conversation history for a REPL session.
 #[derive(Clone)]

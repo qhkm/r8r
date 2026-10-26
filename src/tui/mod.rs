@@ -21,11 +21,11 @@ use std::io;
 use crossterm::{
     event::{self as crossterm_event, Event as CrosstermEvent},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::sync::mpsc;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 
 use app::App;
 use event::TuiEvent;
@@ -152,7 +152,7 @@ mod tests {
         use super::event::{ExecutionSummary, TuiEvent, WorkflowSummary};
         use super::ui;
         use crate::api::MonitorEvent;
-        use ratatui::{backend::TestBackend, Terminal};
+        use ratatui::{Terminal, backend::TestBackend};
 
         let mut app = App::new("http://localhost:8080".to_string());
 

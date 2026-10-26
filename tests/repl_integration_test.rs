@@ -1,7 +1,7 @@
 use r8r::engine::Executor;
 use r8r::nodes::NodeRegistry;
 use r8r::repl::conversation::Conversation;
-use r8r::repl::input::{parse_input, InputCommand};
+use r8r::repl::input::{InputCommand, parse_input};
 use r8r::repl::tools::{build_tool_definitions, execute_tool};
 use r8r::storage::SqliteStorage;
 use serde_json::json;

@@ -20,8 +20,8 @@ use crate::mcp::tools::inject_approval_decision_into_checkpoint;
 use crate::metrics;
 use crate::workflow::parse_workflow;
 
-use super::events::{BridgeEvent, BridgeEventEnvelope};
 use super::BridgeState;
+use super::events::{BridgeEvent, BridgeEventEnvelope};
 
 /// Dispatch an incoming event from ZeptoClaw to the appropriate handler.
 ///

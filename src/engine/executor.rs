@@ -7,14 +7,14 @@
 //! Workflow executor.
 
 use chrono::Utc;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
 use tokio::time::{sleep, timeout};
-use tracing::{debug, error, info, instrument, warn, Span};
+use tracing::{Span, debug, error, info, instrument, warn};
 
 /// Registry that tracks per-execution pause signals.
 ///
@@ -57,8 +57,8 @@ impl PauseRegistry {
     }
 }
 
-use crate::bridge::events::BridgeEvent;
 use crate::bridge::BridgeState;
+use crate::bridge::events::BridgeEvent;
 use crate::metrics;
 
 use crate::api::Monitor;
@@ -71,7 +71,7 @@ use crate::storage::{
     AuditEntry, AuditEventType, Checkpoint, Execution, ExecutionStatus, NodeExecution, Storage,
 };
 use crate::workflow::{
-    parse_workflow, BackoffType, Node as WorkflowNode, OnErrorAction, RetryConfig, Workflow,
+    BackoffType, Node as WorkflowNode, OnErrorAction, RetryConfig, Workflow, parse_workflow,
 };
 
 /// Default number of DLQ retries for failed executions.
@@ -3760,12 +3760,16 @@ nodes:
             events.push(event);
         }
 
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, MonitorEvent::NodeFailed { .. })));
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, MonitorEvent::ExecutionFailed { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, MonitorEvent::NodeFailed { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, MonitorEvent::ExecutionFailed { .. }))
+        );
     }
 
     #[tokio::test]
@@ -4362,10 +4366,12 @@ nodes:
 
         assert_eq!(execution.status, ExecutionStatus::Failed);
         assert!(execution.error.is_some());
-        assert!(execution
-            .error
-            .unwrap()
-            .contains("for_each=true but input is not an array"));
+        assert!(
+            execution
+                .error
+                .unwrap()
+                .contains("for_each=true but input is not an array")
+        );
     }
 
     #[tokio::test]
@@ -4713,10 +4719,12 @@ nodes:
 
         assert_eq!(execution.status, ExecutionStatus::Failed);
         assert!(execution.error.is_some());
-        assert!(execution
-            .error
-            .unwrap()
-            .contains("Unknown node type: nonexistent_node_type"));
+        assert!(
+            execution
+                .error
+                .unwrap()
+                .contains("Unknown node type: nonexistent_node_type")
+        );
     }
 
     // ============================================================================
@@ -4939,10 +4947,12 @@ nodes:
         assert_eq!(original.status, ExecutionStatus::Cancelled);
 
         // A later sequential retry is rejected as well.
-        assert!(executor
-            .resume_from_checkpoint("exec-paused")
-            .await
-            .is_err());
+        assert!(
+            executor
+                .resume_from_checkpoint("exec-paused")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

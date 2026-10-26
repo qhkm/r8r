@@ -24,8 +24,8 @@
 
 use metrics::{counter, gauge, histogram};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Global Prometheus handle for rendering metrics.

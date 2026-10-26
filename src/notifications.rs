@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{info, warn};
 
 use crate::ssrf;

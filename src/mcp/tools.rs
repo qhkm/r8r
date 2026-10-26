@@ -8,10 +8,10 @@
 //!
 //! This module contains the tool implementations that are exposed via MCP.
 
-use rmcp::{model::*, tool, Error as McpError, ServerHandler};
+use rmcp::{Error as McpError, ServerHandler, model::*, tool};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 // ============================================================================
@@ -84,8 +84,8 @@ fn mcp_error_with_details(
     )])
 }
 
-use crate::engine::executor::emit_audit;
 use crate::engine::Executor;
+use crate::engine::executor::emit_audit;
 use crate::storage::{AuditEventType, SqliteStorage, Storage};
 use crate::workflow::{parse_workflow, validate_workflow};
 

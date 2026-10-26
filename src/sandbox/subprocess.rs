@@ -16,8 +16,8 @@ use tokio::sync::mpsc;
 use tracing::warn;
 
 use super::{
-    collect_output_artifacts, SandboxBackend, SandboxError, SandboxRequest, SandboxResult,
-    SandboxStreamEvent,
+    SandboxBackend, SandboxError, SandboxRequest, SandboxResult, SandboxStreamEvent,
+    collect_output_artifacts,
 };
 
 /// Subprocess-based sandbox backend.

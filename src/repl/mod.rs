@@ -12,7 +12,7 @@ pub mod prompt;
 pub mod tools;
 pub mod tui;
 
-pub use engine::{run_turn, StreamUpdate, ToolCallRecord, TurnResult};
+pub use engine::{StreamUpdate, ToolCallRecord, TurnResult, run_turn};
 
 use crate::credentials::CredentialStore;
 use crate::engine::Executor;

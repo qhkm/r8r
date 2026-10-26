@@ -17,8 +17,8 @@
 //! provides a simpler interface for the generator and other internal tools.
 //! If a provider changes its API shape, both modules need updating.
 
-use reqwest::header::HeaderValue;
 use reqwest::Client;
+use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Duration;

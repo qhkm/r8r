@@ -39,11 +39,11 @@ pub use event::{EventError, EventFanOut, EventMessage, EventSubscriber};
 pub use event_backend::{EventBackend, EventReceiver, NativeEventBackend};
 #[cfg(feature = "imap")]
 pub use imap::{
-    imap_topic, mail_to_event as imap_mail_to_event, run_imap_trigger, ImapTriggerConfig,
+    ImapTriggerConfig, imap_topic, mail_to_event as imap_mail_to_event, run_imap_trigger,
 };
 #[cfg(feature = "kafka")]
 pub use kafka::{
-    parse_payload as kafka_parse_payload, run_kafka_trigger, KafkaOffset, KafkaTriggerConfig,
+    KafkaOffset, KafkaTriggerConfig, parse_payload as kafka_parse_payload, run_kafka_trigger,
 };
 #[cfg(feature = "redis")]
 pub use redis_backend::RedisEventBackend;
@@ -51,7 +51,7 @@ pub use scheduler::Scheduler;
 pub use webhook::create_webhook_routes;
 #[cfg(feature = "whatsapp-inbound")]
 pub use whatsapp::{
+    InboundMessage as WhatsAppInboundMessage, WHATSAPP_EVENT, WHATSAPP_STATUS_EVENT,
     parse_inbound_payload as parse_whatsapp_inbound_payload,
     verify_signature as verify_whatsapp_signature, verify_token as verify_whatsapp_token,
-    InboundMessage as WhatsAppInboundMessage, WHATSAPP_EVENT, WHATSAPP_STATUS_EVENT,
 };

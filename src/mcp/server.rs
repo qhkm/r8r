@@ -11,8 +11,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use rmcp::transport::stdio;
 use rmcp::ServiceExt;
+use rmcp::transport::stdio;
 use tracing::info;
 
 use crate::engine::Executor;

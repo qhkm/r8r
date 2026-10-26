@@ -11,7 +11,7 @@
 //! Unknown node types produce a placeholder `http` step with a TODO comment
 //! and an `UnsupportedNode` warning.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::migrate::{MigrateWarning, WarningCategory};
 
@@ -279,14 +279,18 @@ mod tests {
         let result = map_node("myCustomNode", &params);
 
         assert_eq!(result.r8r_type, "http");
-        assert!(result.config["url"]
-            .as_str()
-            .unwrap()
-            .contains("TODO: Convert n8n node 'myCustomNode'"));
-        assert!(result.config["url"]
-            .as_str()
-            .unwrap()
-            .contains("n8n-nodes-base.myCustomNode"));
+        assert!(
+            result.config["url"]
+                .as_str()
+                .unwrap()
+                .contains("TODO: Convert n8n node 'myCustomNode'")
+        );
+        assert!(
+            result.config["url"]
+                .as_str()
+                .unwrap()
+                .contains("n8n-nodes-base.myCustomNode")
+        );
         assert_eq!(result.warnings.len(), 1);
         assert_eq!(
             result.warnings[0].category,

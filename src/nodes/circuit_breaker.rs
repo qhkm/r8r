@@ -21,8 +21,8 @@
 //! - `timeout_seconds`: How long to stay open before half-open (default: 30)
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 /// Circuit breaker state.
