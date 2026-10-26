@@ -5,13 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.1] - 2026-10-26
 
 ### Added
 
 - **Global `[llm]` defaults for agent nodes** — provider, endpoint and model fall back to `~/.config/r8r/config.toml` when a workflow omits them.
 - **`r8r chat --reset`** — clears the persisted REPL LLM config.
 - **Create-time node config validation** — catches hallucinated node configs when workflows are generated.
+
+### Changed
+
+- **Published as `r8r-engine`** — the crates.io name `r8r` belongs to an unrelated project. The `r8r` and `r8r-mcp` commands and the `r8r` library name are unchanged.
+- **Rust edition 2024.**
 
 ### Security
 
