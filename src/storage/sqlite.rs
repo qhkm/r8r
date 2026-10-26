@@ -131,8 +131,8 @@ impl SqliteStorage {
                 origin TEXT,
                 FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
             );
-            CREATE INDEX IF NOT EXISTS idx_executions_correlation ON executions(correlation_id);
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_executions_idempotency_unique ON executions(idempotency_key);
+            -- Trace-column indexes are created in ensure_execution_trace_columns,
+            -- after legacy databases have had those columns added.
 
             CREATE TABLE IF NOT EXISTS node_executions (
                 id TEXT PRIMARY KEY,
@@ -287,11 +287,11 @@ impl SqliteStorage {
         // Add correlation_id column if not exists
         if !Self::has_column(conn, "executions", "correlation_id")? {
             conn.execute("ALTER TABLE executions ADD COLUMN correlation_id TEXT", [])?;
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_executions_correlation ON executions(correlation_id)",
-                [],
-            )?;
         }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_executions_correlation ON executions(correlation_id)",
+            [],
+        )?;
         // Add idempotency_key column if not exists
         if !Self::has_column(conn, "executions", "idempotency_key")? {
             conn.execute("ALTER TABLE executions ADD COLUMN idempotency_key TEXT", [])?;
@@ -1176,6 +1176,20 @@ impl SqliteStorage {
         Ok(())
     }
 
+    /// Atomically claim a paused / waiting-for-approval execution for resume by
+    /// moving it to `cancelled`. Returns `Ok(false)` if it was not resumable.
+    pub async fn claim_execution_for_resume(&self, execution_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().await;
+        let rows = conn.execute(
+            "UPDATE executions
+             SET status = 'cancelled', finished_at = ?2,
+                 error = 'Superseded by resume from checkpoint'
+             WHERE id = ?1 AND status IN ('paused', 'waiting_for_approval')",
+            params![execution_id, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(rows > 0)
+    }
+
     /// Get the latest checkpoint for an execution.
     pub async fn get_latest_checkpoint(&self, execution_id: &str) -> Result<Option<Checkpoint>> {
         let conn = self.conn.lock().await;
@@ -1314,6 +1328,58 @@ impl SqliteStorage {
             ],
         )?;
         Ok(rows > 0)
+    }
+
+    /// Decide a pending approval and save its checkpoint in one transaction.
+    /// Returns `Ok(false)`, writing nothing, if the approval was already decided.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn decide_approval_with_checkpoint(
+        &self,
+        id: &str,
+        new_status: &str,
+        decided_by: &str,
+        decision_comment: Option<&str>,
+        decided_at: chrono::DateTime<chrono::Utc>,
+        node_id: &str,
+        checkpoint: &Checkpoint,
+    ) -> Result<bool> {
+        let mut conn = self.conn.lock().await;
+        let tx = conn.transaction()?;
+        let rows = tx.execute(
+            "UPDATE approval_requests
+             SET status = ?2, decided_by = ?3, decision_comment = ?4,
+                 decided_at = ?5, node_id = ?6
+             WHERE id = ?1 AND status = 'pending'",
+            params![
+                id,
+                new_status,
+                decided_by,
+                decision_comment,
+                decided_at.to_rfc3339(),
+                node_id
+            ],
+        )?;
+        if rows == 0 {
+            return Ok(false); // tx dropped -> rolled back
+        }
+        tx.execute(
+            "INSERT INTO checkpoints (id, execution_id, node_id, node_outputs, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                execution_id = excluded.execution_id,
+                node_id = excluded.node_id,
+                node_outputs = excluded.node_outputs,
+                created_at = excluded.created_at",
+            params![
+                checkpoint.id,
+                checkpoint.execution_id,
+                checkpoint.node_id,
+                serde_json::to_string(&checkpoint.node_outputs).unwrap_or_default(),
+                checkpoint.created_at.to_rfc3339(),
+            ],
+        )?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// List approval requests, optionally filtering by status, assignee, or group.
@@ -1950,6 +2016,9 @@ impl super::Storage for SqliteStorage {
     ) -> crate::error::Result<Vec<super::models::Checkpoint>> {
         SqliteStorage::list_checkpoints(self, id).await
     }
+    async fn claim_execution_for_resume(&self, id: &str) -> crate::error::Result<bool> {
+        SqliteStorage::claim_execution_for_resume(self, id).await
+    }
     async fn save_approval_request(
         &self,
         r: &super::models::ApprovalRequest,
@@ -1979,6 +2048,28 @@ impl super::Storage for SqliteStorage {
             decision_comment,
             decided_at,
             node_id,
+        )
+        .await
+    }
+    async fn decide_approval_with_checkpoint(
+        &self,
+        id: &str,
+        new_status: &str,
+        decided_by: &str,
+        decision_comment: Option<&str>,
+        decided_at: chrono::DateTime<chrono::Utc>,
+        node_id: &str,
+        checkpoint: &super::models::Checkpoint,
+    ) -> crate::error::Result<bool> {
+        SqliteStorage::decide_approval_with_checkpoint(
+            self,
+            id,
+            new_status,
+            decided_by,
+            decision_comment,
+            decided_at,
+            node_id,
+            checkpoint,
         )
         .await
     }
@@ -2339,6 +2430,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_decide_approval_with_checkpoint_loser_writes_nothing() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let now = Utc::now();
+        storage
+            .save_workflow(&StoredWorkflow {
+                id: "wf-race".to_string(),
+                name: "race".to_string(),
+                definition: "name: race\nnodes: []".to_string(),
+                enabled: true,
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
+        storage
+            .save_execution(&Execution {
+                id: "exec-race".to_string(),
+                workflow_id: "wf-race".to_string(),
+                workflow_name: "race".to_string(),
+                workflow_version: None,
+                status: ExecutionStatus::WaitingForApproval,
+                trigger_type: "manual".to_string(),
+                input: serde_json::json!({}),
+                output: None,
+                started_at: now,
+                finished_at: None,
+                error: None,
+                correlation_id: None,
+                idempotency_key: None,
+                origin: None,
+            })
+            .await
+            .unwrap();
+        storage
+            .save_approval_request(&ApprovalRequest {
+                id: "apr-race".to_string(),
+                execution_id: "exec-race".to_string(),
+                node_id: "gate".to_string(),
+                workflow_name: "race".to_string(),
+                title: "gate".to_string(),
+                description: None,
+                status: "pending".to_string(),
+                decision_comment: None,
+                decided_by: None,
+                context_data: None,
+                created_at: now,
+                expires_at: None,
+                decided_at: None,
+                assignee: None,
+                groups: vec![],
+            })
+            .await
+            .unwrap();
+
+        // Both requests start from the same latest checkpoint id.
+        let checkpoint_with = |decision: &str| Checkpoint {
+            id: "cp-gate".to_string(),
+            execution_id: "exec-race".to_string(),
+            node_id: "gate".to_string(),
+            node_outputs: serde_json::json!({ "gate": { "decision": decision } }),
+            created_at: now,
+        };
+
+        let won = storage
+            .decide_approval_with_checkpoint(
+                "apr-race",
+                "approved",
+                "alice",
+                None,
+                Utc::now(),
+                "gate",
+                &checkpoint_with("approve"),
+            )
+            .await
+            .unwrap();
+        let lost = storage
+            .decide_approval_with_checkpoint(
+                "apr-race",
+                "rejected",
+                "bob",
+                None,
+                Utc::now(),
+                "gate",
+                &checkpoint_with("reject"),
+            )
+            .await
+            .unwrap();
+        assert!(won);
+        assert!(!lost);
+
+        let approval = storage
+            .get_approval_request("apr-race")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(approval.status, "approved");
+        assert_eq!(approval.decided_by.as_deref(), Some("alice"));
+        let cp = storage
+            .get_latest_checkpoint("exec-race")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(cp.node_outputs["gate"]["decision"], "approve");
+    }
+
+    #[tokio::test]
     async fn test_idempotency_key_lookup() {
         let storage = SqliteStorage::open_in_memory().unwrap();
         let now = Utc::now();
@@ -2621,6 +2818,53 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn test_init_schema_upgrades_legacy_executions_without_trace_columns() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE workflows (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                definition TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE executions (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                workflow_name TEXT NOT NULL,
+                workflow_version INTEGER,
+                status TEXT NOT NULL,
+                trigger_type TEXT NOT NULL,
+                input TEXT NOT NULL,
+                output TEXT,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                error TEXT,
+                FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
+            );
+            "#,
+        )
+        .unwrap();
+
+        SqliteStorage::init_schema_sync(&mut conn).unwrap();
+
+        assert!(SqliteStorage::has_column(&conn, "executions", "correlation_id").unwrap());
+        assert!(SqliteStorage::has_column(&conn, "executions", "idempotency_key").unwrap());
+        let mut stmt = conn.prepare("PRAGMA index_list(executions)").unwrap();
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert!(names.iter().any(|n| n == "idx_executions_correlation"));
+        assert!(names
+            .iter()
+            .any(|n| n == "idx_executions_idempotency_unique"));
     }
 
     #[test]

@@ -100,7 +100,7 @@ pub async fn send_approval_notifications(channels: &[NotifyChannel], ctx: &Notif
 
 /// Build a reqwest client with a 10-second timeout.
 fn notify_client() -> anyhow::Result<reqwest::Client> {
-    let client = reqwest::Client::builder()
+    let client = ssrf::hardened_client_builder()
         .timeout(Duration::from_secs(10))
         .build()?;
     Ok(client)

@@ -300,8 +300,9 @@ nodes:
     assert_eq!(completed.trigger_type, "resume");
     assert_eq!(completed.output.unwrap()["approved_via"], "bridge");
 
+    // The original is claimed on resume so it cannot be resumed a second time.
     let original = storage.get_execution(&execution.id).await.unwrap().unwrap();
-    assert_eq!(original.status.to_string(), "waiting_for_approval");
+    assert_eq!(original.status.to_string(), "cancelled");
 
     let checkpoint = storage
         .get_latest_checkpoint(&execution.id)

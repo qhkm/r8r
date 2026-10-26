@@ -95,6 +95,10 @@ pub trait Storage: Send + Sync + 'static {
     async fn save_checkpoint(&self, checkpoint: &Checkpoint) -> Result<()>;
     async fn get_latest_checkpoint(&self, execution_id: &str) -> Result<Option<Checkpoint>>;
     async fn list_checkpoints(&self, execution_id: &str) -> Result<Vec<Checkpoint>>;
+    /// Atomically move a `paused` / `waiting_for_approval` execution to
+    /// `cancelled` so it is resumed at most once. Returns `Ok(false)` if the
+    /// execution was not in a resumable state (e.g. another resume claimed it).
+    async fn claim_execution_for_resume(&self, execution_id: &str) -> Result<bool>;
 
     // -------------------------------------------------------------------------
     // Approval requests
@@ -110,6 +114,20 @@ pub trait Storage: Send + Sync + 'static {
         decision_comment: Option<&str>,
         decided_at: chrono::DateTime<chrono::Utc>,
         node_id: &str,
+    ) -> Result<bool>;
+    /// Decide a pending approval and save the checkpoint carrying that decision
+    /// in one transaction. Returns `Ok(false)`, writing nothing, if the approval
+    /// was no longer pending.
+    #[allow(clippy::too_many_arguments)]
+    async fn decide_approval_with_checkpoint(
+        &self,
+        id: &str,
+        new_status: &str,
+        decided_by: &str,
+        decision_comment: Option<&str>,
+        decided_at: chrono::DateTime<chrono::Utc>,
+        node_id: &str,
+        checkpoint: &Checkpoint,
     ) -> Result<bool>;
     async fn list_approval_requests(
         &self,
@@ -282,6 +300,9 @@ impl<S: Storage + ?Sized> Storage for std::sync::Arc<S> {
     async fn list_checkpoints(&self, id: &str) -> Result<Vec<Checkpoint>> {
         (**self).list_checkpoints(id).await
     }
+    async fn claim_execution_for_resume(&self, id: &str) -> Result<bool> {
+        (**self).claim_execution_for_resume(id).await
+    }
     async fn save_approval_request(&self, r: &ApprovalRequest) -> Result<()> {
         (**self).save_approval_request(r).await
     }
@@ -305,6 +326,28 @@ impl<S: Storage + ?Sized> Storage for std::sync::Arc<S> {
                 decision_comment,
                 decided_at,
                 node_id,
+            )
+            .await
+    }
+    async fn decide_approval_with_checkpoint(
+        &self,
+        id: &str,
+        new_status: &str,
+        decided_by: &str,
+        decision_comment: Option<&str>,
+        decided_at: chrono::DateTime<chrono::Utc>,
+        node_id: &str,
+        checkpoint: &Checkpoint,
+    ) -> Result<bool> {
+        (**self)
+            .decide_approval_with_checkpoint(
+                id,
+                new_status,
+                decided_by,
+                decision_comment,
+                decided_at,
+                node_id,
+                checkpoint,
             )
             .await
     }

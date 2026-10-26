@@ -816,6 +816,21 @@ impl Storage for PostgresStorage {
         Ok(())
     }
 
+    async fn claim_execution_for_resume(&self, execution_id: &str) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE executions
+             SET status = 'cancelled', finished_at = $2,
+                 error = 'Superseded by resume from checkpoint'
+             WHERE id = $1 AND status IN ('paused', 'waiting_for_approval')",
+        )
+        .bind(execution_id)
+        .bind(chrono::Utc::now())
+        .execute(&self.pool)
+        .await
+        .map_err(sqlx_err)?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn get_latest_checkpoint(&self, execution_id: &str) -> Result<Option<Checkpoint>> {
         let row = sqlx::query(
             "SELECT id, execution_id, node_id, node_outputs, created_at
@@ -942,6 +957,50 @@ impl Storage for PostgresStorage {
         .await
         .map_err(sqlx_err)?;
         Ok(result.rows_affected() > 0)
+    }
+
+    async fn decide_approval_with_checkpoint(
+        &self,
+        id: &str,
+        new_status: &str,
+        decided_by: &str,
+        decision_comment: Option<&str>,
+        decided_at: chrono::DateTime<chrono::Utc>,
+        node_id: &str,
+        checkpoint: &Checkpoint,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await.map_err(sqlx_err)?;
+        let result = sqlx::query(
+            "UPDATE approval_requests SET status=$2, decided_by=$3, decision_comment=$4, decided_at=$5, node_id=$6 WHERE id=$1 AND status='pending'",
+        )
+        .bind(id)
+        .bind(new_status)
+        .bind(decided_by)
+        .bind(decision_comment)
+        .bind(decided_at)
+        .bind(node_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_err)?;
+        if result.rows_affected() == 0 {
+            return Ok(false); // tx dropped -> rolled back
+        }
+        let node_outputs_json = serde_json::to_string(&checkpoint.node_outputs)?;
+        sqlx::query(
+            r#"INSERT INTO checkpoints (id, execution_id, node_id, node_outputs, created_at)
+               VALUES ($1,$2,$3,$4,$5)
+               ON CONFLICT(id) DO UPDATE SET node_outputs = EXCLUDED.node_outputs"#,
+        )
+        .bind(&checkpoint.id)
+        .bind(&checkpoint.execution_id)
+        .bind(&checkpoint.node_id)
+        .bind(&node_outputs_json)
+        .bind(checkpoint.created_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_err)?;
+        tx.commit().await.map_err(sqlx_err)?;
+        Ok(true)
     }
 
     async fn list_approval_requests(

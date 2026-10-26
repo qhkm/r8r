@@ -787,13 +787,11 @@ async fn decide_approval_handler(
         .into_response();
     };
 
-    // 7. Save updated checkpoint
     checkpoint.node_outputs = Value::Object(outputs);
-    if let Err(e) = state.storage.save_checkpoint(&checkpoint).await {
-        return external_error_response(e).into_response();
-    }
 
-    // 8. Atomically decide the approval (only if still pending — prevents TOCTOU race)
+    // 7. Atomically decide the approval (only if still pending) and save the
+    //    updated checkpoint in the same transaction, so a losing request can
+    //    never overwrite the winner's decision in the checkpoint.
     let decided_status = if request.decision == "approve" {
         "approved"
     } else {
@@ -807,13 +805,14 @@ async fn decide_approval_handler(
 
     let was_updated = match state
         .storage
-        .decide_approval_request(
+        .decide_approval_with_checkpoint(
             &id,
             decided_status,
             &actor,
             request.comment.as_deref(),
             decided_at,
             &node_id,
+            &checkpoint,
         )
         .await
     {
@@ -844,7 +843,7 @@ async fn decide_approval_handler(
         Err(e) => return external_error_response(e).into_response(),
     };
 
-    // 9. Emit audit event
+    // 8. Emit audit event
     emit_audit(
         &state.storage,
         AuditEventType::ApprovalDecided,
@@ -861,7 +860,7 @@ async fn decide_approval_handler(
     )
     .await;
 
-    // 10. Resume execution
+    // 9. Resume execution
     match state
         .create_executor()
         .resume_from_checkpoint(&approval.execution_id)
