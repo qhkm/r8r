@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
-  <a href="https://github.com/qhkm/r8r"><img src="https://img.shields.io/badge/rust-1.70+-orange.svg" alt="Rust"></a>
+  <a href="https://github.com/qhkm/r8r"><img src="https://img.shields.io/badge/rust-edition_2024-orange.svg" alt="Rust edition 2024"></a>
   <img src="https://img.shields.io/badge/status-beta-yellow.svg" alt="Status: Beta">
   <img src="https://img.shields.io/badge/binary-~15MB-brightgreen.svg" alt="Binary: ~15MB">
 </p>
@@ -55,7 +55,7 @@ curl -sSf https://r8r.sh/install.sh | R8R_VERSION=v0.8.1 sh
 docker run -d -p 8080:8080 -v r8r-data:/data ghcr.io/qhkm/r8r
 
 # Or via Cargo (requires Rust; installs the `r8r` and `r8r-mcp` commands)
-cargo install --git https://github.com/qhkm/r8r r8r-engine
+cargo install --git https://github.com/qhkm/r8r r8r
 
 # Or build from source
 git clone https://github.com/qhkm/r8r.git && cd r8r
