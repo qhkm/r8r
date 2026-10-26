@@ -258,15 +258,11 @@ impl SandboxBackend for DockerBackend {
 
         while let Some(Ok(log)) = logs.next().await {
             match log {
-                LogOutput::StdOut { message } => {
-                    if stdout.len() < max_per_stream {
-                        stdout.push_str(&String::from_utf8_lossy(&message));
-                    }
+                LogOutput::StdOut { message } if stdout.len() < max_per_stream => {
+                    stdout.push_str(&String::from_utf8_lossy(&message));
                 }
-                LogOutput::StdErr { message } => {
-                    if stderr.len() < max_per_stream {
-                        stderr.push_str(&String::from_utf8_lossy(&message));
-                    }
+                LogOutput::StdErr { message } if stderr.len() < max_per_stream => {
+                    stderr.push_str(&String::from_utf8_lossy(&message));
                 }
                 _ => {}
             }

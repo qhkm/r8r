@@ -404,15 +404,18 @@ fn parse_receive_response(xml: &str) -> Vec<SqsMessage> {
     // Track elements inside a message.
     let mut in_message = false;
     let mut in_attribute = false;
-    let mut element_path: Vec<String> = Vec::new();
     let mut attr_name = String::new();
     let mut attr_value = String::new();
+    // Text of the innermost element. quick-xml reports entity references
+    // (`&quot;`, `&#38;`) as separate events, so text is collected here and
+    // assigned when the element closes.
+    let mut text = String::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(quick_xml::events::Event::Start(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                element_path.push(name.clone());
+                text.clear();
                 match name.as_str() {
                     "Message" => {
                         in_message = true;
@@ -428,25 +431,40 @@ fn parse_receive_response(xml: &str) -> Vec<SqsMessage> {
                 }
             }
             Ok(quick_xml::events::Event::Text(e)) => {
-                let text = e.unescape().unwrap_or_default().into_owned();
-                if in_attribute {
-                    match element_path.last().map(|s| s.as_str()) {
-                        Some("Name") => attr_name = text,
-                        Some("Value") => attr_value = text,
-                        _ => {}
-                    }
-                } else if in_message {
-                    let msg = current.as_mut().expect("in_message implies current");
-                    match element_path.last().map(|s| s.as_str()) {
-                        Some("MessageId") => msg.message_id = text,
-                        Some("ReceiptHandle") => msg.receipt_handle = text,
-                        Some("Body") => msg.body = text,
-                        _ => {}
-                    }
+                text.push_str(&e.xml10_content().unwrap_or_default());
+            }
+            Ok(quick_xml::events::Event::CData(e)) => {
+                text.push_str(&e.decode().unwrap_or_default());
+            }
+            Ok(quick_xml::events::Event::GeneralRef(e)) => {
+                if let Ok(Some(ch)) = e.resolve_char_ref() {
+                    text.push(ch);
+                } else if let Some(resolved) = e
+                    .decode()
+                    .ok()
+                    .and_then(|name| quick_xml::escape::resolve_predefined_entity(&name))
+                {
+                    text.push_str(resolved);
                 }
             }
             Ok(quick_xml::events::Event::End(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let value = std::mem::take(&mut text);
+                if in_attribute {
+                    match name.as_str() {
+                        "Name" => attr_name = value,
+                        "Value" => attr_value = value,
+                        _ => {}
+                    }
+                } else if in_message {
+                    let msg = current.as_mut().expect("in_message implies current");
+                    match name.as_str() {
+                        "MessageId" => msg.message_id = value,
+                        "ReceiptHandle" => msg.receipt_handle = value,
+                        "Body" => msg.body = value,
+                        _ => {}
+                    }
+                }
                 if name == "Attribute" && in_attribute {
                     if !attr_name.is_empty() {
                         if let Some(msg) = current.as_mut() {
@@ -465,7 +483,6 @@ fn parse_receive_response(xml: &str) -> Vec<SqsMessage> {
                     }
                     in_message = false;
                 }
-                element_path.pop();
             }
             Ok(quick_xml::events::Event::Eof) => break,
             Err(e) => {
@@ -656,6 +673,22 @@ mod tests {
         );
         assert_eq!(messages[1].message_id, "second-message");
         assert_eq!(messages[1].body, "plain text");
+    }
+
+    #[test]
+    fn parses_entities_and_cdata_in_body() {
+        let xml = r#"<ReceiveMessageResponse><ReceiveMessageResult><Message>
+<MessageId>m&#45;1</MessageId><ReceiptHandle>h&amp;1</ReceiptHandle>
+<Body>{&quot;q&quot;: &quot;a &lt; b&quot;}</Body>
+</Message><Message><MessageId>m2</MessageId><ReceiptHandle>h2</ReceiptHandle>
+<Body><![CDATA[raw <b>&amp;</b>]]></Body></Message></ReceiveMessageResult></ReceiveMessageResponse>"#;
+
+        let messages = parse_receive_response(xml);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].message_id, "m-1");
+        assert_eq!(messages[0].receipt_handle, "h&1");
+        assert_eq!(messages[0].body, r#"{"q": "a < b"}"#);
+        assert_eq!(messages[1].body, "raw <b>&amp;</b>");
     }
 
     #[test]

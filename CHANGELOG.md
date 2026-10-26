@@ -5,24 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.0] - 2026-08-15
-
-### Fixed
-
-- **Circuit-breaker deadlock on macOS** — `CircuitBreakerRegistry::get_or_create` no longer holds a write lock while acquiring a read lock on the same `RwLock` (glibc/Linux tolerated the pattern; `pthread_rwlock` on macOS deadlocked every run).
-- **Flaky `test_http_get`** — switched the external test endpoint from httpbin.org (frequent 503/rate-limit) to a stable JSON endpoint.
-- **Intel macOS (x86_64) release binaries** — release matrix now builds `x86_64-apple-darwin` (runner `macos-13`); installer detects `uname -m` on Darwin instead of assuming ARM. v0.5.0 assets backfilled.
+## [Unreleased]
 
 ### Added
 
-- **Real bridge health metrics** — ZeptoClaw `health.ping` now returns live runtime values (uptime, active executions, pending approvals, loaded workflows) instead of stub zeros.
+- **Global `[llm]` defaults for agent nodes** — provider, endpoint and model fall back to `~/.config/r8r/config.toml` when a workflow omits them.
+- **`r8r chat --reset`** — clears the persisted REPL LLM config.
+- **Create-time node config validation** — catches hallucinated node configs when workflows are generated.
 
-## [0.7.0] - 2026-08-15
+### Security
 
-### Changed
+- **SSRF hardening** — bracketed IPv6 literals, IPv4-mapped/compatible/NAT64 addresses and more reserved ranges are blocked; DNS results are filtered; every redirect is re-checked. The `document` node's URL download now goes through the same checks.
+- **Dependency upgrades for RustSec advisories** — `rustls` 0.23.46, `quinn-proto` 0.11.19, `sqlx` 0.8.6 (drops `rustls` 0.21), `quick-xml` 0.41, `wasmtime` 49 (`sandbox-wasm`), with `rusqlite` 0.32 / `r2d2_sqlite` 0.25 to match.
 
-- **CI/release pipeline** — GitHub Actions bumped to v5 + Node 24 runtime; `aws-actions/configure-aws-credentials` → v6 (clears Node 20 deprecations).
-- **Intel macOS builds** — `x86_64-apple-darwin` now built on `macos-14` (arm64) runners via native cross-compilation; macos-13 runners were sunset by GitHub and could leave jobs queued indefinitely.
+### Fixed
+
+- **Approval races** — the approval decision and its resume checkpoint are written in one transaction, so concurrent approvals (API, bridge, MCP, CLI, timeout) can no longer overwrite each other.
+- **Resume runs at most once** — the paused execution is claimed atomically before resuming; the original is marked `cancelled` ("Superseded by resume from checkpoint").
+- **Parallel failures keep sibling results** — successful siblings are recorded and checkpointed before the failure is reported.
+- **Legacy SQLite databases open again** — trace indexes are created after the migration adds their columns.
 
 ## [0.8.0] - 2026-08-19
 
@@ -145,6 +146,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Webhook** — HTTP POST with approval payload JSON
 - **Slack** — Block Kit message with workflow name, approval ID, description, and expiry
 - **Email** — HTML email via SMTP relay configured with `R8R_SMTP_RELAY_URL` env var
+
+## [0.7.0] - 2026-08-15
+
+### Changed
+
+- **CI/release pipeline** — GitHub Actions bumped to v5 + Node 24 runtime; `aws-actions/configure-aws-credentials` → v6 (clears Node 20 deprecations).
+- **Intel macOS builds** — `x86_64-apple-darwin` now built on `macos-14` (arm64) runners via native cross-compilation; macos-13 runners were sunset by GitHub and could leave jobs queued indefinitely.
+
+## [0.6.0] - 2026-08-15
+
+### Fixed
+
+- **Circuit-breaker deadlock on macOS** — `CircuitBreakerRegistry::get_or_create` no longer holds a write lock while acquiring a read lock on the same `RwLock` (glibc/Linux tolerated the pattern; `pthread_rwlock` on macOS deadlocked every run).
+- **Flaky `test_http_get`** — switched the external test endpoint from httpbin.org (frequent 503/rate-limit) to a stable JSON endpoint.
+- **Intel macOS (x86_64) release binaries** — release matrix now builds `x86_64-apple-darwin` (runner `macos-13`); installer detects `uname -m` on Darwin instead of assuming ARM. v0.5.0 assets backfilled.
+
+### Added
+
+- **Real bridge health metrics** — ZeptoClaw `health.ping` now returns live runtime values (uptime, active executions, pending approvals, loaded workflows) instead of stub zeros.
 
 ## [0.3.0] - 2026-03-01
 
