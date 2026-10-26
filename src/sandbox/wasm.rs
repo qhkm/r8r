@@ -158,12 +158,7 @@ impl SandboxBackend for WasmSandbox {
             .args(&["r8r-wasm".to_string()]);
         if let Some(dir) = &artifact_dir {
             builder
-                .preopened_dir(
-                    dir.path(),
-                    "/",
-                    wasmtime_wasi::DirPerms::all(),
-                    wasmtime_wasi::FilePerms::all(),
-                )
+                .preopened_dir(dir.path(), "/", wasmtime_wasi::FsPerms::ReadWrite)
                 .map_err(|e| SandboxError::BackendUnavailable {
                     backend: backend_name.clone(),
                     reason: format!("failed to preopen artifact dir: {e}"),
