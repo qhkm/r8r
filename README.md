@@ -16,7 +16,7 @@
 
 ---
 
-**r8r** is an agent-native workflow automation engine written in Rust. While tools like n8n and Zapier were built for humans clicking through visual editors, r8r was built for the AI age — where agents need to create, execute, and orchestrate workflows programmatically. 15MB binary. 50ms cold start. Cloud to edge.
+**r8r** is an agent-native workflow automation engine written in Rust. While tools like n8n and Zapier were built for humans clicking through visual editors, r8r was built for the AI age — where agents need to create, execute, and orchestrate workflows programmatically. 15MB binary. 50ms cold start. Cloud to edge to air-gapped.
 
 ## Why r8r
 
@@ -251,6 +251,32 @@ r8r-mcp
 | `debug` | Development logging |
 
 See [Node Types](docs/NODE_TYPES.md) for full documentation.
+
+## Air-Gapped & Regulated Environments
+
+Most workflow tools assume a SaaS backend, a Node.js runtime, and an internet connection. r8r assumes none of them, so it fits networks that are deliberately cut off: government and defense, healthcare, finance, industrial control, and on-prem deployments with strict data-residency rules.
+
+- **One binary, no runtime**: no Node.js, Python, JVM, or package registry to mirror inside the enclave. Copy the binary in and run it.
+- **No phone-home**: the r8r binary makes no outbound connections of its own: no telemetry, license check, or update check. The only network calls are the ones your workflows make. OpenTelemetry export is off unless you set `R8R_OTEL_ENABLED=true`, and then it goes to the collector you choose.
+- **Local state**: workflows are YAML files and execution history lives in a local SQLite database, so nothing leaves the machine and everything can be reviewed and version-controlled.
+- **Local models**: point the `agent` node at Ollama or any OpenAI-compatible server inside your network for AI reasoning with no cloud round-trips.
+- **Internal services**: by default, HTTP nodes refuse private, link-local, and reserved addresses as SSRF protection. Inside a closed network, where the services your workflows call are internal, set `R8R_ALLOW_INTERNAL_URLS=true`.
+
+**Offline install:** on a connected machine, download the release archive for your platform and the checksums file. Verify them, carry them across, and extract:
+
+```bash
+VERSION=v0.8.2
+TARGET=x86_64-unknown-linux-gnu   # or aarch64-unknown-linux-gnu, aarch64-apple-darwin, x86_64-apple-darwin
+BASE=https://pub-55a6f9724469496aa4f0bd4214b25331.r2.dev/releases/$VERSION
+curl -fLO "$BASE/r8r-$VERSION-$TARGET.tar.gz"
+curl -fLO "$BASE/r8r-$VERSION-checksums.txt"
+shasum -a 256 -c --ignore-missing "r8r-$VERSION-checksums.txt"
+
+# inside the air-gapped network
+tar -xzf "r8r-$VERSION-$TARGET.tar.gz" && sudo install r8r r8r-mcp /usr/local/bin/
+```
+
+To build from source instead, run `cargo vendor` on a connected machine and add the config snippet it prints. Then carry the source tree across and run `cargo build --release --offline`.
 
 ## Edge & IoT
 
