@@ -12,8 +12,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use base64::{engine::general_purpose::STANDARD, Engine};
-use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
+use base64::{Engine, engine::general_purpose::STANDARD};
+use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
 use ring::pbkdf2;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
@@ -328,21 +328,21 @@ impl CredentialStore {
 
         let services: Vec<String> = self.credentials.keys().cloned().collect();
         for service in services {
-            if let Some(cred) = self.credentials.get(&service) {
-                if !cred.value.starts_with("enc:") {
-                    // Legacy credential - decrypt and re-encrypt
-                    let decoded = STANDARD.decode(&cred.value).map_err(|e| {
-                        Error::Storage(format!("Failed to decode credential: {}", e))
-                    })?;
+            if let Some(cred) = self.credentials.get(&service)
+                && !cred.value.starts_with("enc:")
+            {
+                // Legacy credential - decrypt and re-encrypt
+                let decoded = STANDARD
+                    .decode(&cred.value)
+                    .map_err(|e| Error::Storage(format!("Failed to decode credential: {}", e)))?;
 
-                    let encrypted = encrypt_data(&decoded, master_key.as_bytes(), &rng)?;
-                    let new_value = format!("enc:{}", STANDARD.encode(encrypted));
+                let encrypted = encrypt_data(&decoded, master_key.as_bytes(), &rng)?;
+                let new_value = format!("enc:{}", STANDARD.encode(encrypted));
 
-                    if let Some(cred) = self.credentials.get_mut(&service) {
-                        cred.value = new_value;
-                        cred.updated_at = chrono::Utc::now();
-                        migrated += 1;
-                    }
+                if let Some(cred) = self.credentials.get_mut(&service) {
+                    cred.value = new_value;
+                    cred.updated_at = chrono::Utc::now();
+                    migrated += 1;
                 }
             }
         }

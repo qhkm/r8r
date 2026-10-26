@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
@@ -143,19 +143,19 @@ fn resolve_field(field: &str, ctx: &NodeContext) -> Value {
         return get_path_value(&ctx.input, path).unwrap_or(Value::Null);
     }
 
-    if let Some(rest) = expr.strip_prefix("nodes.") {
-        if let Some((node_id, path)) = rest.split_once(".output") {
-            let base = ctx
-                .node_outputs
-                .get(node_id)
-                .cloned()
-                .unwrap_or(Value::Null);
-            let path = path.strip_prefix('.').unwrap_or(path);
-            if path.is_empty() {
-                return base;
-            }
-            return get_path_value(&base, path).unwrap_or(Value::Null);
+    if let Some(rest) = expr.strip_prefix("nodes.")
+        && let Some((node_id, path)) = rest.split_once(".output")
+    {
+        let base = ctx
+            .node_outputs
+            .get(node_id)
+            .cloned()
+            .unwrap_or(Value::Null);
+        let path = path.strip_prefix('.').unwrap_or(path);
+        if path.is_empty() {
+            return base;
         }
+        return get_path_value(&base, path).unwrap_or(Value::Null);
     }
 
     Value::String(field.to_string())

@@ -5,7 +5,7 @@
  * LICENSE-AGPL for a copy of the license.
  */
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -1482,10 +1482,10 @@ async fn cmd_workflows_export(name: &str, output: Option<&str>) -> anyhow::Resul
             let path = Path::new(path);
 
             // Create parent directory if needed
-            if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent)?;
-                }
+            if let Some(parent) = path.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
             }
 
             std::fs::write(path, &stored.definition)?;
@@ -1531,7 +1531,7 @@ async fn cmd_workflows_export_all(output_dir: &str) -> anyhow::Result<()> {
 }
 
 async fn cmd_workflows_dag(name: &str, show_order: bool) -> anyhow::Result<()> {
-    use r8r::workflow::{parse_workflow, WorkflowDag};
+    use r8r::workflow::{WorkflowDag, parse_workflow};
 
     let storage = get_storage()?;
 
@@ -1613,14 +1613,14 @@ async fn cmd_workflows_dag(name: &str, show_order: bool) -> anyhow::Result<()> {
 
 async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     use r8r::api::{
-        api_auth_middleware, create_api_routes, create_concurrency_limit, create_cors_layer,
-        create_monitored_routes, create_request_body_limit, ApiAuthConfig, AppState, Monitor,
-        MonitoredAppState,
+        ApiAuthConfig, AppState, Monitor, MonitoredAppState, api_auth_middleware,
+        create_api_routes, create_concurrency_limit, create_cors_layer, create_monitored_routes,
+        create_request_body_limit,
     };
     use r8r::shutdown::ShutdownCoordinator;
     use r8r::triggers::{
-        create_webhook_routes, ApprovalTimeoutChecker, DelayedEventProcessor, EventSubscriber,
-        NativeEventBackend, Scheduler,
+        ApprovalTimeoutChecker, DelayedEventProcessor, EventSubscriber, NativeEventBackend,
+        Scheduler, create_webhook_routes,
     };
     use std::sync::Arc;
     use tower_http::trace::TraceLayer;
@@ -2323,8 +2323,8 @@ fn build_registry() -> r8r::nodes::NodeRegistry {
                     Arc::new(fb)
                 } else {
                     tracing::warn!(
-                            "Firecracker unavailable (no /dev/kvm?), falling back to subprocess sandbox"
-                        );
+                        "Firecracker unavailable (no /dev/kvm?), falling back to subprocess sandbox"
+                    );
                     Arc::new(SubprocessBackend::new())
                 }
             }
@@ -2357,21 +2357,21 @@ fn get_storage() -> anyhow::Result<std::sync::Arc<dyn r8r::storage::Storage>> {
 
     // If DATABASE_URL is set and points to postgres, use PostgreSQL backend.
     // Requires the binary to be compiled with the `storage-postgres` feature.
-    if let Ok(db_url) = std::env::var("DATABASE_URL") {
-        if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
-            #[cfg(feature = "storage-postgres")]
-            {
-                let storage = tokio::runtime::Handle::current()
-                    .block_on(r8r::storage::PostgresStorage::connect(&db_url))?;
-                return Ok(std::sync::Arc::new(storage));
-            }
-            #[cfg(not(feature = "storage-postgres"))]
-            {
-                anyhow::bail!(
-                    "DATABASE_URL points to PostgreSQL but r8r was not compiled with the \
+    if let Ok(db_url) = std::env::var("DATABASE_URL")
+        && (db_url.starts_with("postgres://") || db_url.starts_with("postgresql://"))
+    {
+        #[cfg(feature = "storage-postgres")]
+        {
+            let storage = tokio::runtime::Handle::current()
+                .block_on(r8r::storage::PostgresStorage::connect(&db_url))?;
+            return Ok(std::sync::Arc::new(storage));
+        }
+        #[cfg(not(feature = "storage-postgres"))]
+        {
+            anyhow::bail!(
+                "DATABASE_URL points to PostgreSQL but r8r was not compiled with the \
                      `storage-postgres` feature. Recompile with: cargo build --features storage-postgres"
-                );
-            }
+            );
         }
     }
 
@@ -2765,7 +2765,9 @@ async fn cmd_prompt(
             match line.to_lowercase().as_str() {
                 "yes" | "y" => {
                     if !result.valid {
-                        println!("Cannot save — workflow has validation errors. Provide feedback to fix or type 'no' to discard.");
+                        println!(
+                            "Cannot save — workflow has validation errors. Provide feedback to fix or type 'no' to discard."
+                        );
                         continue;
                     }
                     true
@@ -3267,7 +3269,10 @@ async fn cmd_test(
 
     let fixture_path = Path::new(file);
     if !fixture_path.exists() {
-        anyhow::bail!("Test fixture not found: {}\n\nCreate one with:\n  tests:\n    - name: \"my test\"\n      workflow: ./workflow.yaml\n      input: {{}}\n      expected: {{}}", file);
+        anyhow::bail!(
+            "Test fixture not found: {}\n\nCreate one with:\n  tests:\n    - name: \"my test\"\n      workflow: ./workflow.yaml\n      input: {{}}\n      expected: {{}}",
+            file
+        );
     }
 
     let fixture_dir = fixture_path.parent().unwrap_or(Path::new("."));
@@ -4511,11 +4516,11 @@ fn cmd_integrations_test(service: &str, operation: &str, params_json: &str) -> a
         config["url"].as_str().unwrap_or("?")
     );
 
-    if let Some(headers) = config.get("headers") {
-        if let Some(obj) = headers.as_object() {
-            for (k, v) in obj {
-                println!("  {}: {}", k, v.as_str().unwrap_or(&v.to_string()));
-            }
+    if let Some(headers) = config.get("headers")
+        && let Some(obj) = headers.as_object()
+    {
+        for (k, v) in obj {
+            println!("  {}: {}", k, v.as_str().unwrap_or(&v.to_string()));
         }
     }
 

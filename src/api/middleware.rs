@@ -9,12 +9,12 @@
 use axum::{
     body::Body,
     extract::{Request, State},
-    http::{header::HeaderName, HeaderValue, StatusCode},
+    http::{HeaderValue, StatusCode, header::HeaderName},
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use std::time::Instant;
-use tracing::{info, warn, Span};
+use tracing::{Span, info, warn};
 use uuid::Uuid;
 
 // ============================================================================
@@ -331,7 +331,7 @@ pub async fn api_auth_middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::Body, routing::get, Router};
+    use axum::{Router, body::Body, routing::get};
     use tower::ServiceExt;
 
     async fn test_handler() -> &'static str {

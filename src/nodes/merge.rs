@@ -8,7 +8,7 @@
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
@@ -64,7 +64,7 @@ impl Node for MergeNode {
                 return Err(Error::Node(format!(
                     "Invalid merge mode '{}', expected append/combine/zip",
                     config.mode
-                )))
+                )));
             }
         };
 
@@ -123,7 +123,7 @@ fn merge_combine(sources: Vec<Value>) -> Result<Value> {
                 return Err(Error::Node(format!(
                     "merge combine mode requires object inputs, found {}",
                     type_name(&other)
-                )))
+                )));
             }
         }
     }

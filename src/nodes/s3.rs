@@ -8,7 +8,7 @@
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::debug;
 
 use super::types::{Node, NodeContext, NodeResult};
@@ -562,11 +562,11 @@ fn parse_list_response(xml: &str) -> Vec<Value> {
 
     // Extract <Key> elements (very simplified)
     for line in xml.lines() {
-        if let Some(start) = line.find("<Key>") {
-            if let Some(end) = line.find("</Key>") {
-                let key = &line[start + 5..end];
-                objects.push(json!({ "key": key }));
-            }
+        if let Some(start) = line.find("<Key>")
+            && let Some(end) = line.find("</Key>")
+        {
+            let key = &line[start + 5..end];
+            objects.push(json!({ "key": key }));
         }
     }
 

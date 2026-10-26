@@ -13,10 +13,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{debug, info, warn};
 
-use super::template::{render_body, render_template, RenderMode};
+use super::template::{RenderMode, render_body, render_template};
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
 use crate::ssrf;
@@ -287,7 +287,7 @@ impl Node for HttpNode {
                 return Err(Error::Node(format!(
                     "Unknown HTTP method: {}",
                     config.method
-                )))
+                )));
             }
         };
 
@@ -304,15 +304,15 @@ impl Node for HttpNode {
         }
 
         // Add headers
-        if let Some(headers) = &config.headers {
-            if let Some(headers_obj) = headers.as_object() {
-                for (key, value) in headers_obj {
-                    let header_value = match value {
-                        Value::String(s) => render_template(s, ctx, RenderMode::Compact),
-                        _ => value.to_string(),
-                    };
-                    request = request.header(key, header_value);
-                }
+        if let Some(headers) = &config.headers
+            && let Some(headers_obj) = headers.as_object()
+        {
+            for (key, value) in headers_obj {
+                let header_value = match value {
+                    Value::String(s) => render_template(s, ctx, RenderMode::Compact),
+                    _ => value.to_string(),
+                };
+                request = request.header(key, header_value);
             }
         }
 
@@ -454,7 +454,8 @@ mod tests {
     #[test]
     fn test_render_template_env_allowed() {
         // R8R_* prefixed variables are always allowed
-        std::env::set_var("R8R_TEST_VAR", "test_value");
+        // SAFETY: test-only; the variable is unique to this test.
+        unsafe { std::env::set_var("R8R_TEST_VAR", "test_value") };
         let ctx = NodeContext::new("exec-1", "test");
 
         let result = render_template("Value: {{ env.R8R_TEST_VAR }}", &ctx, RenderMode::Compact);
@@ -464,7 +465,8 @@ mod tests {
     #[test]
     fn test_render_template_env_blocked() {
         // Non-R8R_* variables are blocked by default
-        std::env::set_var("SECRET_KEY", "super_secret");
+        // SAFETY: test-only; the variable is unique to this test.
+        unsafe { std::env::set_var("SECRET_KEY", "super_secret") };
         let ctx = NodeContext::new("exec-1", "test");
 
         let result = render_template("Value: {{ env.SECRET_KEY }}", &ctx, RenderMode::Compact);
@@ -476,15 +478,18 @@ mod tests {
     #[test]
     fn test_render_template_env_allowlist() {
         // Variables in R8R_ALLOWED_ENV_VARS are permitted
-        std::env::set_var("R8R_ALLOWED_ENV_VARS", "CUSTOM_VAR, ANOTHER_VAR");
-        std::env::set_var("CUSTOM_VAR", "custom_value");
+        // SAFETY: test-only; the variable is unique to this test.
+        unsafe { std::env::set_var("R8R_ALLOWED_ENV_VARS", "CUSTOM_VAR, ANOTHER_VAR") };
+        // SAFETY: test-only; the variable is unique to this test.
+        unsafe { std::env::set_var("CUSTOM_VAR", "custom_value") };
         let ctx = NodeContext::new("exec-1", "test");
 
         let result = render_template("Value: {{ env.CUSTOM_VAR }}", &ctx, RenderMode::Compact);
         assert!(result.contains("custom_value"));
 
         // Clean up
-        std::env::remove_var("R8R_ALLOWED_ENV_VARS");
+        // SAFETY: test-only; the variable is unique to this test.
+        unsafe { std::env::remove_var("R8R_ALLOWED_ENV_VARS") };
     }
 
     #[tokio::test]

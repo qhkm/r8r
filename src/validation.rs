@@ -38,7 +38,7 @@
 //!             minimum: 1
 //! ```
 
-use jsonschema::{validator_for, ValidationError, Validator};
+use jsonschema::{ValidationError, Validator, validator_for};
 use serde_json::Value;
 
 use crate::error::{Error, Result};

@@ -189,22 +189,26 @@ nodes:
     fn test_parse_empty_workflow() {
         let result = parse_workflow("");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .to_lowercase()
-            .contains("empty workflow"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .to_lowercase()
+                .contains("empty workflow")
+        );
     }
 
     #[test]
     fn test_parse_invalid_yaml() {
         let result = parse_workflow("name: [broken");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .to_lowercase()
-            .contains("invalid yaml"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .to_lowercase()
+                .contains("invalid yaml")
+        );
     }
 
     #[test]
@@ -218,9 +222,11 @@ nodes:
 "#;
         let result = parse_workflow(yaml);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Missing required field: name"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Missing required field: name")
+        );
     }
 }

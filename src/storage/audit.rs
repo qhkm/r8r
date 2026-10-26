@@ -7,11 +7,11 @@
 //! Unified audit log for workflow engine events.
 
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Row};
+use rusqlite::{Row, params};
 use serde::{Deserialize, Serialize};
 
-use super::sqlite::parse_datetime_utc;
 use super::SqliteStorage;
+use super::sqlite::parse_datetime_utc;
 use crate::error::Result;
 
 /// Maximum number of audit entries returned in a single query.

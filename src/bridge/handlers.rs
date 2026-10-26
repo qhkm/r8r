@@ -20,8 +20,8 @@ use crate::mcp::tools::inject_approval_decision_into_checkpoint;
 use crate::metrics;
 use crate::workflow::parse_workflow;
 
-use super::events::{BridgeEvent, BridgeEventEnvelope};
 use super::BridgeState;
+use super::events::{BridgeEvent, BridgeEventEnvelope};
 
 /// Dispatch an incoming event from ZeptoClaw to the appropriate handler.
 ///
@@ -166,14 +166,14 @@ async fn handle_approval_decision(data: &Value, bridge: &std::sync::Arc<BridgeSt
             }
 
             // Check if expired
-            if let Some(expires_at) = approval.expires_at {
-                if Utc::now() > expires_at {
-                    warn!(
-                        "Bridge: approval {} has expired, ignoring decision",
-                        approval_id
-                    );
-                    return;
-                }
+            if let Some(expires_at) = approval.expires_at
+                && Utc::now() > expires_at
+            {
+                warn!(
+                    "Bridge: approval {} has expired, ignoring decision",
+                    approval_id
+                );
+                return;
             }
 
             let normalized_decision = match decision {

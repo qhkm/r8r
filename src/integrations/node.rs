@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
 /// Characters that must be percent-encoded inside a URL query *value*
 /// (RFC 3986 `query` production, plus the sub-delims/space that would
@@ -36,7 +36,7 @@ pub const QUERY_VALUE_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'[')
     .add(b']');
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tracing::debug;
 
 use crate::error::{Error, Result};
@@ -106,21 +106,21 @@ pub fn substitute_params_in_string(template: &str, resolved: &HashMap<String, Va
 pub fn extract_param_ref(template: &str) -> Option<String> {
     let trimmed = template.trim();
     // Try spaced variant: {{ params.X }}
-    if let Some(inner) = trimmed.strip_prefix("{{ params.") {
-        if let Some(name) = inner.strip_suffix(" }}") {
-            let name = name.trim();
-            if !name.is_empty() && !name.contains(' ') {
-                return Some(name.to_string());
-            }
+    if let Some(inner) = trimmed.strip_prefix("{{ params.")
+        && let Some(name) = inner.strip_suffix(" }}")
+    {
+        let name = name.trim();
+        if !name.is_empty() && !name.contains(' ') {
+            return Some(name.to_string());
         }
     }
     // Try compact variant: {{params.X}}
-    if let Some(inner) = trimmed.strip_prefix("{{params.") {
-        if let Some(name) = inner.strip_suffix("}}") {
-            let name = name.trim();
-            if !name.is_empty() && !name.contains(' ') {
-                return Some(name.to_string());
-            }
+    if let Some(inner) = trimmed.strip_prefix("{{params.")
+        && let Some(name) = inner.strip_suffix("}}")
+    {
+        let name = name.trim();
+        if !name.is_empty() && !name.contains(' ') {
+            return Some(name.to_string());
         }
     }
     None
@@ -292,18 +292,18 @@ pub fn build_http_config(
     // Inject credential into the declared API-key header (e.g. `x-api-key`,
     // `X-BB-API-Key`) when the integration uses `type: api_key` auth and the
     // executor consumes `auth_type: header:<name>`.
-    if let Some(cred) = credential {
-        if let Some(auth) = &def.auth {
-            for method in &auth.methods {
-                if let crate::integrations::definition::AuthMethod::ApiKey {
-                    header_name: Some(hdr),
-                    ..
-                } = method
-                {
-                    headers_map
-                        .entry(hdr.clone())
-                        .or_insert(Value::String(cred.to_string()));
-                }
+    if let Some(cred) = credential
+        && let Some(auth) = &def.auth
+    {
+        for method in &auth.methods {
+            if let crate::integrations::definition::AuthMethod::ApiKey {
+                header_name: Some(hdr),
+                ..
+            } = method
+            {
+                headers_map
+                    .entry(hdr.clone())
+                    .or_insert(Value::String(cred.to_string()));
             }
         }
     }

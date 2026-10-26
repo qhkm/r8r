@@ -7,8 +7,8 @@
 
 //! Integration tests for n8n migration.
 
-use r8r::migrate::n8n::convert_n8n_workflow;
 use r8r::migrate::WarningCategory;
+use r8r::migrate::n8n::convert_n8n_workflow;
 
 #[test]
 fn test_migrate_simple_http() {
@@ -47,10 +47,12 @@ fn test_migrate_expressions() {
     let result = convert_n8n_workflow(input).unwrap();
 
     // Should have credential warnings
-    assert!(result
-        .warnings
-        .iter()
-        .any(|w| w.category == WarningCategory::CredentialReference));
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.category == WarningCategory::CredentialReference)
+    );
 
     // Should have nodes
     assert!(!result.workflow.nodes.is_empty());

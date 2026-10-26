@@ -9,14 +9,14 @@
 use std::collections::HashMap;
 
 use axum::{
+    Json, Router,
     body::Bytes,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{error, warn};
 
 use super::AppState;
@@ -123,7 +123,7 @@ mod tests {
     use std::sync::Arc;
 
     use axum::{
-        body::{to_bytes, Body},
+        body::{Body, to_bytes},
         http::Request,
     };
     use tower::ServiceExt;
@@ -147,9 +147,10 @@ mod tests {
     impl EnvGuard {
         fn set(name: &'static str, value: Option<&str>) -> Self {
             let original = std::env::var(name).ok();
+            // SAFETY: test-only; callers hold ENV_LOCK.
             match value {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
+                Some(value) => unsafe { std::env::set_var(name, value) },
+                None => unsafe { std::env::remove_var(name) },
             }
             Self { name, original }
         }
@@ -157,9 +158,10 @@ mod tests {
 
     impl Drop for EnvGuard {
         fn drop(&mut self) {
+            // SAFETY: test-only; callers hold ENV_LOCK.
             match self.original.as_deref() {
-                Some(value) => std::env::set_var(self.name, value),
-                None => std::env::remove_var(self.name),
+                Some(value) => unsafe { std::env::set_var(self.name, value) },
+                None => unsafe { std::env::remove_var(self.name) },
             }
         }
     }

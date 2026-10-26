@@ -97,14 +97,14 @@ impl ReplGuardrails {
                 name
             ));
         }
-        if let Some(allow) = &self.allow {
-            if !allow.contains(name) {
-                return Err(format!(
-                    "Tool '{}' is not in the guardrail allowlist. Allowed: {}",
-                    name,
-                    allow.iter().cloned().collect::<Vec<_>>().join(", ")
-                ));
-            }
+        if let Some(allow) = &self.allow
+            && !allow.contains(name)
+        {
+            return Err(format!(
+                "Tool '{}' is not in the guardrail allowlist. Allowed: {}",
+                name,
+                allow.iter().cloned().collect::<Vec<_>>().join(", ")
+            ));
         }
         Ok(())
     }
@@ -117,21 +117,21 @@ impl ReplGuardrails {
         };
         self.turn_cost += cost;
         self.session_cost += cost;
-        if let Some(max) = self.max_cost_per_turn {
-            if self.turn_cost > max {
-                return Err(format!(
-                    "Turn cost limit reached: ${:.3} used this turn (max ${:.2}).",
-                    self.turn_cost, max
-                ));
-            }
+        if let Some(max) = self.max_cost_per_turn
+            && self.turn_cost > max
+        {
+            return Err(format!(
+                "Turn cost limit reached: ${:.3} used this turn (max ${:.2}).",
+                self.turn_cost, max
+            ));
         }
-        if let Some(max) = self.max_cost_per_session {
-            if self.session_cost > max {
-                return Err(format!(
-                    "Session cost limit reached: ${:.3} used total (max ${:.2}).",
-                    self.session_cost, max
-                ));
-            }
+        if let Some(max) = self.max_cost_per_session
+            && self.session_cost > max
+        {
+            return Err(format!(
+                "Session cost limit reached: ${:.3} used total (max ${:.2}).",
+                self.session_cost, max
+            ));
         }
         Ok(())
     }
@@ -245,9 +245,10 @@ mod tests {
         // ~10k prompt tokens on gpt-4o-mini ≈ $0.0015; stay under budget.
         assert!(g.record_usage("gpt-4o-mini", &usage(10_000, 500)).is_ok());
         // ~200k prompt tokens ≈ $0.03 > $0.01 budget.
-        assert!(g
-            .record_usage("gpt-4o-mini", &usage(200_000, 10_000))
-            .is_err());
+        assert!(
+            g.record_usage("gpt-4o-mini", &usage(200_000, 10_000))
+                .is_err()
+        );
     }
 
     #[test]
@@ -260,9 +261,10 @@ mod tests {
         g.begin_turn();
         assert!(g.record_usage("gpt-4o-mini", &usage(10_000, 500)).is_ok());
         g.begin_turn();
-        assert!(g
-            .record_usage("gpt-4o-mini", &usage(90_000, 5_000))
-            .is_err());
+        assert!(
+            g.record_usage("gpt-4o-mini", &usage(90_000, 5_000))
+                .is_err()
+        );
     }
 
     #[test]
@@ -281,8 +283,9 @@ mod tests {
             ..Default::default()
         });
         g.begin_turn();
-        assert!(g
-            .record_usage("ollama/llama3", &usage(1_000_000, 1_000_000))
-            .is_ok());
+        assert!(
+            g.record_usage("ollama/llama3", &usage(1_000_000, 1_000_000))
+                .is_ok()
+        );
     }
 }

@@ -11,7 +11,7 @@ use chrono::{
     DateTime, Datelike, Duration, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};

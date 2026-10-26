@@ -396,10 +396,10 @@ fn should_send_event(
             _ => None,
         };
 
-        if let Some(wf) = event_workflow {
-            if wf != filter_workflow {
-                return false;
-            }
+        if let Some(wf) = event_workflow
+            && wf != filter_workflow
+        {
+            return false;
         }
     }
 

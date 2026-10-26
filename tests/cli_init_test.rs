@@ -17,8 +17,10 @@ fn test_detect_env_key_missing() {
 
 #[test]
 fn test_detect_env_key_present() {
-    std::env::set_var("R8R_TEST_INIT_KEY", "test-value");
+    // SAFETY: test-only; the variable is unique to this test.
+    unsafe { std::env::set_var("R8R_TEST_INIT_KEY", "test-value") };
     let result = detect_env_key("R8R_TEST_INIT_KEY");
     assert!(result.detected);
-    std::env::remove_var("R8R_TEST_INIT_KEY");
+    // SAFETY: test-only; the variable is unique to this test.
+    unsafe { std::env::remove_var("R8R_TEST_INIT_KEY") };
 }

@@ -10,10 +10,10 @@
 //! Built with React + Tailwind CSS + React Flow, served as static files.
 
 use axum::{
+    Router,
     http::StatusCode,
     response::{Html, IntoResponse, Response},
     routing::get,
-    Router,
 };
 use std::path::Path;
 

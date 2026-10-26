@@ -31,13 +31,13 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 use wasmtime::{Config as WtConfig, Engine, Linker, Module, Store};
 use wasmtime_environ::Trap;
-use wasmtime_wasi::p1::{add_to_linker_async, WasiP1Ctx};
+use wasmtime_wasi::p1::{WasiP1Ctx, add_to_linker_async};
 use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 use wasmtime_wasi::{I32Exit, WasiCtxBuilder};
 

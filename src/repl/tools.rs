@@ -11,7 +11,7 @@ use crate::engine::Executor;
 use crate::llm::LlmConfig;
 use crate::storage::Storage;
 use crate::workflow::{parse_workflow, validate_workflow};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::debug;
 
@@ -272,7 +272,7 @@ async fn exec_execute(storage: &dyn Storage, executor: &Arc<Executor>, args: &Va
     let stored = match storage.get_workflow(workflow_name).await {
         Ok(Some(wf)) => wf,
         Ok(None) => {
-            return json!({"error": format!("Workflow not found: {}", workflow_name)}).to_string()
+            return json!({"error": format!("Workflow not found: {}", workflow_name)}).to_string();
         }
         Err(e) => return json!({"error": e.to_string()}).to_string(),
     };
@@ -494,7 +494,7 @@ async fn exec_approve(storage: &dyn Storage, args: &Value) -> String {
         Ok(Some(a)) => a,
         Ok(None) => {
             return json!({"error": format!("Approval request not found: {}", approval_id)})
-                .to_string()
+                .to_string();
         }
         Err(e) => return json!({"error": e.to_string()}).to_string(),
     };

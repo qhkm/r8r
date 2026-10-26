@@ -10,19 +10,19 @@
 //! network isolation. Requires Docker daemon to be running.
 
 use async_trait::async_trait;
+use bollard::Docker;
 use bollard::container::{
     Config as ContainerConfig, CreateContainerOptions, LogOutput, LogsOptions,
     RemoveContainerOptions, StartContainerOptions, WaitContainerOptions,
 };
 use bollard::models::HostConfig;
-use bollard::Docker;
 use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
 use super::{
-    collect_output_artifacts, SandboxBackend, SandboxError, SandboxRequest, SandboxResult,
+    SandboxBackend, SandboxError, SandboxRequest, SandboxResult, collect_output_artifacts,
 };
 use crate::config::SandboxDockerConfig;
 
@@ -83,7 +83,7 @@ impl DockerBackend {
             other => {
                 return Err(SandboxError::RuntimeNotFound {
                     runtime: other.to_string(),
-                })
+                });
             }
         };
 

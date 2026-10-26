@@ -9,14 +9,14 @@
 //! Handles HTTP webhook triggers for workflows with debouncing support.
 
 use axum::{
+    Json, Router,
     body::Bytes,
     extract::State,
     http::{HeaderMap, Method, StatusCode},
     response::IntoResponse,
     routing::{any, get, post},
-    Json, Router,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -24,7 +24,7 @@ use tracing::{debug, error, info, warn};
 use crate::api::AppState;
 use crate::nodes::NodeRegistry;
 use crate::storage::Storage;
-use crate::workflow::{parse_workflow, DebounceConfig, HeaderFilter, Trigger};
+use crate::workflow::{DebounceConfig, HeaderFilter, Trigger, parse_workflow};
 
 /// Maximum allowed length for header filter regex patterns (ReDoS guard).
 const MAX_HEADER_PATTERN_LEN: usize = 128;
@@ -216,18 +216,18 @@ async fn handle_webhook(
     debounce_config: Option<DebounceConfig>,
     header_filters: Option<Vec<CompiledHeaderFilter>>,
     response_mode: Option<String>,
-) -> impl IntoResponse {
+) -> impl IntoResponse + use<> {
     info!("Webhook triggered for workflow '{}'", workflow_name);
 
     // Check header filters first
-    if let Some(filters) = header_filters {
-        if !check_header_filters(&filters, &headers) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "Header filter conditions not met"})),
-            )
-                .into_response();
-        }
+    if let Some(filters) = header_filters
+        && !check_header_filters(&filters, &headers)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Header filter conditions not met"})),
+        )
+            .into_response();
     }
 
     // Parse body
@@ -318,25 +318,25 @@ fn check_header_filters(filters: &[CompiledHeaderFilter], headers: &HeaderMap) -
             };
 
             // Check exact match
-            if let Some(expected) = &filter.value {
-                if value_str != expected {
-                    debug!(
-                        "Header '{}' value '{}' doesn't match expected '{}'",
-                        filter.name, value_str, expected
-                    );
-                    return false;
-                }
+            if let Some(expected) = &filter.value
+                && value_str != expected
+            {
+                debug!(
+                    "Header '{}' value '{}' doesn't match expected '{}'",
+                    filter.name, value_str, expected
+                );
+                return false;
             }
 
             // Check pre-compiled pattern match
-            if let Some(regex) = &filter.compiled_pattern {
-                if !regex.is_match(value_str) {
-                    debug!(
-                        "Header '{}' value '{}' doesn't match pattern",
-                        filter.name, value_str
-                    );
-                    return false;
-                }
+            if let Some(regex) = &filter.compiled_pattern
+                && !regex.is_match(value_str)
+            {
+                debug!(
+                    "Header '{}' value '{}' doesn't match pattern",
+                    filter.name, value_str
+                );
+                return false;
             }
         }
     }
@@ -391,7 +391,7 @@ async fn execute_webhook_workflow(
     headers: HeaderMap,
     body_value: Value,
     response_mode: Option<String>,
-) -> impl IntoResponse {
+) -> impl IntoResponse + use<> {
     // Get workflow
     let stored = match state.storage.get_workflow(workflow_name).await {
         Ok(Some(w)) => w,
@@ -523,35 +523,41 @@ mod tests {
         headers.insert("X-Event-Type", HeaderValue::from_static("push"));
         headers.insert("X-Signature", HeaderValue::from_static("sha256=abc123"));
 
-        let filters = vec![CompiledHeaderFilter::compile(&HeaderFilter {
-            name: "X-Event-Type".to_string(),
-            value: Some("push".to_string()),
-            pattern: None,
-            required: true,
-        })
-        .unwrap()];
+        let filters = vec![
+            CompiledHeaderFilter::compile(&HeaderFilter {
+                name: "X-Event-Type".to_string(),
+                value: Some("push".to_string()),
+                pattern: None,
+                required: true,
+            })
+            .unwrap(),
+        ];
 
         assert!(check_header_filters(&filters, &headers));
 
         // Test with pattern filter
-        let filters_pattern = vec![CompiledHeaderFilter::compile(&HeaderFilter {
-            name: "X-Signature".to_string(),
-            value: None,
-            pattern: Some(r"^sha256=.*".to_string()),
-            required: true,
-        })
-        .unwrap()];
+        let filters_pattern = vec![
+            CompiledHeaderFilter::compile(&HeaderFilter {
+                name: "X-Signature".to_string(),
+                value: None,
+                pattern: Some(r"^sha256=.*".to_string()),
+                required: true,
+            })
+            .unwrap(),
+        ];
 
         assert!(check_header_filters(&filters_pattern, &headers));
 
         // Test with missing required header
-        let filters_missing = vec![CompiledHeaderFilter::compile(&HeaderFilter {
-            name: "X-Missing".to_string(),
-            value: None,
-            pattern: None,
-            required: true,
-        })
-        .unwrap()];
+        let filters_missing = vec![
+            CompiledHeaderFilter::compile(&HeaderFilter {
+                name: "X-Missing".to_string(),
+                value: None,
+                pattern: None,
+                required: true,
+            })
+            .unwrap(),
+        ];
 
         assert!(!check_header_filters(&filters_missing, &headers));
     }

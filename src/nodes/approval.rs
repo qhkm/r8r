@@ -9,12 +9,12 @@
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::info;
 
 use crate::engine::executor::emit_audit;
 use crate::error::{Error, Result};
-use crate::notifications::{send_approval_notifications, NotifyChannel, NotifyContext};
+use crate::notifications::{NotifyChannel, NotifyContext, send_approval_notifications};
 use crate::storage::{ApprovalRequest, AuditEventType};
 
 use super::types::{Node, NodeContext, NodeResult};
@@ -79,13 +79,14 @@ impl Node for ApprovalNode {
             ));
         }
 
-        if let Some(action) = &config.default_action {
-            if action != "approve" && action != "reject" {
-                return Err(Error::Node(format!(
-                    "default_action must be \"approve\" or \"reject\", got \"{}\"",
-                    action
-                )));
-            }
+        if let Some(action) = &config.default_action
+            && action != "approve"
+            && action != "reject"
+        {
+            return Err(Error::Node(format!(
+                "default_action must be \"approve\" or \"reject\", got \"{}\"",
+                action
+            )));
         }
 
         let approval_id = uuid::Uuid::new_v4().to_string();

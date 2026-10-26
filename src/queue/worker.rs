@@ -28,7 +28,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
-use super::{JobQueue, RunJob, DEFAULT_STALE_JOB_SECS};
+use super::{DEFAULT_STALE_JOB_SECS, JobQueue, RunJob};
 use crate::engine::executor::{ExecutionMetadata, Executor};
 use crate::error::Result;
 use crate::nodes::NodeRegistry;

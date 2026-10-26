@@ -1,6 +1,6 @@
 //! Tests for retry backoff cap (max_delay_seconds) and jitter deserialization.
 
-use r8r::workflow::{parse_workflow, BackoffType};
+use r8r::workflow::{BackoffType, parse_workflow};
 
 #[test]
 fn test_backoff_cap_deserialization() {

@@ -290,10 +290,10 @@ pub mod mock {
             idempotency_key: Option<String>,
         ) -> Result<Execution, Box<ApiErrorEnvelope>> {
             // Check idempotency
-            if let Some(key) = &idempotency_key {
-                if let Some(exec_id) = self.idempotency_keys.get(key) {
-                    return Err(Box::new(ApiErrorEnvelope::idempotency_conflict(exec_id)));
-                }
+            if let Some(key) = &idempotency_key
+                && let Some(exec_id) = self.idempotency_keys.get(key)
+            {
+                return Err(Box::new(ApiErrorEnvelope::idempotency_conflict(exec_id)));
             }
 
             // Create execution

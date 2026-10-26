@@ -8,7 +8,7 @@
 //!
 //! Tracks multi-turn messages and manages context window size.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Manages the conversation history for a REPL session.
 #[derive(Clone)]
@@ -72,12 +72,13 @@ impl Conversation {
                 _ => {}
             }
 
-            if snippets.len() < 6 && (role == "user" || role == "assistant") {
-                if let Some(content) = m.get("content").and_then(|v| v.as_str()) {
-                    let compact = content.replace('\n', " ");
-                    let trimmed = compact.chars().take(100).collect::<String>();
-                    snippets.push(format!("{}: {}", role, trimmed));
-                }
+            if snippets.len() < 6
+                && (role == "user" || role == "assistant")
+                && let Some(content) = m.get("content").and_then(|v| v.as_str())
+            {
+                let compact = content.replace('\n', " ");
+                let trimmed = compact.chars().take(100).collect::<String>();
+                snippets.push(format!("{}: {}", role, trimmed));
             }
         }
 

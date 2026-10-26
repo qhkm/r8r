@@ -27,7 +27,7 @@ use std::time::Duration;
 use redis::AsyncCommands;
 use tracing::{debug, warn};
 
-use super::{JobQueue, RunJob, DEFAULT_STALE_JOB_SECS};
+use super::{DEFAULT_STALE_JOB_SECS, JobQueue, RunJob};
 use crate::error::Result;
 
 /// Prefix for all r8r queue keys.

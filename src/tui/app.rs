@@ -247,10 +247,10 @@ impl App {
                     self.history_selected =
                         Some(self.history_selected.map(|s| (s + 1).min(max)).unwrap_or(0));
                     // Adjust scroll to keep selection visible
-                    if let Some(sel) = self.history_selected {
-                        if sel >= self.history_scroll + 20 {
-                            self.history_scroll = sel.saturating_sub(19);
-                        }
+                    if let Some(sel) = self.history_selected
+                        && sel >= self.history_scroll + 20
+                    {
+                        self.history_scroll = sel.saturating_sub(19);
                     }
                 }
                 true
@@ -262,24 +262,22 @@ impl App {
                             .map(|s| s.saturating_sub(1))
                             .unwrap_or(0),
                     );
-                    if let Some(sel) = self.history_selected {
-                        if sel < self.history_scroll {
-                            self.history_scroll = sel;
-                        }
+                    if let Some(sel) = self.history_selected
+                        && sel < self.history_scroll
+                    {
+                        self.history_scroll = sel;
                     }
                 }
                 true
             }
             KeyCode::Enter => {
                 // Load the selected execution's workflow into the DAG
-                if let Some(sel) = self.history_selected {
-                    if let Some(exec) = self.history.get(sel) {
-                        let workflow_name = exec.workflow_name.clone();
-                        if let Some(idx) =
-                            self.workflows.iter().position(|w| w.name == workflow_name)
-                        {
-                            self.load_dag_from_workflow(idx);
-                        }
+                if let Some(sel) = self.history_selected
+                    && let Some(exec) = self.history.get(sel)
+                {
+                    let workflow_name = exec.workflow_name.clone();
+                    if let Some(idx) = self.workflows.iter().position(|w| w.name == workflow_name) {
+                        self.load_dag_from_workflow(idx);
                     }
                 }
                 true

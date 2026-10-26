@@ -23,8 +23,8 @@ use std::time::Duration;
 use async_imap::Client;
 use base64::Engine as _;
 use futures_util::StreamExt;
-use mailparse::{addrparse, dateparse, parse_mail, DispositionType, MailAddr, ParsedMail};
-use serde_json::{json, Value};
+use mailparse::{DispositionType, MailAddr, ParsedMail, addrparse, dateparse, parse_mail};
+use serde_json::{Value, json};
 use tokio_rustls::rustls;
 use tracing::{debug, warn};
 
@@ -388,10 +388,8 @@ fn walk_attachments(part: &ParsedMail, include_data: bool, max: usize, out: &mut
         "content_type": part.ctype.mimetype,
         "size": part.raw_bytes.len(),
     });
-    if include_data {
-        if let Ok(bytes) = part.get_body_raw() {
-            item["data"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
-        }
+    if include_data && let Ok(bytes) = part.get_body_raw() {
+        item["data"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
     }
     out.push(item);
 }
@@ -524,10 +522,12 @@ mod tests {
         let event = mail_to_event(&parse(raw), None, "INBOX", false, 16);
 
         assert!(event["text"].as_str().unwrap().contains("Plain body"));
-        assert!(event["html"]
-            .as_str()
-            .unwrap()
-            .contains("<p>HTML body.</p>"));
+        assert!(
+            event["html"]
+                .as_str()
+                .unwrap()
+                .contains("<p>HTML body.</p>")
+        );
     }
 
     #[test]

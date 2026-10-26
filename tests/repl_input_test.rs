@@ -1,4 +1,4 @@
-use r8r::repl::input::{parse_input, InputCommand};
+use r8r::repl::input::{InputCommand, parse_input};
 
 #[test]
 fn test_slash_run() {

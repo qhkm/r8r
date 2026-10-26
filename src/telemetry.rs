@@ -16,16 +16,15 @@
 //! - `R8R_OTEL_SERVICE_NAME`: Service name for traces (default: r8r)
 //! - `R8R_OTEL_SAMPLE_RATE`: Sampling rate 0.0-1.0 (default: 1.0)
 
-use opentelemetry::trace::TracerProvider;
 use opentelemetry::KeyValue;
+use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
-    runtime,
+    Resource, runtime,
     trace::{RandomIdGenerator, Sampler, TracerProvider as SdkTracerProvider},
-    Resource,
 };
 use tracing::info;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
+use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Configuration for OpenTelemetry.
 #[derive(Debug, Clone)]
@@ -128,10 +127,10 @@ pub fn init_telemetry(
 
 /// Shutdown OpenTelemetry tracing gracefully.
 pub fn shutdown_telemetry(provider: Option<SdkTracerProvider>) {
-    if let Some(provider) = provider {
-        if let Err(e) = provider.shutdown() {
-            tracing::error!("Failed to shutdown OpenTelemetry provider: {:?}", e);
-        }
+    if let Some(provider) = provider
+        && let Err(e) = provider.shutdown()
+    {
+        tracing::error!("Failed to shutdown OpenTelemetry provider: {:?}", e);
     }
 }
 

@@ -11,9 +11,9 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::types::{Node, NodeContext, NodeResult};
 #[cfg(feature = "document")]
 use super::DocumentNode;
+use super::types::{Node, NodeContext, NodeResult};
 use super::{
     AgentNode, AggregateNode, ApprovalNode, CryptoNode, DatabaseNode, DateTimeNode, DebugNode,
     DedupeNode, DiscordNode, EmailNode, FilterNode, GoogleSheetsNode, HttpNode, IfNode, LimitNode,

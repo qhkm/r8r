@@ -7,7 +7,7 @@
 //! Dead Letter Queue for failed workflow executions.
 
 use chrono::{DateTime, Utc};
-use rusqlite::{params, OptionalExtension, Row};
+use rusqlite::{OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

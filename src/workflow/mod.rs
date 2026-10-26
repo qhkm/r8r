@@ -20,14 +20,14 @@ mod types;
 mod validator;
 
 pub use cache::{CacheStats, WorkflowCache};
-pub use dag::{map_workflow_outputs, WorkflowDag, WorkflowDependency};
+pub use dag::{WorkflowDag, WorkflowDependency, map_workflow_outputs};
 pub use parameters::{
-    get_parameter_info, merge_params, parse_cli_params, validate_parameters, ParameterInfo,
+    ParameterInfo, get_parameter_info, merge_params, parse_cli_params, validate_parameters,
 };
 pub use parser::{parse_workflow, parse_workflow_file};
 pub use schema::{
-    export_workflow_yaml, validate_workflow_yaml, workflow_schema, ValidationError,
-    WorkflowSchemaValidator,
+    ValidationError, WorkflowSchemaValidator, export_workflow_yaml, validate_workflow_yaml,
+    workflow_schema,
 };
 pub use types::*;
 pub use validator::{validate_workflow, validate_workflow_with_registry};

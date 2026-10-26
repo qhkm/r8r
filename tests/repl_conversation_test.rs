@@ -66,8 +66,10 @@ fn test_context_window_summarizes_overflow() {
     let msgs = conv.messages_for_llm();
     assert_eq!(msgs.len(), 4);
     assert_eq!(msgs[0]["role"], "system");
-    assert!(msgs[0]["content"]
-        .as_str()
-        .unwrap()
-        .contains("Previous context summarized"));
+    assert!(
+        msgs[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Previous context summarized")
+    );
 }

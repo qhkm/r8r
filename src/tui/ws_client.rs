@@ -8,7 +8,7 @@
 
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::{debug, error, info, warn};
 
 use crate::api::MonitorEvent;

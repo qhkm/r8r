@@ -58,12 +58,13 @@ pub fn check_ssrf(url: &str) -> Result<(), String> {
         // `host_str()` keeps the brackets around IPv6 literals; strip them so
         // the address parses. (IPv4 literals arrive already normalized.)
         let literal = host.trim_start_matches('[').trim_end_matches(']');
-        if let Ok(ip) = literal.parse::<IpAddr>() {
-            if is_private_or_special_ip(&ip) {
-                return Err(
-                    "Access to private or internal IP addresses is not allowed for security reasons.".to_string(),
-                );
-            }
+        if let Ok(ip) = literal.parse::<IpAddr>()
+            && is_private_or_special_ip(&ip)
+        {
+            return Err(
+                "Access to private or internal IP addresses is not allowed for security reasons."
+                    .to_string(),
+            );
         }
 
         if host_lower.ends_with(".local")

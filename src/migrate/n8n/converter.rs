@@ -18,9 +18,9 @@ use crate::error::Result;
 use crate::migrate::{MigrateResult, MigrateWarning, WarningCategory};
 use crate::workflow::{Node, Trigger, Workflow, WorkflowSettings};
 
-use super::expressions::{transpile_all_expressions, TranspileResult};
+use super::expressions::{TranspileResult, transpile_all_expressions};
 use super::node_map::{is_trigger_node, map_node};
-use super::parser::{parse_n8n_workflow, N8nNode, N8nNodeConnections};
+use super::parser::{N8nNode, N8nNodeConnections, parse_n8n_workflow};
 
 // ── Public API ──────────────────────────────────────────────────────────
 

@@ -7,14 +7,14 @@
 //! Workflow executor.
 
 use chrono::Utc;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
 use tokio::time::{sleep, timeout};
-use tracing::{debug, error, info, instrument, warn, Span};
+use tracing::{Span, debug, error, info, instrument, warn};
 
 /// Registry that tracks per-execution pause signals.
 ///
@@ -57,8 +57,8 @@ impl PauseRegistry {
     }
 }
 
-use crate::bridge::events::BridgeEvent;
 use crate::bridge::BridgeState;
+use crate::bridge::events::BridgeEvent;
 use crate::metrics;
 
 use crate::api::Monitor;
@@ -71,7 +71,7 @@ use crate::storage::{
     AuditEntry, AuditEventType, Checkpoint, Execution, ExecutionStatus, NodeExecution, Storage,
 };
 use crate::workflow::{
-    parse_workflow, BackoffType, Node as WorkflowNode, OnErrorAction, RetryConfig, Workflow,
+    BackoffType, Node as WorkflowNode, OnErrorAction, RetryConfig, Workflow, parse_workflow,
 };
 
 /// Default number of DLQ retries for failed executions.
@@ -394,17 +394,17 @@ impl Executor {
         let store_traces = workflow.settings.store_traces;
 
         // Check rate limit if configured
-        if let Some(ref rate_limiter) = self.rate_limiter {
-            if !rate_limiter.try_acquire(&workflow.name) {
-                warn!(
-                    workflow_name = %workflow.name,
-                    "Rate limit exceeded for workflow"
-                );
-                return Err(Error::Execution(format!(
-                    "Rate limit exceeded for workflow '{}'",
-                    workflow.name
-                )));
-            }
+        if let Some(ref rate_limiter) = self.rate_limiter
+            && !rate_limiter.try_acquire(&workflow.name)
+        {
+            warn!(
+                workflow_name = %workflow.name,
+                "Rate limit exceeded for workflow"
+            );
+            return Err(Error::Execution(format!(
+                "Rate limit exceeded for workflow '{}'",
+                workflow.name
+            )));
         }
 
         // Validate and process parameters
@@ -1103,7 +1103,9 @@ impl Executor {
                 if items.len() > max_items {
                     let message = format!(
                         "Node '{}' for_each has {} items, exceeding limit of {} (adjust settings.max_for_each_items)",
-                        node_id, items.len(), max_items
+                        node_id,
+                        items.len(),
+                        max_items
                     );
 
                     if let Some(recovery_output) = on_error_recovery_output(node) {
@@ -1504,17 +1506,15 @@ impl Executor {
         );
 
         // Trigger error workflow if configured and execution failed
-        if failed {
-            if let Some(error_workflow_name) = &workflow.settings.error_workflow {
-                trigger_error_workflow_task(
-                    self.storage.clone(),
-                    self.registry.clone(),
-                    error_workflow_name,
-                    &execution,
-                    error_msg.as_deref(),
-                )
-                .await;
-            }
+        if failed && let Some(error_workflow_name) = &workflow.settings.error_workflow {
+            trigger_error_workflow_task(
+                self.storage.clone(),
+                self.registry.clone(),
+                error_workflow_name,
+                &execution,
+                error_msg.as_deref(),
+            )
+            .await;
         }
 
         Ok(execution)
@@ -1579,10 +1579,9 @@ impl Executor {
             if matches!(
                 node_exec.status,
                 ExecutionStatus::Completed | ExecutionStatus::Failed
-            ) {
-                if let Some(output) = &node_exec.output {
-                    completed_outputs.insert(node_exec.node_id.clone(), output.clone());
-                }
+            ) && let Some(output) = &node_exec.output
+            {
+                completed_outputs.insert(node_exec.node_id.clone(), output.clone());
             }
         }
 
@@ -2002,7 +2001,9 @@ impl Executor {
                 if items.len() > max_items {
                     let message = format!(
                         "Node '{}' for_each has {} items, exceeding limit of {} (adjust settings.max_for_each_items)",
-                        node_id, items.len(), max_items
+                        node_id,
+                        items.len(),
+                        max_items
                     );
 
                     if let Some(recovery_output) = on_error_recovery_output(node) {
@@ -3756,12 +3757,16 @@ nodes:
             events.push(event);
         }
 
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, MonitorEvent::NodeFailed { .. })));
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, MonitorEvent::ExecutionFailed { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, MonitorEvent::NodeFailed { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, MonitorEvent::ExecutionFailed { .. }))
+        );
     }
 
     #[tokio::test]
@@ -4358,10 +4363,12 @@ nodes:
 
         assert_eq!(execution.status, ExecutionStatus::Failed);
         assert!(execution.error.is_some());
-        assert!(execution
-            .error
-            .unwrap()
-            .contains("for_each=true but input is not an array"));
+        assert!(
+            execution
+                .error
+                .unwrap()
+                .contains("for_each=true but input is not an array")
+        );
     }
 
     #[tokio::test]
@@ -4709,10 +4716,12 @@ nodes:
 
         assert_eq!(execution.status, ExecutionStatus::Failed);
         assert!(execution.error.is_some());
-        assert!(execution
-            .error
-            .unwrap()
-            .contains("Unknown node type: nonexistent_node_type"));
+        assert!(
+            execution
+                .error
+                .unwrap()
+                .contains("Unknown node type: nonexistent_node_type")
+        );
     }
 
     // ============================================================================
@@ -4935,10 +4944,12 @@ nodes:
         assert_eq!(original.status, ExecutionStatus::Cancelled);
 
         // A later sequential retry is rejected as well.
-        assert!(executor
-            .resume_from_checkpoint("exec-paused")
-            .await
-            .is_err());
+        assert!(
+            executor
+                .resume_from_checkpoint("exec-paused")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

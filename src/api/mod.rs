@@ -14,25 +14,25 @@ mod websocket;
 mod whatsapp;
 
 pub use middleware::{
-    access_log_middleware, api_auth_middleware, health_auth_middleware, request_id_middleware,
-    ApiAuthConfig, HealthAuthConfig, RequestId, REQUEST_ID_HEADER,
+    ApiAuthConfig, HealthAuthConfig, REQUEST_ID_HEADER, RequestId, access_log_middleware,
+    api_auth_middleware, health_auth_middleware, request_id_middleware,
 };
 pub use openapi::generate_openapi_spec;
-pub use webhook::{compute_signature, verify_signature, SignatureConfig, SignatureScheme};
+pub use webhook::{SignatureConfig, SignatureScheme, compute_signature, verify_signature};
 #[cfg(feature = "whatsapp-inbound")]
 pub use whatsapp::whatsapp_routes;
 
 use std::sync::Arc;
 
 use axum::{
+    Json, Router,
     extract::{DefaultBodyLimit, Path, State},
     http::{HeaderValue, Method, StatusCode},
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{error, warn};
@@ -633,14 +633,18 @@ async fn list_approvals_handler(
     State(state): State<AppState>,
     axum::extract::Query(params): axum::extract::Query<ListApprovalsQuery>,
 ) -> impl IntoResponse {
-    if let Some(ref s) = params.status {
-        if !["pending", "approved", "rejected", "expired"].contains(&s.as_str()) {
-            return api_error_response(
-                ApiErrorCode::InvalidField,
-                format!("Invalid status filter '{}'. Valid values: pending, approved, rejected, expired", s),
-                None,
-            ).into_response();
-        }
+    if let Some(ref s) = params.status
+        && !["pending", "approved", "rejected", "expired"].contains(&s.as_str())
+    {
+        return api_error_response(
+            ApiErrorCode::InvalidField,
+            format!(
+                "Invalid status filter '{}'. Valid values: pending, approved, rejected, expired",
+                s
+            ),
+            None,
+        )
+        .into_response();
     }
 
     match state
@@ -724,15 +728,15 @@ async fn decide_approval_handler(
     }
 
     // 4. Check expiration
-    if let Some(expires_at) = approval.expires_at {
-        if chrono::Utc::now() > expires_at {
-            return api_error_response(
-                ApiErrorCode::ConflictError,
-                format!("Approval '{}' has expired", id),
-                None,
-            )
-            .into_response();
-        }
+    if let Some(expires_at) = approval.expires_at
+        && chrono::Utc::now() > expires_at
+    {
+        return api_error_response(
+            ApiErrorCode::ConflictError,
+            format!("Approval '{}' has expired", id),
+            None,
+        )
+        .into_response();
     }
 
     // 5. Load latest checkpoint
@@ -908,7 +912,7 @@ async fn execute_workflow(
     let correlation_id = request
         .correlation_id
         .clone()
-        .or_else(|| request_id.as_ref().map(|r| r.0 .0.clone()));
+        .or_else(|| request_id.as_ref().map(|r| r.0.0.clone()));
 
     // Check if shutdown is requested
     if state.shutdown.is_shutdown_requested() {
@@ -961,7 +965,7 @@ async fn execute_workflow(
         }
         Err(e) => {
             return external_error_response_with_correlation(e, correlation_id.clone())
-                .into_response()
+                .into_response();
         }
     };
 
@@ -1314,7 +1318,7 @@ async fn publish_event(
                 "Event backend is not configured",
                 None,
             )
-            .into_response()
+            .into_response();
         }
     };
 
@@ -1372,7 +1376,7 @@ async fn create_workflow(
                 format!("Invalid workflow definition: {}", e),
                 None,
             )
-            .into_response()
+            .into_response();
         }
     };
 
@@ -1420,7 +1424,7 @@ async fn create_workflow(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::{to_bytes, Body};
+    use axum::body::{Body, to_bytes};
     use axum::http::Request;
     use serde_json::json;
     use tower::ServiceExt;
