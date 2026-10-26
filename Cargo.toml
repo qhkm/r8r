@@ -1,6 +1,6 @@
 [package]
 name = "r8r"
-version = "0.8.1"
+version = "0.8.2"
 edition = "2024"
 description = "Agent-first Rust workflow automation engine"
 license = "AGPL-3.0-only AND Apache-2.0"
@@ -13,10 +13,14 @@ readme = "README.md"
 exclude = [
     ".github/",
     ".internal/",
-    "assets/",
+    "assets/*",
+    "!assets/r8r-workflow.schema.json",
     "deploy/",
     "docs/",
-    "examples/",
+    "examples/*",
+    "!examples/hello-world.yaml",
+    "!examples/order-notification.yaml",
+    "!examples/smart-classifier.yaml",
     "infra/",
     "landing/",
     "scripts/",

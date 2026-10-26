@@ -14,7 +14,7 @@ curl -sSf https://r8r.sh/install.sh | sh
 Pin a specific release:
 
 ```bash
-curl -sSf https://r8r.sh/install.sh | R8R_VERSION=v0.8.1 sh
+curl -sSf https://r8r.sh/install.sh | R8R_VERSION=v0.8.2 sh
 ```
 
 The installer auto-detects your platform, resolves the latest GitHub release by default, and installs `r8r` plus `r8r-mcp` into `~/.r8r/bin`.
