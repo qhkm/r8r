@@ -49,7 +49,7 @@ r8r:            LLM only where needed    →  $
 curl -sSf https://r8r.sh/install.sh | sh
 
 # Pin a specific release if needed
-curl -sSf https://r8r.sh/install.sh | R8R_VERSION=v0.7.0 sh
+curl -sSf https://r8r.sh/install.sh | R8R_VERSION=v0.8.1 sh
 
 # Or use Docker
 docker run -d -p 8080:8080 -v r8r-data:/data ghcr.io/qhkm/r8r
