@@ -141,10 +141,10 @@ async fn resolve_provider_api_key(provider: &LlmProvider) -> Option<String> {
         LlmProvider::Ollama => return None,
     };
 
-    if let Ok(value) = std::env::var(env_key) {
-        if !value.is_empty() {
-            return Some(value);
-        }
+    if let Ok(value) = std::env::var(env_key)
+        && !value.is_empty()
+    {
+        return Some(value);
     }
 
     let store = crate::credentials::CredentialStore::load().await.ok()?;

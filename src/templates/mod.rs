@@ -454,10 +454,9 @@ nodes:
                 .extension()
                 .map(|e| e == "yaml" || e == "yml")
                 .unwrap_or(false)
+                && let Ok(template) = self.load_template_file(&path)
             {
-                if let Ok(template) = self.load_template_file(&path) {
-                    self.templates.insert(template.name.clone(), template);
-                }
+                self.templates.insert(template.name.clone(), template);
             }
         }
 

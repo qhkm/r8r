@@ -356,10 +356,9 @@ impl Config {
 
         // Shared Kitakod config: ~/.config/kitakod/config.toml with [r8r] table
         if let Some(shared_path) = dirs::config_dir().map(|p| p.join("kitakod").join("config.toml"))
+            && let Ok(partial) = Self::load_nested_partial_from_path(&shared_path, "r8r")
         {
-            if let Ok(partial) = Self::load_nested_partial_from_path(&shared_path, "r8r") {
-                config.apply_partial(partial);
-            }
+            config.apply_partial(partial);
         }
 
         config.apply_env_overrides();
@@ -385,10 +384,10 @@ impl Config {
     }
 
     fn apply_env_overrides(&mut self) {
-        if let Ok(port) = std::env::var("R8R_SERVER_PORT") {
-            if let Ok(parsed) = port.parse::<u16>() {
-                self.server.port = parsed;
-            }
+        if let Ok(port) = std::env::var("R8R_SERVER_PORT")
+            && let Ok(parsed) = port.parse::<u16>()
+        {
+            self.server.port = parsed;
         }
         if let Ok(host) = std::env::var("R8R_SERVER_HOST") {
             self.server.host = host;
@@ -396,10 +395,10 @@ impl Config {
         if let Ok(endpoint) = std::env::var("R8R_AGENT_ENDPOINT") {
             self.agent.endpoint = endpoint;
         }
-        if let Ok(timeout) = std::env::var("R8R_AGENT_TIMEOUT_SECONDS") {
-            if let Ok(parsed) = timeout.parse::<u64>() {
-                self.agent.timeout_seconds = parsed;
-            }
+        if let Ok(timeout) = std::env::var("R8R_AGENT_TIMEOUT_SECONDS")
+            && let Ok(parsed) = timeout.parse::<u64>()
+        {
+            self.agent.timeout_seconds = parsed;
         }
         if let Ok(path) = std::env::var("R8R_DATABASE_PATH") {
             self.storage.database_path = Some(PathBuf::from(path));
@@ -413,20 +412,20 @@ impl Config {
         if let Ok(endpoint) = std::env::var("R8R_LLM_ENDPOINT") {
             self.llm.endpoint = Some(endpoint);
         }
-        if let Ok(timeout) = std::env::var("R8R_LLM_TIMEOUT_SECONDS") {
-            if let Ok(parsed) = timeout.parse::<u64>() {
-                self.llm.timeout_seconds = Some(parsed);
-            }
+        if let Ok(timeout) = std::env::var("R8R_LLM_TIMEOUT_SECONDS")
+            && let Ok(parsed) = timeout.parse::<u64>()
+        {
+            self.llm.timeout_seconds = Some(parsed);
         }
         #[cfg(feature = "sandbox")]
         {
             if let Ok(backend) = std::env::var("R8R_SANDBOX_BACKEND") {
                 self.sandbox.backend = backend;
             }
-            if let Ok(timeout) = std::env::var("R8R_SANDBOX_MAX_TIMEOUT_SECONDS") {
-                if let Ok(parsed) = timeout.parse::<u64>() {
-                    self.sandbox.security.max_timeout_seconds = parsed;
-                }
+            if let Ok(timeout) = std::env::var("R8R_SANDBOX_MAX_TIMEOUT_SECONDS")
+                && let Ok(parsed) = timeout.parse::<u64>()
+            {
+                self.sandbox.security.max_timeout_seconds = parsed;
             }
         }
     }

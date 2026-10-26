@@ -287,42 +287,42 @@ pub fn parse_openai_sse_line(line: &str) -> Option<StreamEvent> {
     let v: serde_json::Value = serde_json::from_str(data).ok()?;
 
     // Check for usage in final chunk FIRST (before choices processing)
-    if let Some(usage) = v.get("usage") {
-        if !usage.is_null() {
-            return Some(StreamEvent::Usage(LlmUsage {
-                prompt_tokens: usage.get("prompt_tokens").and_then(|v| v.as_u64()),
-                completion_tokens: usage.get("completion_tokens").and_then(|v| v.as_u64()),
-            }));
-        }
+    if let Some(usage) = v.get("usage")
+        && !usage.is_null()
+    {
+        return Some(StreamEvent::Usage(LlmUsage {
+            prompt_tokens: usage.get("prompt_tokens").and_then(|v| v.as_u64()),
+            completion_tokens: usage.get("completion_tokens").and_then(|v| v.as_u64()),
+        }));
     }
 
     let delta = &v["choices"][0]["delta"];
 
-    if let Some(tool_calls) = delta["tool_calls"].as_array() {
-        if let Some(tc) = tool_calls.first() {
-            if let Some(name) = tc["function"]["name"].as_str() {
-                let id = tc["id"].as_str().unwrap_or("").to_string();
-                return Some(StreamEvent::ToolCallStart {
-                    id,
-                    name: name.to_string(),
-                });
-            }
-            if let Some(arguments) = tc["function"]["arguments"].as_str() {
-                if !arguments.is_empty() {
-                    let id = tc["id"].as_str().unwrap_or("").to_string();
-                    return Some(StreamEvent::ToolCallDelta {
-                        id,
-                        arguments: arguments.to_string(),
-                    });
-                }
-            }
+    if let Some(tool_calls) = delta["tool_calls"].as_array()
+        && let Some(tc) = tool_calls.first()
+    {
+        if let Some(name) = tc["function"]["name"].as_str() {
+            let id = tc["id"].as_str().unwrap_or("").to_string();
+            return Some(StreamEvent::ToolCallStart {
+                id,
+                name: name.to_string(),
+            });
+        }
+        if let Some(arguments) = tc["function"]["arguments"].as_str()
+            && !arguments.is_empty()
+        {
+            let id = tc["id"].as_str().unwrap_or("").to_string();
+            return Some(StreamEvent::ToolCallDelta {
+                id,
+                arguments: arguments.to_string(),
+            });
         }
     }
 
-    if let Some(content) = delta["content"].as_str() {
-        if !content.is_empty() {
-            return Some(StreamEvent::TextDelta(content.to_string()));
-        }
+    if let Some(content) = delta["content"].as_str()
+        && !content.is_empty()
+    {
+        return Some(StreamEvent::TextDelta(content.to_string()));
     }
 
     None

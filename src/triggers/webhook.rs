@@ -220,14 +220,14 @@ async fn handle_webhook(
     info!("Webhook triggered for workflow '{}'", workflow_name);
 
     // Check header filters first
-    if let Some(filters) = header_filters {
-        if !check_header_filters(&filters, &headers) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "Header filter conditions not met"})),
-            )
-                .into_response();
-        }
+    if let Some(filters) = header_filters
+        && !check_header_filters(&filters, &headers)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Header filter conditions not met"})),
+        )
+            .into_response();
     }
 
     // Parse body
@@ -318,25 +318,25 @@ fn check_header_filters(filters: &[CompiledHeaderFilter], headers: &HeaderMap) -
             };
 
             // Check exact match
-            if let Some(expected) = &filter.value {
-                if value_str != expected {
-                    debug!(
-                        "Header '{}' value '{}' doesn't match expected '{}'",
-                        filter.name, value_str, expected
-                    );
-                    return false;
-                }
+            if let Some(expected) = &filter.value
+                && value_str != expected
+            {
+                debug!(
+                    "Header '{}' value '{}' doesn't match expected '{}'",
+                    filter.name, value_str, expected
+                );
+                return false;
             }
 
             // Check pre-compiled pattern match
-            if let Some(regex) = &filter.compiled_pattern {
-                if !regex.is_match(value_str) {
-                    debug!(
-                        "Header '{}' value '{}' doesn't match pattern",
-                        filter.name, value_str
-                    );
-                    return false;
-                }
+            if let Some(regex) = &filter.compiled_pattern
+                && !regex.is_match(value_str)
+            {
+                debug!(
+                    "Header '{}' value '{}' doesn't match pattern",
+                    filter.name, value_str
+                );
+                return false;
             }
         }
     }

@@ -33,15 +33,14 @@ pub fn validate_and_resolve_params(
         match value {
             Some(v) if !v.is_null() => {
                 // Validate enum constraint
-                if let Some(enum_values) = &def.enum_values {
-                    if let Some(s) = v.as_str() {
-                        if !enum_values.contains(&s.to_string()) {
-                            return Err(format!(
-                                "Parameter '{}' value '{}' not in allowed values: {:?}",
-                                name, s, enum_values
-                            ));
-                        }
-                    }
+                if let Some(enum_values) = &def.enum_values
+                    && let Some(s) = v.as_str()
+                    && !enum_values.contains(&s.to_string())
+                {
+                    return Err(format!(
+                        "Parameter '{}' value '{}' not in allowed values: {:?}",
+                        name, s, enum_values
+                    ));
                 }
                 // Coerce to expected type
                 let coerced = coerce_type(&v, def.param_type.as_deref());
@@ -71,10 +70,10 @@ pub fn validate_and_resolve_params(
 fn coerce_type(value: &Value, expected_type: Option<&str>) -> Value {
     match expected_type {
         Some("integer") => {
-            if let Some(s) = value.as_str() {
-                if let Ok(n) = s.parse::<i64>() {
-                    return json!(n);
-                }
+            if let Some(s) = value.as_str()
+                && let Ok(n) = s.parse::<i64>()
+            {
+                return json!(n);
             }
             value.clone()
         }

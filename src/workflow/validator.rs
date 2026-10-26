@@ -138,25 +138,24 @@ pub fn validate_workflow(workflow: &Workflow) -> Result<()> {
 
         // Check fallback nodes exist
         if let Some(error_config) = &node.on_error {
-            if let Some(action) = &error_config.action {
-                if matches!(action, OnErrorAction::Fallback)
-                    && error_config.fallback_value.is_none()
-                    && error_config.fallback_node.is_none()
-                {
-                    return Err(Error::Validation(format!(
-                        "Node '{}' has on_error.action=fallback but missing both fallback_value and fallback_node",
-                        node.id
-                    )));
-                }
+            if let Some(action) = &error_config.action
+                && matches!(action, OnErrorAction::Fallback)
+                && error_config.fallback_value.is_none()
+                && error_config.fallback_node.is_none()
+            {
+                return Err(Error::Validation(format!(
+                    "Node '{}' has on_error.action=fallback but missing both fallback_value and fallback_node",
+                    node.id
+                )));
             }
 
-            if let Some(fallback) = &error_config.fallback_node {
-                if !ids.contains(fallback) {
-                    return Err(Error::Validation(format!(
-                        "Node '{}' has fallback to non-existent node '{}'",
-                        node.id, fallback
-                    )));
-                }
+            if let Some(fallback) = &error_config.fallback_node
+                && !ids.contains(fallback)
+            {
+                return Err(Error::Validation(format!(
+                    "Node '{}' has fallback to non-existent node '{}'",
+                    node.id, fallback
+                )));
             }
         }
     }

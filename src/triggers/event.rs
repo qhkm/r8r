@@ -264,14 +264,13 @@ impl EventSubscriber {
                                 debug!("Received event: {}", event.event);
 
                                 // Check if this is a delayed event that should be scheduled
-                                if let Some(delay_seconds) = get_delay_from_subscriptions(&event, &event_subscriptions) {
-                                    if delay_seconds > 0 {
+                                if let Some(delay_seconds) = get_delay_from_subscriptions(&event, &event_subscriptions)
+                                    && delay_seconds > 0 {
                                         if let Err(e) = schedule_delayed_event(&storage, &delayed_processor, &event, delay_seconds).await {
                                             error!("Failed to schedule delayed event: {}", e);
                                         }
                                         continue;
                                     }
-                                }
 
                                 // Process regular event subscriptions
                                 let matching: Vec<_> = event_subscriptions
@@ -281,30 +280,28 @@ impl EventSubscriber {
 
                                 for sub in matching {
                                     // Apply filter if configured
-                                    if let Some(filter) = &sub.filter {
-                                        if !evaluate_filter(filter, &event.data) {
+                                    if let Some(filter) = &sub.filter
+                                        && !evaluate_filter(filter, &event.data) {
                                             debug!(
                                                 "Event filtered out for workflow '{}'",
                                                 sub.workflow_name
                                             );
                                             continue;
                                         }
-                                    }
 
                                     // Apply JSON path filter if configured
-                                    if let Some(json_path) = &sub.json_path {
-                                        if !evaluate_json_path(json_path, &event.data) {
+                                    if let Some(json_path) = &sub.json_path
+                                        && !evaluate_json_path(json_path, &event.data) {
                                             debug!(
                                                 "Event JSON path filter didn't match for workflow '{}'",
                                                 sub.workflow_name
                                             );
                                             continue;
                                         }
-                                    }
 
                                     // Check routing rules if configured
-                                    if let Some(routing_rules) = &sub.routing {
-                                        if let Some(target) = evaluate_routing(routing_rules, &event.data) {
+                                    if let Some(routing_rules) = &sub.routing
+                                        && let Some(target) = evaluate_routing(routing_rules, &event.data) {
                                             if let Err(e) = trigger_workflow(
                                                 Arc::clone(&storage),
                                                 &registry,
@@ -323,7 +320,6 @@ impl EventSubscriber {
                                             }
                                             continue;
                                         }
-                                    }
 
                                     // Trigger workflow execution
                                     if let Err(e) = trigger_workflow(

@@ -56,10 +56,10 @@ pub async fn load_initial_data(base_url: &str, token: Option<&str>, tx: mpsc::Se
     let base = base_url.trim_end_matches('/');
 
     let mut headers = reqwest::header::HeaderMap::new();
-    if let Some(t) = token {
-        if let Ok(val) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", t)) {
-            headers.insert(reqwest::header::AUTHORIZATION, val);
-        }
+    if let Some(t) = token
+        && let Ok(val) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", t))
+    {
+        headers.insert(reqwest::header::AUTHORIZATION, val);
     }
 
     let mut executions = Vec::new();

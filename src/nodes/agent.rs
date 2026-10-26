@@ -106,10 +106,10 @@ fn effective_provider(config: &AgentConfig) -> AgentProvider {
     if let Some(p) = config.provider.clone() {
         return p;
     }
-    if let Some(s) = global_config().llm.provider.as_deref() {
-        if let Some(p) = parse_provider_str(s) {
-            return p;
-        }
+    if let Some(s) = global_config().llm.provider.as_deref()
+        && let Some(p) = parse_provider_str(s)
+    {
+        return p;
     }
     AgentProvider::Zeptoclaw
 }
@@ -121,10 +121,10 @@ fn effective_model(config: &AgentConfig, provider: &AgentProvider) -> Option<Str
         return config.model.clone();
     }
     let llm = &global_config().llm;
-    if let Some(s) = llm.provider.as_deref() {
-        if parse_provider_str(s).as_ref() == Some(provider) {
-            return llm.model.clone();
-        }
+    if let Some(s) = llm.provider.as_deref()
+        && parse_provider_str(s).as_ref() == Some(provider)
+    {
+        return llm.model.clone();
     }
     None
 }
@@ -270,12 +270,11 @@ fn resolve_endpoint(config: &AgentConfig, provider: &AgentProvider) -> String {
     }
     // If global [llm].provider matches the chosen provider, use its endpoint.
     let llm = &global_config().llm;
-    if let Some(s) = llm.provider.as_deref() {
-        if parse_provider_str(s).as_ref() == Some(provider) {
-            if let Some(ep) = &llm.endpoint {
-                return ep.clone();
-            }
-        }
+    if let Some(s) = llm.provider.as_deref()
+        && parse_provider_str(s).as_ref() == Some(provider)
+        && let Some(ep) = &llm.endpoint
+    {
+        return ep.clone();
     }
     match provider {
         AgentProvider::Zeptoclaw => default_zeptoclaw_endpoint(),
@@ -773,17 +772,14 @@ impl Node for AgentNode {
                         extract_json(&content).unwrap_or_else(|| Value::String(content.clone()));
 
                     // Validate extracted JSON if schema is provided
-                    if let Some(schema_value) = &config.json_schema {
-                        if !extracted.is_string() {
-                            let validator = SchemaValidator::new(schema_value.clone())
-                                .map_err(|e| Error::Node(format!("Invalid json_schema: {}", e)))?;
-                            validator.validate(&extracted).map_err(|e| {
-                                Error::Node(format!(
-                                    "Agent response failed schema validation: {}",
-                                    e
-                                ))
-                            })?;
-                        }
+                    if let Some(schema_value) = &config.json_schema
+                        && !extracted.is_string()
+                    {
+                        let validator = SchemaValidator::new(schema_value.clone())
+                            .map_err(|e| Error::Node(format!("Invalid json_schema: {}", e)))?;
+                        validator.validate(&extracted).map_err(|e| {
+                            Error::Node(format!("Agent response failed schema validation: {}", e))
+                        })?;
                     }
 
                     extracted
@@ -811,26 +807,24 @@ impl Node for AgentNode {
 /// Try to extract JSON from a string that may contain extra text.
 fn extract_json(s: &str) -> Option<Value> {
     // Look for JSON object
-    if let Some(start) = s.find('{') {
-        if let Some(end) = s.rfind('}') {
-            if start < end {
-                let json_str = &s[start..=end];
-                if let Ok(parsed) = serde_json::from_str(json_str) {
-                    return Some(parsed);
-                }
-            }
+    if let Some(start) = s.find('{')
+        && let Some(end) = s.rfind('}')
+        && start < end
+    {
+        let json_str = &s[start..=end];
+        if let Ok(parsed) = serde_json::from_str(json_str) {
+            return Some(parsed);
         }
     }
 
     // Look for JSON array
-    if let Some(start) = s.find('[') {
-        if let Some(end) = s.rfind(']') {
-            if start < end {
-                let json_str = &s[start..=end];
-                if let Ok(parsed) = serde_json::from_str(json_str) {
-                    return Some(parsed);
-                }
-            }
+    if let Some(start) = s.find('[')
+        && let Some(end) = s.rfind(']')
+        && start < end
+    {
+        let json_str = &s[start..=end];
+        if let Ok(parsed) = serde_json::from_str(json_str) {
+            return Some(parsed);
         }
     }
 

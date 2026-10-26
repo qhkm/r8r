@@ -181,18 +181,18 @@ pub fn render_template_simple(template: &str, context: &Value) -> Result<String,
         }
 
         // Handle 'headers' key
-        if let Some(headers) = obj.get("headers") {
-            if let Some(headers_obj) = headers.as_object() {
-                for (key, value) in headers_obj {
-                    let pattern1 = format!("{{{{ headers.{} }}}}", key);
-                    let pattern2 = format!("{{{{headers.{}}}}}", key);
-                    let replacement = match value {
-                        Value::String(s) => s.clone(),
-                        other => other.to_string().trim_matches('"').to_string(),
-                    };
-                    result = result.replace(&pattern1, &replacement);
-                    result = result.replace(&pattern2, &replacement);
-                }
+        if let Some(headers) = obj.get("headers")
+            && let Some(headers_obj) = headers.as_object()
+        {
+            for (key, value) in headers_obj {
+                let pattern1 = format!("{{{{ headers.{} }}}}", key);
+                let pattern2 = format!("{{{{headers.{}}}}}", key);
+                let replacement = match value {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string().trim_matches('"').to_string(),
+                };
+                result = result.replace(&pattern1, &replacement);
+                result = result.replace(&pattern2, &replacement);
             }
         }
     }

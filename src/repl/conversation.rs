@@ -72,12 +72,13 @@ impl Conversation {
                 _ => {}
             }
 
-            if snippets.len() < 6 && (role == "user" || role == "assistant") {
-                if let Some(content) = m.get("content").and_then(|v| v.as_str()) {
-                    let compact = content.replace('\n', " ");
-                    let trimmed = compact.chars().take(100).collect::<String>();
-                    snippets.push(format!("{}: {}", role, trimmed));
-                }
+            if snippets.len() < 6
+                && (role == "user" || role == "assistant")
+                && let Some(content) = m.get("content").and_then(|v| v.as_str())
+            {
+                let compact = content.replace('\n', " ");
+                let trimmed = compact.chars().take(100).collect::<String>();
+                snippets.push(format!("{}: {}", role, trimmed));
             }
         }
 

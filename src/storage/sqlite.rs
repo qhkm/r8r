@@ -1766,10 +1766,10 @@ impl SqliteStorage {
             )
             .optional()?;
 
-        if let Some((_, latest_checksum)) = &latest {
-            if latest_checksum == &checksum {
-                return Ok(None);
-            }
+        if let Some((_, latest_checksum)) = &latest
+            && latest_checksum == &checksum
+        {
+            return Ok(None);
         }
 
         let next_version = latest.map(|(version, _)| version + 1).unwrap_or(1);

@@ -93,10 +93,10 @@ impl ApprovalTimeoutChecker {
             let _ = tx.send(()).await;
         }
 
-        if let Some(handle) = self.handle.take() {
-            if let Err(e) = handle.await {
-                error!("Approval timeout checker task panicked: {}", e);
-            }
+        if let Some(handle) = self.handle.take()
+            && let Err(e) = handle.await
+        {
+            error!("Approval timeout checker task panicked: {}", e);
         }
 
         info!("Approval timeout checker stopped");

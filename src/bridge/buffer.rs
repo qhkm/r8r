@@ -44,14 +44,14 @@ impl ReplayBuffer {
     /// If the buffer is at capacity, the oldest event is dropped and a
     /// warning is logged via `tracing::warn!`.
     pub fn push(&mut self, event: BridgeEventEnvelope) {
-        if self.events.len() >= self.max_events {
-            if let Some(dropped) = self.events.pop_front() {
-                tracing::warn!(
-                    "Bridge: replay buffer full ({}), dropping event {}",
-                    self.max_events,
-                    dropped.0.id
-                );
-            }
+        if self.events.len() >= self.max_events
+            && let Some(dropped) = self.events.pop_front()
+        {
+            tracing::warn!(
+                "Bridge: replay buffer full ({}), dropping event {}",
+                self.max_events,
+                dropped.0.id
+            );
         }
         self.events.push_back((event, Instant::now()));
     }

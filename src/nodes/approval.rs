@@ -79,13 +79,14 @@ impl Node for ApprovalNode {
             ));
         }
 
-        if let Some(action) = &config.default_action {
-            if action != "approve" && action != "reject" {
-                return Err(Error::Node(format!(
-                    "default_action must be \"approve\" or \"reject\", got \"{}\"",
-                    action
-                )));
-            }
+        if let Some(action) = &config.default_action
+            && action != "approve"
+            && action != "reject"
+        {
+            return Err(Error::Node(format!(
+                "default_action must be \"approve\" or \"reject\", got \"{}\"",
+                action
+            )));
         }
 
         let approval_id = uuid::Uuid::new_v4().to_string();

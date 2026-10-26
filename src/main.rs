@@ -1482,10 +1482,10 @@ async fn cmd_workflows_export(name: &str, output: Option<&str>) -> anyhow::Resul
             let path = Path::new(path);
 
             // Create parent directory if needed
-            if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent)?;
-                }
+            if let Some(parent) = path.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
             }
 
             std::fs::write(path, &stored.definition)?;
@@ -2357,21 +2357,21 @@ fn get_storage() -> anyhow::Result<std::sync::Arc<dyn r8r::storage::Storage>> {
 
     // If DATABASE_URL is set and points to postgres, use PostgreSQL backend.
     // Requires the binary to be compiled with the `storage-postgres` feature.
-    if let Ok(db_url) = std::env::var("DATABASE_URL") {
-        if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
-            #[cfg(feature = "storage-postgres")]
-            {
-                let storage = tokio::runtime::Handle::current()
-                    .block_on(r8r::storage::PostgresStorage::connect(&db_url))?;
-                return Ok(std::sync::Arc::new(storage));
-            }
-            #[cfg(not(feature = "storage-postgres"))]
-            {
-                anyhow::bail!(
-                    "DATABASE_URL points to PostgreSQL but r8r was not compiled with the \
+    if let Ok(db_url) = std::env::var("DATABASE_URL")
+        && (db_url.starts_with("postgres://") || db_url.starts_with("postgresql://"))
+    {
+        #[cfg(feature = "storage-postgres")]
+        {
+            let storage = tokio::runtime::Handle::current()
+                .block_on(r8r::storage::PostgresStorage::connect(&db_url))?;
+            return Ok(std::sync::Arc::new(storage));
+        }
+        #[cfg(not(feature = "storage-postgres"))]
+        {
+            anyhow::bail!(
+                "DATABASE_URL points to PostgreSQL but r8r was not compiled with the \
                      `storage-postgres` feature. Recompile with: cargo build --features storage-postgres"
-                );
-            }
+            );
         }
     }
 
@@ -4516,11 +4516,11 @@ fn cmd_integrations_test(service: &str, operation: &str, params_json: &str) -> a
         config["url"].as_str().unwrap_or("?")
     );
 
-    if let Some(headers) = config.get("headers") {
-        if let Some(obj) = headers.as_object() {
-            for (k, v) in obj {
-                println!("  {}: {}", k, v.as_str().unwrap_or(&v.to_string()));
-            }
+    if let Some(headers) = config.get("headers")
+        && let Some(obj) = headers.as_object()
+    {
+        for (k, v) in obj {
+            println!("  {}: {}", k, v.as_str().unwrap_or(&v.to_string()));
         }
     }
 

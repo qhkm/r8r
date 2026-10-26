@@ -67,10 +67,10 @@ pub async fn run_repl(
         } else {
             eprintln!("Warning: LLM is not configured. REPL will run in slash-only mode.");
         }
-    } else if persisted_llm_config.is_none() {
-        if let Some(cfg) = &llm_config {
-            let _ = storage.save_repl_llm_config(cfg).await;
-        }
+    } else if persisted_llm_config.is_none()
+        && let Some(cfg) = &llm_config
+    {
+        let _ = storage.save_repl_llm_config(cfg).await;
     }
 
     let executor = Arc::new(Executor::new(NodeRegistry::new(), Arc::clone(&storage)));
@@ -163,10 +163,11 @@ async fn pick_resume_session(storage: &dyn Storage, model_name: &str) -> anyhow:
         return Ok(sessions[0].id.clone());
     }
 
-    if let Ok(idx) = trimmed.parse::<usize>() {
-        if idx >= 1 && idx <= sessions.len() {
-            return Ok(sessions[idx - 1].id.clone());
-        }
+    if let Ok(idx) = trimmed.parse::<usize>()
+        && idx >= 1
+        && idx <= sessions.len()
+    {
+        return Ok(sessions[idx - 1].id.clone());
     }
 
     if sessions.iter().any(|s| s.id == trimmed) {

@@ -97,14 +97,14 @@ impl ReplGuardrails {
                 name
             ));
         }
-        if let Some(allow) = &self.allow {
-            if !allow.contains(name) {
-                return Err(format!(
-                    "Tool '{}' is not in the guardrail allowlist. Allowed: {}",
-                    name,
-                    allow.iter().cloned().collect::<Vec<_>>().join(", ")
-                ));
-            }
+        if let Some(allow) = &self.allow
+            && !allow.contains(name)
+        {
+            return Err(format!(
+                "Tool '{}' is not in the guardrail allowlist. Allowed: {}",
+                name,
+                allow.iter().cloned().collect::<Vec<_>>().join(", ")
+            ));
         }
         Ok(())
     }
@@ -117,21 +117,21 @@ impl ReplGuardrails {
         };
         self.turn_cost += cost;
         self.session_cost += cost;
-        if let Some(max) = self.max_cost_per_turn {
-            if self.turn_cost > max {
-                return Err(format!(
-                    "Turn cost limit reached: ${:.3} used this turn (max ${:.2}).",
-                    self.turn_cost, max
-                ));
-            }
+        if let Some(max) = self.max_cost_per_turn
+            && self.turn_cost > max
+        {
+            return Err(format!(
+                "Turn cost limit reached: ${:.3} used this turn (max ${:.2}).",
+                self.turn_cost, max
+            ));
         }
-        if let Some(max) = self.max_cost_per_session {
-            if self.session_cost > max {
-                return Err(format!(
-                    "Session cost limit reached: ${:.3} used total (max ${:.2}).",
-                    self.session_cost, max
-                ));
-            }
+        if let Some(max) = self.max_cost_per_session
+            && self.session_cost > max
+        {
+            return Err(format!(
+                "Session cost limit reached: ${:.3} used total (max ${:.2}).",
+                self.session_cost, max
+            ));
         }
         Ok(())
     }

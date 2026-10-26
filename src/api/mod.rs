@@ -633,14 +633,18 @@ async fn list_approvals_handler(
     State(state): State<AppState>,
     axum::extract::Query(params): axum::extract::Query<ListApprovalsQuery>,
 ) -> impl IntoResponse {
-    if let Some(ref s) = params.status {
-        if !["pending", "approved", "rejected", "expired"].contains(&s.as_str()) {
-            return api_error_response(
-                ApiErrorCode::InvalidField,
-                format!("Invalid status filter '{}'. Valid values: pending, approved, rejected, expired", s),
-                None,
-            ).into_response();
-        }
+    if let Some(ref s) = params.status
+        && !["pending", "approved", "rejected", "expired"].contains(&s.as_str())
+    {
+        return api_error_response(
+            ApiErrorCode::InvalidField,
+            format!(
+                "Invalid status filter '{}'. Valid values: pending, approved, rejected, expired",
+                s
+            ),
+            None,
+        )
+        .into_response();
     }
 
     match state
@@ -724,15 +728,15 @@ async fn decide_approval_handler(
     }
 
     // 4. Check expiration
-    if let Some(expires_at) = approval.expires_at {
-        if chrono::Utc::now() > expires_at {
-            return api_error_response(
-                ApiErrorCode::ConflictError,
-                format!("Approval '{}' has expired", id),
-                None,
-            )
-            .into_response();
-        }
+    if let Some(expires_at) = approval.expires_at
+        && chrono::Utc::now() > expires_at
+    {
+        return api_error_response(
+            ApiErrorCode::ConflictError,
+            format!("Approval '{}' has expired", id),
+            None,
+        )
+        .into_response();
     }
 
     // 5. Load latest checkpoint

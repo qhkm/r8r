@@ -304,15 +304,15 @@ impl Node for HttpNode {
         }
 
         // Add headers
-        if let Some(headers) = &config.headers {
-            if let Some(headers_obj) = headers.as_object() {
-                for (key, value) in headers_obj {
-                    let header_value = match value {
-                        Value::String(s) => render_template(s, ctx, RenderMode::Compact),
-                        _ => value.to_string(),
-                    };
-                    request = request.header(key, header_value);
-                }
+        if let Some(headers) = &config.headers
+            && let Some(headers_obj) = headers.as_object()
+        {
+            for (key, value) in headers_obj {
+                let header_value = match value {
+                    Value::String(s) => render_template(s, ctx, RenderMode::Compact),
+                    _ => value.to_string(),
+                };
+                request = request.header(key, header_value);
             }
         }
 

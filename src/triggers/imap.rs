@@ -388,10 +388,8 @@ fn walk_attachments(part: &ParsedMail, include_data: bool, max: usize, out: &mut
         "content_type": part.ctype.mimetype,
         "size": part.raw_bytes.len(),
     });
-    if include_data {
-        if let Ok(bytes) = part.get_body_raw() {
-            item["data"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
-        }
+    if include_data && let Ok(bytes) = part.get_body_raw() {
+        item["data"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
     }
     out.push(item);
 }

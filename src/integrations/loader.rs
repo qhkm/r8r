@@ -163,11 +163,11 @@ impl IntegrationLoader {
     pub fn get(&self, name: &str) -> Option<IntegrationDefinition> {
         // Check user definitions first (override built-ins)
         self.refresh_user_cache();
-        if let Ok(cache) = self.user_cache.read() {
-            if let Some(def) = cache.definitions.get(name) {
-                debug!(name, "returning user-defined integration");
-                return Some(def.clone());
-            }
+        if let Ok(cache) = self.user_cache.read()
+            && let Some(def) = cache.definitions.get(name)
+        {
+            debug!(name, "returning user-defined integration");
+            return Some(def.clone());
         }
 
         // Fall back to built-in

@@ -449,11 +449,11 @@ impl ReplApp {
     }
 
     fn append_stream_token(&mut self, token: &str) {
-        if let Some(idx) = self.assistant_streaming_index {
-            if let Some(msg) = self.messages.get_mut(idx) {
-                msg.text.push_str(token);
-                return;
-            }
+        if let Some(idx) = self.assistant_streaming_index
+            && let Some(msg) = self.messages.get_mut(idx)
+        {
+            msg.text.push_str(token);
+            return;
         }
 
         self.messages.push(DisplayMessage {
@@ -526,14 +526,13 @@ impl ReplApp {
         matches.dedup_by(|a, b| a.0 == b.0);
         self.autocomplete = matches;
 
-        if !old_selected.is_empty() {
-            if let Some(pos) = self
+        if !old_selected.is_empty()
+            && let Some(pos) = self
                 .autocomplete
                 .iter()
                 .position(|(cmd, _)| cmd == &old_selected)
-            {
-                self.autocomplete_index = pos;
-            }
+        {
+            self.autocomplete_index = pos;
         }
     }
 
@@ -1812,36 +1811,36 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &ReplApp) {
         conversation_lines.push(Line::from(""));
     }
 
-    if let Some(bar) = &app.quick_actions {
-        if !app.busy {
-            let mut action_spans: Vec<Span<'_>> = vec![Span::raw("  ")];
-            for (i, action) in bar.actions.iter().enumerate() {
-                let is_selected = i == bar.selected;
-                if is_selected {
-                    action_spans.push(Span::styled(
-                        format!(" {} ", action.label),
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ));
-                } else {
-                    action_spans.push(Span::styled(
-                        format!(" {} ", action.label),
-                        Style::default().fg(Color::White),
-                    ));
-                }
-                if i + 1 < bar.actions.len() {
-                    action_spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-                }
+    if let Some(bar) = &app.quick_actions
+        && !app.busy
+    {
+        let mut action_spans: Vec<Span<'_>> = vec![Span::raw("  ")];
+        for (i, action) in bar.actions.iter().enumerate() {
+            let is_selected = i == bar.selected;
+            if is_selected {
+                action_spans.push(Span::styled(
+                    format!(" {} ", action.label),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            } else {
+                action_spans.push(Span::styled(
+                    format!(" {} ", action.label),
+                    Style::default().fg(Color::White),
+                ));
             }
-            conversation_lines.push(Line::from(action_spans));
-            conversation_lines.push(Line::from(vec![Span::styled(
-                "    ←→ select · Enter confirm · Esc dismiss",
-                Style::default().fg(Color::DarkGray),
-            )]));
-            conversation_lines.push(Line::from(""));
+            if i + 1 < bar.actions.len() {
+                action_spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+            }
         }
+        conversation_lines.push(Line::from(action_spans));
+        conversation_lines.push(Line::from(vec![Span::styled(
+            "    ←→ select · Enter confirm · Esc dismiss",
+            Style::default().fg(Color::DarkGray),
+        )]));
+        conversation_lines.push(Line::from(""));
     }
 
     let convo_height = main_chunks[0].height.saturating_sub(2) as usize;
@@ -2534,10 +2533,10 @@ async fn handle_slash_command(
             }
 
             let path_buf = std::path::PathBuf::from(&path);
-            if let Some(parent) = path_buf.parent() {
-                if !parent.as_os_str().is_empty() {
-                    tokio::fs::create_dir_all(parent).await?;
-                }
+            if let Some(parent) = path_buf.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                tokio::fs::create_dir_all(parent).await?;
             }
             tokio::fs::write(&path_buf, format!("{}\n", yaml)).await?;
             app.push_message(
@@ -2576,15 +2575,11 @@ async fn handle_slash_command(
             };
             if let Some(message) = usage {
                 app.push_message(MessageKind::Error, message);
-                if cmd == "/show" {
-                    if let Ok(wfs) = storage.list_workflows().await {
-                        if let Some(first) = wfs.first() {
-                            app.push_message(
-                                MessageKind::System,
-                                format!("Try: /show {}", first.name),
-                            );
-                        }
-                    }
+                if cmd == "/show"
+                    && let Ok(wfs) = storage.list_workflows().await
+                    && let Some(first) = wfs.first()
+                {
+                    app.push_message(MessageKind::System, format!("Try: /show {}", first.name));
                 }
             } else {
                 app.push_message(MessageKind::Error, format!("Unknown command: {}", cmd));
@@ -2838,12 +2833,11 @@ pub async fn run_repl_tui(
                     }
                     if let StreamUpdate::ToolCallResult { name, result } = &update {
                         // Extract execution_id from tool result if present, store for correlation.
-                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(result) {
-                            if let Some(exec_id) =
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(result)
+                            && let Some(exec_id) =
                                 parsed.get("execution_id").and_then(|v| v.as_str())
-                            {
-                                app.last_run_id = Some(exec_id.to_string());
-                            }
+                        {
+                            app.last_run_id = Some(exec_id.to_string());
                         }
                         storage
                             .save_repl_message(
@@ -2895,10 +2889,10 @@ pub async fn run_repl_tui(
                             msg.text = compact.clone();
                         }
                         // Show inline usage after assistant message
-                        if let Some(ref usage) = app.turn_usage {
-                            if let Some(usage_line) = format_usage_line(usage, &app.model) {
-                                app.push_message(MessageKind::System, usage_line);
-                            }
+                        if let Some(ref usage) = app.turn_usage
+                            && let Some(usage_line) = format_usage_line(usage, &app.model)
+                        {
+                            app.push_message(MessageKind::System, usage_line);
                         }
                         let token_count = app.turn_usage.as_ref().map(|u| {
                             (u.prompt_tokens.unwrap_or(0) + u.completion_tokens.unwrap_or(0)) as i64
@@ -3052,19 +3046,18 @@ pub async fn run_repl_tui(
                         }
 
                         // Quick-action bar: if active and input is empty, execute selected action
-                        if app.input.trim().is_empty() {
-                            if let Some(bar) = app.quick_actions.take() {
-                                if let Some(action) = bar.selected_action().cloned() {
-                                    match &action.command {
-                                        QuickActionCommand::Slash(cmd) => {
-                                            app.input = cmd.clone();
-                                            // Fall through to normal submit
-                                        }
-                                        QuickActionCommand::Prompt(prompt) => {
-                                            app.input = prompt.clone();
-                                            // Fall through to normal submit
-                                        }
-                                    }
+                        if app.input.trim().is_empty()
+                            && let Some(bar) = app.quick_actions.take()
+                            && let Some(action) = bar.selected_action().cloned()
+                        {
+                            match &action.command {
+                                QuickActionCommand::Slash(cmd) => {
+                                    app.input = cmd.clone();
+                                    // Fall through to normal submit
+                                }
+                                QuickActionCommand::Prompt(prompt) => {
+                                    app.input = prompt.clone();
+                                    // Fall through to normal submit
                                 }
                             }
                         }
@@ -3360,12 +3353,12 @@ pub async fn run_repl_tui(
                                 }
                             }
                         }
-                    } else if let KeyCode::Char(ch) = key.code {
-                        if !app.busy {
-                            app.quick_actions = None;
-                            app.input.push(ch);
-                            app.refresh_autocomplete();
-                        }
+                    } else if let KeyCode::Char(ch) = key.code
+                        && !app.busy
+                    {
+                        app.quick_actions = None;
+                        app.input.push(ch);
+                        app.refresh_autocomplete();
                     }
                 }
                 Event::Resize(_, _) => {}

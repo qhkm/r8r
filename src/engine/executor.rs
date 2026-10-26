@@ -394,17 +394,17 @@ impl Executor {
         let store_traces = workflow.settings.store_traces;
 
         // Check rate limit if configured
-        if let Some(ref rate_limiter) = self.rate_limiter {
-            if !rate_limiter.try_acquire(&workflow.name) {
-                warn!(
-                    workflow_name = %workflow.name,
-                    "Rate limit exceeded for workflow"
-                );
-                return Err(Error::Execution(format!(
-                    "Rate limit exceeded for workflow '{}'",
-                    workflow.name
-                )));
-            }
+        if let Some(ref rate_limiter) = self.rate_limiter
+            && !rate_limiter.try_acquire(&workflow.name)
+        {
+            warn!(
+                workflow_name = %workflow.name,
+                "Rate limit exceeded for workflow"
+            );
+            return Err(Error::Execution(format!(
+                "Rate limit exceeded for workflow '{}'",
+                workflow.name
+            )));
         }
 
         // Validate and process parameters
@@ -1506,17 +1506,15 @@ impl Executor {
         );
 
         // Trigger error workflow if configured and execution failed
-        if failed {
-            if let Some(error_workflow_name) = &workflow.settings.error_workflow {
-                trigger_error_workflow_task(
-                    self.storage.clone(),
-                    self.registry.clone(),
-                    error_workflow_name,
-                    &execution,
-                    error_msg.as_deref(),
-                )
-                .await;
-            }
+        if failed && let Some(error_workflow_name) = &workflow.settings.error_workflow {
+            trigger_error_workflow_task(
+                self.storage.clone(),
+                self.registry.clone(),
+                error_workflow_name,
+                &execution,
+                error_msg.as_deref(),
+            )
+            .await;
         }
 
         Ok(execution)
@@ -1581,10 +1579,9 @@ impl Executor {
             if matches!(
                 node_exec.status,
                 ExecutionStatus::Completed | ExecutionStatus::Failed
-            ) {
-                if let Some(output) = &node_exec.output {
-                    completed_outputs.insert(node_exec.node_id.clone(), output.clone());
-                }
+            ) && let Some(output) = &node_exec.output
+            {
+                completed_outputs.insert(node_exec.node_id.clone(), output.clone());
             }
         }
 

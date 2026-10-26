@@ -127,10 +127,10 @@ pub fn init_telemetry(
 
 /// Shutdown OpenTelemetry tracing gracefully.
 pub fn shutdown_telemetry(provider: Option<SdkTracerProvider>) {
-    if let Some(provider) = provider {
-        if let Err(e) = provider.shutdown() {
-            tracing::error!("Failed to shutdown OpenTelemetry provider: {:?}", e);
-        }
+    if let Some(provider) = provider
+        && let Err(e) = provider.shutdown()
+    {
+        tracing::error!("Failed to shutdown OpenTelemetry provider: {:?}", e);
     }
 }
 

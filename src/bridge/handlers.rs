@@ -166,14 +166,14 @@ async fn handle_approval_decision(data: &Value, bridge: &std::sync::Arc<BridgeSt
             }
 
             // Check if expired
-            if let Some(expires_at) = approval.expires_at {
-                if Utc::now() > expires_at {
-                    warn!(
-                        "Bridge: approval {} has expired, ignoring decision",
-                        approval_id
-                    );
-                    return;
-                }
+            if let Some(expires_at) = approval.expires_at
+                && Utc::now() > expires_at
+            {
+                warn!(
+                    "Bridge: approval {} has expired, ignoring decision",
+                    approval_id
+                );
+                return;
             }
 
             let normalized_decision = match decision {

@@ -181,11 +181,11 @@ async fn handle_bridge_socket(socket: WebSocket, bridge: Arc<BridgeState>) {
         if !unacked.is_empty() {
             info!("Bridge: replaying {} unacked events", unacked.len());
             for envelope in unacked {
-                if let Ok(json) = serde_json::to_string(&envelope) {
-                    if client_tx.send(json).await.is_err() {
-                        warn!("Bridge: client disconnected during replay");
-                        break;
-                    }
+                if let Ok(json) = serde_json::to_string(&envelope)
+                    && client_tx.send(json).await.is_err()
+                {
+                    warn!("Bridge: client disconnected during replay");
+                    break;
                 }
             }
         }

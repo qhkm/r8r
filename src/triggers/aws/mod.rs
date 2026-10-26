@@ -466,20 +466,20 @@ fn parse_receive_response(xml: &str) -> Vec<SqsMessage> {
                     }
                 }
                 if name == "Attribute" && in_attribute {
-                    if !attr_name.is_empty() {
-                        if let Some(msg) = current.as_mut() {
-                            msg.attributes.insert(attr_name.clone(), attr_value.clone());
-                        }
+                    if !attr_name.is_empty()
+                        && let Some(msg) = current.as_mut()
+                    {
+                        msg.attributes.insert(attr_name.clone(), attr_value.clone());
                     }
                     in_attribute = false;
                     attr_name.clear();
                     attr_value.clear();
                 }
                 if name == "Message" && in_message {
-                    if let Some(msg) = current.take() {
-                        if !msg.receipt_handle.is_empty() || !msg.message_id.is_empty() {
-                            messages.push(msg);
-                        }
+                    if let Some(msg) = current.take()
+                        && (!msg.receipt_handle.is_empty() || !msg.message_id.is_empty())
+                    {
+                        messages.push(msg);
                     }
                     in_message = false;
                 }

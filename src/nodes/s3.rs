@@ -562,11 +562,11 @@ fn parse_list_response(xml: &str) -> Vec<Value> {
 
     // Extract <Key> elements (very simplified)
     for line in xml.lines() {
-        if let Some(start) = line.find("<Key>") {
-            if let Some(end) = line.find("</Key>") {
-                let key = &line[start + 5..end];
-                objects.push(json!({ "key": key }));
-            }
+        if let Some(start) = line.find("<Key>")
+            && let Some(end) = line.find("</Key>")
+        {
+            let key = &line[start + 5..end];
+            objects.push(json!({ "key": key }));
         }
     }
 
