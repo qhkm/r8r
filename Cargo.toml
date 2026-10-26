@@ -1,5 +1,5 @@
 [package]
-name = "r8r-engine"
+name = "r8r"
 version = "0.8.1"
 edition = "2024"
 description = "Agent-first Rust workflow automation engine"

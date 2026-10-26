@@ -55,7 +55,7 @@ curl -sSf https://r8r.sh/install.sh | R8R_VERSION=v0.8.1 sh
 docker run -d -p 8080:8080 -v r8r-data:/data ghcr.io/qhkm/r8r
 
 # Or via Cargo (requires Rust; installs the `r8r` and `r8r-mcp` commands)
-cargo install --git https://github.com/qhkm/r8r r8r-engine
+cargo install --git https://github.com/qhkm/r8r r8r
 
 # Or build from source
 git clone https://github.com/qhkm/r8r.git && cd r8r
