@@ -197,6 +197,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Real bridge health metrics** — ZeptoClaw `health.ping` now returns live runtime values (uptime, active executions, pending approvals, loaded workflows) instead of stub zeros.
 
+## [0.5.0] - 2026-08-14
+
+### Added
+
+- **Declarative YAML integration layer** — define HTTP integrations in YAML, with OAuth2 support. 32 built-in services (GitHub, Slack, OpenAI, Stripe, Notion, Telegram, WhatsApp, Google Sheets, Airtable, Discord, Resend, Twilio, Shopify, HubSpot and more).
+- **Job queue and distributed workers** — in-memory FIFO or Redis-backed queue; `r8r worker` (with `--once`) and `r8r enqueue` subcommands.
+- **Event-source triggers** — Kafka consumer (pure Rust, no librdkafka) and SQS long-poll / SNS publish with built-in SigV4 (no AWS SDK). Behind the `kafka` and `aws` features, so the default binary is unchanged.
+- **Nodes** — `discord`, `telegram` and `google-sheets`.
+- **REPL guardrails** — tool permission matrix (`--allow-tool` / `--deny-tool`, `/allow` and `/deny`) and `--max-cost` enforcement.
+- **ZeptoClaw bridge** — WebSocket endpoint with auth and a single client. Execution, approval and server events are emitted over it, and its status shows in diagnostics.
+
+### Fixed
+
+- **Bridge wiring** — the runtime bridge is now connected to executions.
+
+## [0.4.1] - 2026-03-14
+
+### Added
+
+- **Bridge event bus groundwork** — event types and envelope for the ZeptoClaw bridge, plus a replay buffer with TTL and ack tracking.
+- **TUI quick-action bar** — replaces the text prompt for confirming writes.
+- **Release script** — `scripts/release.sh [patch|minor|major] [--dry-run]`.
+
+## [0.4.0] - 2026-03-14
+
+### Added
+
+- **`r8r init` wizard** — detects local services and writes a starter config.
+- **`--json` output for every command** — one output layer for human and JSON modes.
+- **Error diagnostics** — Elm-style error messages with fuzzy-matched suggestions, plus contextual next-step hints.
+- **LLM token usage** — token counts are parsed from every provider, shown inline in the REPL, and summarised with `/usage`.
+
+### Changed
+
+- **License** — the core engine (`src/`) is AGPL-3.0, client libraries are Apache 2.0, and enterprise features are commercial (`LICENSE-AGPL`, `LICENSE-APACHE`, `NOTICE`).
+
+## [0.3.1] - 2026-03-13
+
+### Added
+
+- **Binary releases** — release workflow cross-compiles binaries and builds a multi-arch Docker image. Binaries are hosted on Cloudflare R2.
+- **One-line installer** — `curl -sSf https://r8r.sh/install.sh | sh`.
+- **PostgreSQL storage backend** — behind a `Storage` trait, with SQLite still the default.
+- **REPL transcript correlation** — `run_id` and credential redaction on stored REPL messages, with a schema migration.
+- **CLI contract tests** — integration tests for prompt flags and the exit-42 approval contract.
+- **Responsive TUI busy state** — fits narrow terminals.
+
+### Changed
+
+- **License** — switched from AGPL-3.0 to Apache 2.0 (changed again in 0.4.0).
+- **Positioning** — README reframes r8r as an agent-native engine from cloud to edge.
+
+### Fixed
+
+- **Approval-gated executions** — persist as `waiting_for_approval` end to end.
+- **Upgrade failure** — the assignee index is created outside the init batch.
+- **Workflow JSON Schema** — restored the asset dropped in a squash merge.
+
 ## [0.3.0] - 2026-03-01
 
 ### Added
@@ -303,10 +361,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive security audit with 335+ tests
 - AGPL-3.0 license with dual licensing option
 
+[0.8.3]: https://github.com/qhkm/r8r/compare/v0.8.2...v0.8.3
+[0.8.2]: https://github.com/qhkm/r8r/compare/v0.8.1...v0.8.2
+[0.8.1]: https://github.com/qhkm/r8r/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/qhkm/r8r/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/qhkm/r8r/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/qhkm/r8r/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/qhkm/r8r/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/qhkm/r8r/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/qhkm/r8r/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/qhkm/r8r/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/qhkm/r8r/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/qhkm/r8r/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/qhkm/r8r/releases/tag/v0.1.0
