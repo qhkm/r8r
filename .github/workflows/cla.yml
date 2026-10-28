@@ -1,29 +1,106 @@
 name: CLA Assistant
 
+# Contributors sign CLA.md by commenting the sign phrase on their pull request.
+# Signatures live in signatures/cla.json on the cla-signatures branch.
+# Never checks out pull request code, so pull_request_target is safe here.
+
 on:
   issue_comment:
     types: [created]
   pull_request_target:
-    types: [opened, closed, synchronize]
+    types: [opened, reopened, synchronize]
 
 permissions:
-  actions: write
   contents: write
   pull-requests: write
+  issues: write
   statuses: write
+
+concurrency:
+  group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
 
 jobs:
   cla-check:
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request &&
+       (github.event.comment.body == 'recheck' ||
+        github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'))
     runs-on: ubuntu-latest
     steps:
-      - name: CLA Assistant
-        if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
-        uses: contributor-assistant/github-action@v2.6.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PERSONAL_ACCESS_TOKEN: ${{ secrets.CLA_TOKEN }}
+      - name: Check CLA signatures
+        uses: actions/github-script@v9
         with:
-          path-to-signatures: "signatures/cla.json"
-          path-to-document: "https://github.com/qhkm/r8r/blob/main/CLA.md"
-          branch: "cla-signatures"
-          allowlist: qhkm,qhkmdev90,dependabot[bot],renovate[bot],github-actions[bot]
+          script: |
+            const SIGN_PHRASE = 'I have read the CLA Document and I hereby sign the CLA';
+            const BRANCH = 'cla-signatures';
+            const PATH = 'signatures/cla.json';
+            const ALLOWLIST = ['qhkm', 'qhkmdev90', 'dependabot[bot]', 'renovate[bot]', 'github-actions[bot]'];
+            const MARKER = '<!-- r8r-cla -->';
+            const { owner, repo } = context.repo;
+            const prNumber = context.payload.pull_request?.number ?? context.payload.issue.number;
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+
+            async function loadSignatures() {
+              const { data } = await github.rest.repos.getContent({ owner, repo, path: PATH, ref: BRANCH });
+              return { sha: data.sha, json: JSON.parse(Buffer.from(data.content, 'base64').toString('utf8')) };
+            }
+
+            let { sha, json } = await loadSignatures();
+            const signed = new Set(json.signedContributors.map((c) => c.id));
+
+            // Record a signature when the commenter posts the sign phrase.
+            const comment = context.payload.comment;
+            if (comment && comment.body === SIGN_PHRASE && !signed.has(comment.user.id)) {
+              json.signedContributors.push({
+                name: comment.user.login,
+                id: comment.user.id,
+                comment_id: comment.id,
+                created_at: comment.created_at,
+                repoId: context.payload.repository.id,
+                pullRequestNo: prNumber,
+              });
+              await github.rest.repos.createOrUpdateFileContents({
+                owner, repo, path: PATH, branch: BRANCH, sha,
+                message: `@${comment.user.login} has signed the CLA in ${owner}/${repo}#${prNumber}`,
+                content: Buffer.from(JSON.stringify(json, null, 2) + '\n').toString('base64'),
+              });
+              signed.add(comment.user.id);
+            }
+
+            // Every commit author on the PR must have signed (allowlisted accounts excepted).
+            const commits = await github.paginate(github.rest.pulls.listCommits, { owner, repo, pull_number: prNumber });
+            const authors = new Map();
+            for (const c of commits) {
+              if (c.author) authors.set(c.author.id, c.author.login);
+              else authors.set(`unlinked:${c.commit.author.email}`, c.commit.author.name);
+            }
+            authors.set(pr.user.id, pr.user.login);
+
+            const missing = [...authors]
+              .filter(([id, login]) => !ALLOWLIST.includes(login) && !signed.has(id))
+              .map(([id, login]) => (String(id).startsWith('unlinked:') ? `${login} (email not linked to a GitHub account)` : `@${login}`));
+
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha: pr.head.sha,
+              context: 'CLA',
+              state: missing.length ? 'failure' : 'success',
+              description: missing.length ? `Waiting on: ${missing.length} contributor(s)` : 'All contributors have signed the CLA',
+              target_url: `https://github.com/${owner}/${repo}/blob/main/CLA.md`,
+            });
+
+            // Keep one bot comment up to date instead of posting a new one on every push.
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: prNumber });
+            const existing = comments.find((c) => c.user.type === 'Bot' && c.body.includes(MARKER));
+            const body = missing.length
+              ? `${MARKER}\nThanks for your contribution! Before we can merge it, please read the [Contributor License Agreement](https://github.com/${owner}/${repo}/blob/main/CLA.md) and sign it by posting this exact comment:\n\n\`\`\`\n${SIGN_PHRASE}\n\`\`\`\n\nStill needed from: ${missing.join(', ')}\n\nComment \`recheck\` to re-run this check.`
+              : `${MARKER}\nAll contributors have signed the CLA. ✅`;
+
+            if (existing) {
+              if (existing.body !== body) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              }
+            } else if (missing.length) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+            }

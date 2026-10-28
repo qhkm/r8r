@@ -137,7 +137,7 @@ jobs:
           aws-region: ${{ github.event.inputs.aws_region }}
 
       - name: Download plan artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: terraform-plan
           path: infra
