@@ -85,7 +85,11 @@ r8r stores its database in the system data directory:
 
 ## Credentials Storage
 
-Credentials are stored encrypted (AES-256-GCM) in the data directory. Manage with:
+Every stored credential and OAuth2 token is encrypted with AES-256-GCM. The key comes from `R8R_ENCRYPTION_KEY` when it is set; otherwise r8r generates one on first use and keeps it in `encryption.key` next to `credentials.json`, readable only by you.
+
+With the generated key file, encryption protects a copied or backed-up `credentials.json` on its own, not someone who can read the whole data directory. On servers, set `R8R_ENCRYPTION_KEY` from a secrets manager to keep the key off the disk. **Back up the key:** without it, stored credentials cannot be recovered.
+
+Manage credentials with:
 
 ```bash
 r8r credentials set <service> --value <secret>

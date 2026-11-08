@@ -84,6 +84,19 @@ Use `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `R8R_LLM_API_KEY`, or the credential 
 export R8R_API_KEY=$(openssl rand -hex 32)
 ```
 
+### `R8R_ENCRYPTION_KEY`
+
+**Required**: No. When unset, r8r generates a random key on first use and stores it in `encryption.key` in the data directory (mode 0600).
+
+**Description**: Key used to encrypt stored credentials and OAuth2 tokens with AES-256-GCM. 64 hex characters are used as the key directly; any other value is hashed with SHA-256. Setting it keeps the key off the disk, which is the point on servers: with the generated key file, encryption only protects a `credentials.json` copied without the rest of the data directory.
+
+Back the key up. Without it, stored credentials cannot be recovered. r8r refuses to write credentials with a key that cannot open the ones already stored, so a wrong or missing key never splits the store across two keys.
+
+**Example**:
+```bash
+export R8R_ENCRYPTION_KEY=$(openssl rand -hex 32)
+```
+
 ### `R8R_ALLOW_UNAUTHENTICATED`
 
 **Default**: `false`
