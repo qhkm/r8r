@@ -163,14 +163,23 @@ nodes:
       max_attempts: 3
       backoff: exponential
 
-  - id: route
-    type: switch
+  # Route on the agent's verdict. In conditions, earlier node outputs are
+  # variables named after the node id, with `-` replaced by `_`.
+  - id: flag-order
+    type: http
     depends_on: [check-fraud]
+    condition: 'check_fraud.verdict == "fraud"'
     config:
-      expression: "nodes.check_fraud.output.verdict"
-      cases:
-        fraud: [flag-order]
-        legit: [process-order]
+      url: "https://api.store.com/orders/{{ input.order_id }}/flag"
+      method: POST
+
+  - id: process-order
+    type: http
+    depends_on: [check-fraud]
+    condition: 'check_fraud.verdict == "legit"'
+    config:
+      url: "https://api.store.com/orders/{{ input.order_id }}/process"
+      method: POST
 ```
 
 The agent node gets the same durability as every other node — retries, checkpoints, fallback values. If the AI call fails at 3am, r8r retries with backoff, not the entire pipeline.

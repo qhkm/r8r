@@ -8,9 +8,16 @@
 #   r8r credentials set whatsapp <your-phone-number-id>
 #   r8r credentials set telegram <your-bot-token>
 #
-# Audio must arrive as a data URI, e.g. from the whatsapp inbound node
-# (download media → base64) or an HTTP upload:
+# Audio must arrive as a data URI, e.g. from an HTTP upload:
 #   data:audio/ogg;base64,<...>
+#
+# Run it by POSTing to the webhook:
+#   curl -X POST localhost:8080/voice-note -H 'Content-Type: application/json' \
+#     -d '{"audio_data": "data:audio/ogg;base64,...", "sender_id": "<chat id>"}'
+#
+# WhatsApp voice notes arrive as a `whatsapp.inbound` event carrying a media
+# ID, not audio. To use them, download the media in a separate workflow
+# (event trigger on whatsapp.inbound) and call this one with the data URI.
 
 name: voice-note-transcription
 description: Transcribe inbound voice note via Whisper and reply with a summary
@@ -19,10 +26,6 @@ version: 1
 triggers:
   - type: webhook
     path: /voice-note
-  - type: whatsapp
-    config:
-      event: message
-      media: audio
 
 inputs:
   audio_data:

@@ -193,6 +193,14 @@ pub fn validate_workflow(workflow: &Workflow) -> Result<()> {
     Ok(())
 }
 
+/// Node types that exist only when r8r is built with an optional feature.
+fn feature_gated_node(node_type: &str) -> Option<&'static str> {
+    match node_type {
+        "sandbox" => Some("sandbox"),
+        _ => None,
+    }
+}
+
 /// Validate a workflow + per-node config against the node registry.
 ///
 /// Calls `validate_workflow` first for structural checks, then dispatches each
@@ -209,9 +217,17 @@ pub fn validate_workflow_with_registry(
 
     for node in &workflow.nodes {
         let entry = registry.get(&node.node_type).ok_or_else(|| {
+            let hint = match feature_gated_node(&node.node_type) {
+                Some(feature) => format!(
+                    "This build does not include it; reinstall with \
+                     `cargo install r8r --features {}`.",
+                    feature
+                ),
+                None => "Run `r8r doctor` to see registered types.".to_string(),
+            };
             Error::Validation(format!(
-                "Node '{}' uses unknown type '{}'. Run `r8r doctor` to see registered types.",
-                node.id, node.node_type
+                "Node '{}' uses unknown type '{}'. {}",
+                node.id, node.node_type, hint
             ))
         })?;
 

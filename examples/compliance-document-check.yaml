@@ -9,6 +9,11 @@
 # Prerequisites:
 #   r8r credentials set openai <your-openai-key>
 #   # Sandbox image with python + pymupdf/ocr installed (see sandbox-python.yaml)
+#
+# Requires the optional `sandbox` node, which release binaries don't include:
+#   cargo install r8r --features sandbox
+# The default sandbox backend runs code as a local subprocess on the host;
+# set sandbox.backend (docker, firecracker or wasm) in the config to isolate it.
 
 name: compliance-document-check
 description: AI completeness check of client document submissions
