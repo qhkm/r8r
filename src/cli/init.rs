@@ -166,8 +166,16 @@ fn default_endpoint(provider: &str) -> Option<&'static str> {
 async fn persist_api_key(provider: &str, value: &str) -> anyhow::Result<()> {
     use crate::credentials::CredentialStore;
 
+    // Limit the key to the provider's API host.
+    let scope = default_endpoint(provider)
+        .and_then(|url| reqwest::Url::parse(url).ok())
+        .and_then(|url| url.host_str().map(str::to_string))
+        .map(|host| crate::credentials::CredentialScope::hosts([host]))
+        .transpose()?
+        .unwrap_or_else(crate::credentials::CredentialScope::any);
+
     let mut cred_store = CredentialStore::load().await?;
-    cred_store.set(provider, None, value).await?;
+    cred_store.set(provider, None, value, Some(scope)).await?;
     Ok(())
 }
 

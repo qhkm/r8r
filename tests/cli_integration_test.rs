@@ -172,6 +172,8 @@ fn test_json_flag_on_credentials_set() {
         .arg("openai")
         .arg("--value")
         .arg("secret")
+        .arg("--allowed-hosts")
+        .arg("api.openai.com")
         .output()
         .expect("failed to execute credentials set");
 
@@ -181,6 +183,22 @@ fn test_json_flag_on_credentials_set() {
         .expect("--json credentials set output should be valid JSON");
     assert_eq!(parsed["ok"].as_bool(), Some(true));
     assert_eq!(parsed["service"].as_str(), Some("openai"));
+    assert_eq!(parsed["hosts"].as_str(), Some("api.openai.com"));
+}
+
+#[test]
+fn test_new_credential_without_scope_is_refused() {
+    let root = TempDir::new().unwrap();
+    let mut cmd = Command::cargo_bin("r8r").unwrap();
+    configure_isolated_env(&mut cmd, &root);
+    let output = cmd
+        .args(["credentials", "set", "github", "--value", "secret"])
+        .output()
+        .expect("failed to execute credentials set");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--allowed-hosts"), "{stderr}");
 }
 
 #[test]

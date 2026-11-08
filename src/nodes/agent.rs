@@ -294,40 +294,42 @@ fn resolve_credential<'a>(
     provider: &AgentProvider,
     ctx: &'a NodeContext,
 ) -> Result<Option<&'a str>> {
+    let Some((name, key)) = find_credential(config, provider, ctx)? else {
+        return Ok(None);
+    };
+    // The endpoint can come from the workflow, so check the key may go there.
+    ctx.check_credential_url(name, &resolve_endpoint(config, provider))?;
+    Ok(Some(key))
+}
+
+/// Pick the credential for this provider, returning its name and value.
+fn find_credential<'a, 'c>(
+    config: &'c AgentConfig,
+    provider: &AgentProvider,
+    ctx: &'a NodeContext,
+) -> Result<Option<(&'c str, &'a str)>> {
     // Explicit credential field takes priority
     if let Some(cred_name) = &config.credential {
         return ctx
             .get_credential(cred_name)
-            .map(|s| Some(s.as_str()))
+            .map(|s| Some((cred_name.as_str(), s.as_str())))
             .ok_or_else(|| Error::Node(format!("Credential '{}' not found", cred_name)));
     }
 
-    // Try provider-specific defaults
-    match provider {
-        AgentProvider::Openai | AgentProvider::Custom => {
-            if let Some(key) = ctx.get_credential("openai") {
-                return Ok(Some(key.as_str()));
-            }
-            if let Some(key) = ctx.get_credential("llm") {
-                return Ok(Some(key.as_str()));
-            }
-            Err(Error::Node(
-                "No API credential found for OpenAI. Set 'credential' in config or add 'openai' credential".to_string(),
-            ))
+    let (defaults, label): (&[&'static str], &str) = match provider {
+        AgentProvider::Openai | AgentProvider::Custom => (&["openai", "llm"], "OpenAI"),
+        AgentProvider::Anthropic => (&["anthropic", "llm"], "Anthropic"),
+        AgentProvider::Zeptoclaw | AgentProvider::Ollama => return Ok(None), // no credential required
+    };
+    for &name in defaults {
+        if let Some(key) = ctx.get_credential(name) {
+            return Ok(Some((name, key.as_str())));
         }
-        AgentProvider::Anthropic => {
-            if let Some(key) = ctx.get_credential("anthropic") {
-                return Ok(Some(key.as_str()));
-            }
-            if let Some(key) = ctx.get_credential("llm") {
-                return Ok(Some(key.as_str()));
-            }
-            Err(Error::Node(
-                "No API credential found for Anthropic. Set 'credential' in config or add 'anthropic' credential".to_string(),
-            ))
-        }
-        AgentProvider::Zeptoclaw | AgentProvider::Ollama => Ok(None), // no credential required
     }
+    Err(Error::Node(format!(
+        "No API credential found for {label}. Set 'credential' in config or add '{}' credential",
+        defaults[0]
+    )))
 }
 
 // ---------------------------------------------------------------------------

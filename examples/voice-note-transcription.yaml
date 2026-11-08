@@ -4,9 +4,9 @@
 # is transcribed with Whisper, summarized by an agent, and replied to.
 #
 # Prerequisites:
-#   r8r credentials set openai <your-openai-key>
-#   r8r credentials set whatsapp <your-phone-number-id>
-#   r8r credentials set telegram <your-bot-token>
+#   r8r credentials set openai --value <your-openai-key> --allowed-hosts api.openai.com
+#   r8r credentials set whatsapp --value <your-phone-number-id> --allowed-hosts graph.facebook.com
+#   r8r credentials set telegram --value <your-bot-token> --allowed-hosts api.telegram.org
 #
 # Audio must arrive as a data URI, e.g. from an HTTP upload:
 #   data:audio/ogg;base64,<...>

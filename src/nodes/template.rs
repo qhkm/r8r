@@ -239,6 +239,7 @@ mod tests {
             item_index: None,
             credentials: Arc::new(HashMap::new()),
             oauth2_credentials: Arc::new(HashMap::new()),
+            credential_scopes: Arc::new(HashMap::new()),
             storage: None,
             registry: None,
         }

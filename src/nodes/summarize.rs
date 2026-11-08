@@ -144,16 +144,17 @@ impl Node for SummarizeNode {
         info!("Summarizing {} characters of text", text.len());
 
         // Get API key from credentials
-        let api_key = if let Some(cred_name) = &config.credential {
-            ctx.get_credential(cred_name)
+        let (cred_name, api_key) = if let Some(cred_name) = &config.credential {
+            let key = ctx
+                .get_credential(cred_name)
                 .cloned()
-                .ok_or_else(|| Error::Node(format!("Credential '{}' not found", cred_name)))?
+                .ok_or_else(|| Error::Node(format!("Credential '{}' not found", cred_name)))?;
+            (cred_name.clone(), key)
         } else {
             // Try default credential names
-            ctx.get_credential("openai")
-                .or_else(|| ctx.get_credential("anthropic"))
-                .or_else(|| ctx.get_credential("llm"))
-                .cloned()
+            ["openai", "anthropic", "llm"]
+                .into_iter()
+                .find_map(|name| ctx.get_credential(name).map(|k| (name.to_string(), k.clone())))
                 .ok_or_else(|| {
                     Error::Node(
                         "No API credential found. Set 'credential' config or add 'openai'/'anthropic'/'llm' credential"
@@ -168,6 +169,8 @@ impl Node for SummarizeNode {
 
         // Call the API
         let (api_url, headers, body) = build_api_request(&config, &api_key, &prompt)?;
+        // The endpoint can come from the workflow, so check the key may go there.
+        ctx.check_credential_url(&cred_name, &api_url)?;
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(DEFAULT_SUMMARIZE_HTTP_TIMEOUT_SECS))

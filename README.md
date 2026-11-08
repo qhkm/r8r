@@ -373,7 +373,8 @@ r8r create <description>              # Generate workflow from prompt
 r8r refine <name> <description>       # Refine existing workflow
 
 # Security
-r8r credentials set <name>            # Store secret
+r8r credentials set <name> --allowed-hosts <host>   # Store secret, limited to a host
+r8r credentials scope <name> --allowed-hosts <host> # Change where it may be sent
 r8r credentials list                  # List (masked)
 
 # Job Queue (distributed workers)

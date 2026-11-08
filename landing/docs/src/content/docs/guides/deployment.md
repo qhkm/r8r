@@ -103,7 +103,7 @@ Store secrets securely with the credentials manager:
 
 ```bash
 # Store a credential
-r8r credentials set slack-webhook --value "https://hooks.slack.com/..."
+r8r credentials set github --value "ghp_..." --allowed-hosts api.github.com
 
 # List stored credentials (values are masked)
 r8r credentials list

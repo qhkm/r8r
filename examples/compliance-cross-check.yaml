@@ -8,7 +8,7 @@
 # Pattern: agent + structured output (traceable JSON), ready to export.
 #
 # Prerequisites:
-#   r8r credentials set openai <your-openai-key>
+#   r8r credentials set openai --value <your-openai-key> --allowed-hosts api.openai.com
 
 name: compliance-cross-check
 description: Cross-check documents against requirements with verifiable trace
