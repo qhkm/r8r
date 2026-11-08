@@ -109,7 +109,13 @@ r8r credentials set slack-webhook --value "https://hooks.slack.com/..."
 r8r credentials list
 ```
 
-Credentials are encrypted with AES-256-GCM and stored locally.
+Every stored credential and OAuth2 token is encrypted with AES-256-GCM. The key comes from `R8R_ENCRYPTION_KEY` when it is set; otherwise r8r generates one on first use and keeps it in `encryption.key` next to `credentials.json`, readable only by you.
+
+With the generated key file, encryption protects a copied or backed-up `credentials.json` on its own, not someone who can read the whole data directory. On servers, set `R8R_ENCRYPTION_KEY` from a secrets manager to keep the key off the disk. **Back up the key:** without it, stored credentials cannot be recovered.
+
+```bash
+export R8R_ENCRYPTION_KEY="$(openssl rand -hex 32)"   # keep this somewhere safe
+```
 
 ## Health Check
 

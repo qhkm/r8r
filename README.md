@@ -382,7 +382,7 @@ While a prompt is running, the REPL TUI shows staged progress: planning, active 
 ## Security
 
 - **SSRF Protection** — Blocks internal IP requests
-- **AES-256-GCM** — Encrypted credential storage
+- **AES-256-GCM** — Encrypted credential storage (key from `R8R_ENCRYPTION_KEY`, or a generated owner-only key file)
 - **Webhook Signatures** — GitHub, Stripe, Slack verification
 - **Rate Limiting** — Per-workflow throttling
 - **Schema Validation** — JSON Schema input validation

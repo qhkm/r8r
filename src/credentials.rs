@@ -6,79 +6,101 @@
  */
 //! Credential storage for r8r.
 //!
-//! Stores credentials in ~/.r8r/credentials.json with AES-256-GCM encryption.
-//! A master key is derived from a user password using PBKDF2.
+//! Credentials live in `<data dir>/credentials.json`. Every value, and every
+//! OAuth2 token, is encrypted with AES-256-GCM before it is written.
+//!
+//! The 256-bit key comes from `R8R_ENCRYPTION_KEY` when it is set (64 hex
+//! characters are used as the key directly; any other string is hashed with
+//! SHA-256). Otherwise r8r generates a random key on first use and keeps it in
+//! `<data dir>/encryption.key`, readable only by the owner.
+//!
+//! With the default key file, encryption protects a copied or backed-up
+//! `credentials.json` on its own, not someone who can read the whole data
+//! directory. Set `R8R_ENCRYPTION_KEY` (for example from a secrets manager) to
+//! keep the key off the disk entirely.
+//!
+//! Older stores kept base64-encoded values and plaintext OAuth2 tokens. They are
+//! encrypted automatically the first time the store is loaded.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
-use ring::pbkdf2;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::config::Config;
 use crate::error::{Error, Result};
+use crate::integrations::oauth2::OAuth2Credential;
 
-/// Secure container for the master key that zeroizes on drop.
+/// Environment variable holding the encryption key.
+pub const ENCRYPTION_KEY_ENV: &str = "R8R_ENCRYPTION_KEY";
+
+/// Name of the generated key file, next to `credentials.json`.
+const KEY_FILE_NAME: &str = "encryption.key";
+
+/// Prefix marking an encrypted value: `enc:base64(nonce + ciphertext)`.
+const ENC_PREFIX: &str = "enc:";
+
+/// AES-256 key length in bytes.
+const KEY_LEN: usize = 32;
+
+/// Nonce length for AES-GCM.
+const NONCE_LEN: usize = 12;
+
+/// File mode for credential files on Unix systems (owner read/write only).
+const CREDENTIAL_FILE_MODE: u32 = 0o600;
+
+/// Secure container for the encryption key that zeroizes on drop.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
 struct SecureMasterKey(Vec<u8>);
 
 impl SecureMasterKey {
-    fn new(key: Vec<u8>) -> Self {
-        Self(key)
-    }
-
     fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 }
-
-/// Number of PBKDF2 iterations for key derivation.
-const PBKDF2_ITERATIONS: u32 = 100_000;
-
-/// Salt length in bytes.
-const SALT_LEN: usize = 16;
-
-/// Nonce length for AES-GCM.
-const NONCE_LEN: usize = 12;
-/// File mode for credential files on Unix systems (owner read/write only).
-const CREDENTIAL_FILE_MODE: u32 = 0o600;
 
 /// A stored credential.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Credential {
     pub service: String,
     pub key: Option<String>,
-    /// Encrypted or base64-encoded value (format: "enc:base64(nonce+ciphertext)" or legacy base64)
+    /// `enc:base64(nonce + ciphertext)`. Stores written by r8r 0.8.3 and
+    /// earlier held plain base64; those are re-encrypted on load.
     pub value: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Master key file structure.
-#[derive(Debug, Serialize, Deserialize)]
-struct MasterKeyFile {
-    /// Salt used for PBKDF2 key derivation
-    salt: String,
-    /// Encrypted master key (nonce + ciphertext, base64-encoded)
-    encrypted_key: String,
+/// On-disk layout of `credentials.json`.
+#[derive(Default, Serialize, Deserialize)]
+struct StoreFile {
+    #[serde(default)]
+    credentials: HashMap<String, Credential>,
+    /// Plaintext OAuth2 tokens from older stores. Read only; never written.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    oauth2_credentials: HashMap<String, OAuth2Credential>,
+    /// OAuth2 tokens as one encrypted JSON blob (`enc:...`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    oauth2_encrypted: Option<String>,
 }
 
 /// Credential store backed by a JSON file.
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct CredentialStore {
     credentials: HashMap<String, Credential>,
-    #[serde(default)]
-    oauth2_credentials: HashMap<String, crate::integrations::oauth2::OAuth2Credential>,
-    /// Master key for encryption (not serialized, zeroized on drop)
-    #[serde(skip)]
+    oauth2_credentials: HashMap<String, OAuth2Credential>,
+    /// Encrypted OAuth2 blob that could not be opened because no key was
+    /// available. Written back unchanged so it is not lost.
+    oauth2_locked: Option<String>,
+    /// Encryption key, once resolved (zeroized on drop).
     master_key: Option<SecureMasterKey>,
-    /// Test-only override for where the store is persisted (never serialized).
-    #[serde(skip)]
-    #[doc(hidden)]
+    /// Value of `R8R_ENCRYPTION_KEY` captured at load time.
+    key_env: Option<String>,
+    /// Where the store is persisted; `None` means the default data directory.
     path_override: Option<PathBuf>,
 }
 
@@ -86,6 +108,7 @@ impl std::fmt::Debug for CredentialStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CredentialStore")
             .field("credentials", &self.credentials)
+            .field("oauth2_credentials", &"[REDACTED]")
             .field(
                 "master_key",
                 &self.master_key.as_ref().map(|_| "[REDACTED]"),
@@ -100,153 +123,180 @@ impl CredentialStore {
         Config::data_dir().join("credentials.json")
     }
 
-    /// Resolve the path this store writes to (honors test path_override).
+    /// Get the path to the generated encryption key file.
+    pub fn key_path() -> PathBuf {
+        Config::data_dir().join(KEY_FILE_NAME)
+    }
+
+    /// Resolve the path this store writes to.
     fn effective_path(&self) -> PathBuf {
         self.path_override.clone().unwrap_or_else(Self::path)
     }
 
-    /// Get the path to the master key file.
-    pub fn master_key_path() -> PathBuf {
-        Config::data_dir().join("master.key")
+    fn effective_key_path(&self) -> PathBuf {
+        self.effective_path().with_file_name(KEY_FILE_NAME)
     }
 
-    /// Load credentials from disk (without master key - can only list, not decrypt).
+    /// Load the store, resolve the encryption key, and encrypt any values left
+    /// unencrypted by older versions.
     pub async fn load() -> Result<Self> {
-        let path = Self::path();
-        if !tokio::fs::try_exists(&path)
+        Self::load_at(Self::path(), std::env::var(ENCRYPTION_KEY_ENV).ok()).await
+    }
+
+    async fn load_at(path: PathBuf, key_env: Option<String>) -> Result<Self> {
+        let file: StoreFile = if tokio::fs::try_exists(&path)
             .await
             .map_err(|e| Error::Storage(format!("Failed to check credentials path: {}", e)))?
         {
-            return Ok(Self::default());
+            let content = read_file(&path, "credentials").await?;
+            serde_json::from_str(&content)
+                .map_err(|e| Error::Storage(format!("Failed to parse credentials: {}", e)))?
+        } else {
+            StoreFile::default()
+        };
+
+        let legacy_oauth2 = !file.oauth2_credentials.is_empty();
+        let mut store = Self {
+            credentials: file.credentials,
+            oauth2_credentials: file.oauth2_credentials,
+            key_env: key_env.filter(|k| !k.is_empty()),
+            path_override: Some(path),
+            ..Self::default()
+        };
+        store.master_key =
+            resolve_key(&store.effective_key_path(), store.key_env.as_deref(), false)?;
+
+        if let Some(blob) = file.oauth2_encrypted {
+            match &store.master_key {
+                Some(key) => {
+                    let json = decrypt_value(&blob, key).map_err(|_| {
+                        Error::Storage(format!(
+                            "Cannot decrypt stored OAuth2 tokens: {}",
+                            store.wrong_key_hint()
+                        ))
+                    })?;
+                    let tokens: HashMap<String, OAuth2Credential> = serde_json::from_str(&json)
+                        .map_err(|e| {
+                            Error::Storage(format!("Failed to parse OAuth2 tokens: {}", e))
+                        })?;
+                    // Plaintext entries from an older store must not override
+                    // newer encrypted ones.
+                    for (name, token) in tokens {
+                        store.oauth2_credentials.insert(name, token);
+                    }
+                }
+                None => store.oauth2_locked = Some(blob),
+            }
         }
 
-        let content = read_file(&path, "credentials").await?;
+        let has_plaintext = legacy_oauth2
+            || store
+                .credentials
+                .values()
+                .any(|c| !c.value.starts_with(ENC_PREFIX));
+        if has_plaintext {
+            store.save().await?;
+        }
 
-        serde_json::from_str(&content)
-            .map_err(|e| Error::Storage(format!("Failed to parse credentials: {}", e)))
-    }
-
-    /// Load credentials and unlock with password.
-    pub async fn load_with_password(password: &str) -> Result<Self> {
-        let mut store = Self::load().await?;
-        store.unlock(password).await?;
         Ok(store)
     }
 
-    /// Check if encryption is initialized (master key file exists).
-    pub fn is_encryption_initialized() -> bool {
-        Self::master_key_path().exists()
+    /// Make sure a key is available, generating the key file if needed.
+    fn ensure_key(&mut self) -> Result<SecureMasterKey> {
+        if self.master_key.is_none() {
+            // Never start a second key for a store that already holds values
+            // encrypted with another one: that would split it across two keys.
+            let has_encrypted = self.oauth2_locked.is_some()
+                || self
+                    .credentials
+                    .values()
+                    .any(|c| c.value.starts_with(ENC_PREFIX));
+            if has_encrypted {
+                return Err(Error::Storage(format!(
+                    "Stored credentials are encrypted, but {}",
+                    self.missing_key_hint()
+                )));
+            }
+            self.master_key =
+                resolve_key(&self.effective_key_path(), self.key_env.as_deref(), true)?;
+        }
+        let key = self
+            .master_key
+            .clone()
+            .ok_or_else(|| Error::Storage("No encryption key available".to_string()))?;
+
+        // Likewise refuse a key that cannot open what is already stored.
+        if let Some(existing) = self
+            .credentials
+            .values()
+            .find(|c| c.value.starts_with(ENC_PREFIX))
+            && decrypt_value(&existing.value, &key).is_err()
+        {
+            return Err(Error::Storage(format!(
+                "Refusing to write credentials: {}",
+                self.wrong_key_hint()
+            )));
+        }
+        Ok(key)
     }
 
-    /// Initialize encryption with a new password.
-    /// Creates a new master key and encrypts it with the password.
-    pub async fn initialize_encryption(password: &str) -> Result<()> {
-        if Self::is_encryption_initialized() {
-            return Err(Error::Storage(
-                "Encryption already initialized. Use unlock instead.".to_string(),
-            ));
-        }
+    fn missing_key_hint(&self) -> String {
+        format!(
+            "no encryption key is available. Set {} or restore {}",
+            ENCRYPTION_KEY_ENV,
+            self.effective_key_path().display()
+        )
+    }
 
+    fn wrong_key_hint(&self) -> String {
+        let source = if self.key_env.is_some() {
+            ENCRYPTION_KEY_ENV.to_string()
+        } else {
+            self.effective_key_path().display().to_string()
+        };
+        format!("the key from {source} is not the one it was encrypted with")
+    }
+
+    /// Save credentials to disk, encrypting anything still in plaintext.
+    pub async fn save(&mut self) -> Result<()> {
+        let key = self.ensure_key()?;
         let rng = SystemRandom::new();
 
-        // Generate random salt
-        let mut salt = [0u8; SALT_LEN];
-        rng.fill(&mut salt)
-            .map_err(|_| Error::Storage("Failed to generate salt".to_string()))?;
-
-        // Generate random master key
-        let mut master_key = [0u8; 32];
-        rng.fill(&mut master_key)
-            .map_err(|_| Error::Storage("Failed to generate master key".to_string()))?;
-
-        // Derive encryption key from password
-        let mut derived_key = [0u8; 32];
-        pbkdf2::derive(
-            pbkdf2::PBKDF2_HMAC_SHA256,
-            std::num::NonZeroU32::new(PBKDF2_ITERATIONS).unwrap(),
-            &salt,
-            password.as_bytes(),
-            &mut derived_key,
-        );
-
-        // Encrypt the master key with the derived key
-        let encrypted_master_key = encrypt_data(&master_key, &derived_key, &rng)?;
-
-        // Save master key file
-        let master_key_file = MasterKeyFile {
-            salt: STANDARD.encode(salt),
-            encrypted_key: STANDARD.encode(encrypted_master_key),
-        };
-
-        let path = Self::master_key_path();
-        let content = serde_json::to_string_pretty(&master_key_file)
-            .map_err(|e| Error::Storage(format!("Failed to serialize master key: {}", e)))?;
-        write_secure_file(&path, &content, "master key").await?;
-
-        Ok(())
-    }
-
-    /// Unlock the credential store with a password.
-    pub async fn unlock(&mut self, password: &str) -> Result<()> {
-        if !Self::is_encryption_initialized() {
-            // No encryption - nothing to unlock
-            return Ok(());
+        for cred in self.credentials.values_mut() {
+            if !cred.value.starts_with(ENC_PREFIX) {
+                let plain = STANDARD.decode(&cred.value).map_err(|e| {
+                    Error::Storage(format!(
+                        "Failed to decode credential '{}': {}",
+                        cred.service, e
+                    ))
+                })?;
+                cred.value = encrypt_value(&plain, &key, &rng)?;
+            }
         }
 
-        let path = Self::master_key_path();
-        let content = read_file(&path, "master key").await?;
+        let oauth2_encrypted = if !self.oauth2_credentials.is_empty() {
+            let json = serde_json::to_string(&self.oauth2_credentials)
+                .map_err(|e| Error::Storage(format!("Failed to serialize OAuth2 tokens: {}", e)))?;
+            Some(encrypt_value(json.as_bytes(), &key, &rng)?)
+        } else {
+            self.oauth2_locked.clone()
+        };
 
-        let master_key_file: MasterKeyFile = serde_json::from_str(&content)
-            .map_err(|e| Error::Storage(format!("Failed to parse master key: {}", e)))?;
-
-        let salt = STANDARD
-            .decode(&master_key_file.salt)
-            .map_err(|_| Error::Storage("Invalid password".to_string()))?;
-
-        let encrypted_key = STANDARD
-            .decode(&master_key_file.encrypted_key)
-            .map_err(|_| Error::Storage("Invalid password".to_string()))?;
-
-        // Derive encryption key from password
-        let mut derived_key = [0u8; 32];
-        pbkdf2::derive(
-            pbkdf2::PBKDF2_HMAC_SHA256,
-            std::num::NonZeroU32::new(PBKDF2_ITERATIONS).unwrap(),
-            &salt,
-            password.as_bytes(),
-            &mut derived_key,
-        );
-
-        // Decrypt the master key
-        let master_key = decrypt_data(&encrypted_key, &derived_key)
-            .map_err(|_| Error::Storage("Invalid password".to_string()))?;
-
-        self.master_key = Some(SecureMasterKey::new(master_key));
-        Ok(())
-    }
-
-    /// Save credentials to disk.
-    pub async fn save(&self) -> Result<()> {
-        let path = self.effective_path();
-
-        let content = serde_json::to_string_pretty(&self)
+        let file = StoreFile {
+            credentials: self.credentials.clone(),
+            oauth2_credentials: HashMap::new(),
+            oauth2_encrypted,
+        };
+        let content = serde_json::to_string_pretty(&file)
             .map_err(|e| Error::Storage(format!("Failed to serialize credentials: {}", e)))?;
-        write_secure_file(&path, &content, "credentials").await
+        write_secure_file(&self.effective_path(), &content, "credentials").await
     }
 
     /// Set a credential.
     pub async fn set(&mut self, service: &str, key: Option<&str>, value: &str) -> Result<()> {
         let now = chrono::Utc::now();
-        let rng = SystemRandom::new();
-
-        // Encrypt if master key is available, otherwise use base64
-        let encoded_value = if let Some(master_key) = &self.master_key {
-            let encrypted = encrypt_data(value.as_bytes(), master_key.as_bytes(), &rng)?;
-            format!("enc:{}", STANDARD.encode(encrypted))
-        } else {
-            // Legacy base64 encoding
-            STANDARD.encode(value.as_bytes())
-        };
+        let master_key = self.ensure_key()?;
+        let encoded_value = encrypt_value(value.as_bytes(), &master_key, &SystemRandom::new())?;
 
         let credential = Credential {
             service: service.to_string(),
@@ -264,42 +314,38 @@ impl CredentialStore {
         self.save().await
     }
 
-    /// Get a credential value (decrypted/decoded).
+    /// Get a credential value (decrypted).
     pub fn get(&self, service: &str) -> Result<Option<String>> {
-        match self.credentials.get(service) {
-            Some(cred) => {
-                let value = if cred.value.starts_with("enc:") {
-                    // Encrypted value
-                    let master_key = self.master_key.as_ref().ok_or_else(|| {
-                        Error::Storage(
-                            "Credential is encrypted but store is not unlocked".to_string(),
-                        )
-                    })?;
+        let Some(cred) = self.credentials.get(service) else {
+            return Ok(None);
+        };
 
-                    let encrypted = STANDARD
-                        .decode(&cred.value[4..])
-                        .map_err(|_| Error::Storage("Failed to decrypt credential".to_string()))?;
-
-                    let decrypted = decrypt_data(&encrypted, master_key.as_bytes())
-                        .map_err(|_| Error::Storage("Failed to decrypt credential".to_string()))?;
-
-                    String::from_utf8(decrypted)
-                        .map_err(|_| Error::Storage("Failed to decrypt credential".to_string()))?
-                } else {
-                    // Legacy base64-encoded value
-                    let decoded = STANDARD.decode(&cred.value).map_err(|e| {
-                        Error::Storage(format!("Failed to decode credential: {}", e))
-                    })?;
-
-                    String::from_utf8(decoded).map_err(|e| {
-                        Error::Storage(format!("Invalid UTF-8 in credential: {}", e))
-                    })?
-                };
-
-                Ok(Some(value))
-            }
-            None => Ok(None),
+        if !cred.value.starts_with(ENC_PREFIX) {
+            // Not yet re-encrypted (only possible for a store built in memory).
+            let decoded = STANDARD
+                .decode(&cred.value)
+                .map_err(|e| Error::Storage(format!("Failed to decode credential: {}", e)))?;
+            return String::from_utf8(decoded)
+                .map(Some)
+                .map_err(|e| Error::Storage(format!("Invalid UTF-8 in credential: {}", e)));
         }
+
+        let master_key = self.master_key.as_ref().ok_or_else(|| {
+            Error::Storage(format!(
+                "Credential '{}' is encrypted, but {}",
+                service,
+                self.missing_key_hint()
+            ))
+        })?;
+        decrypt_value(&cred.value, master_key)
+            .map(Some)
+            .map_err(|_| {
+                Error::Storage(format!(
+                    "Cannot decrypt credential '{}': {}",
+                    service,
+                    self.wrong_key_hint()
+                ))
+            })
     }
 
     /// List all credentials (without decoding values).
@@ -316,44 +362,6 @@ impl CredentialStore {
         Ok(existed)
     }
 
-    /// Migrate legacy base64 credentials to encrypted format.
-    /// Requires the store to be unlocked with a master key.
-    pub async fn migrate_to_encrypted(&mut self) -> Result<usize> {
-        let master_key = self.master_key.as_ref().ok_or_else(|| {
-            Error::Storage("Store must be unlocked to migrate credentials".to_string())
-        })?;
-
-        let rng = SystemRandom::new();
-        let mut migrated = 0;
-
-        let services: Vec<String> = self.credentials.keys().cloned().collect();
-        for service in services {
-            if let Some(cred) = self.credentials.get(&service)
-                && !cred.value.starts_with("enc:")
-            {
-                // Legacy credential - decrypt and re-encrypt
-                let decoded = STANDARD
-                    .decode(&cred.value)
-                    .map_err(|e| Error::Storage(format!("Failed to decode credential: {}", e)))?;
-
-                let encrypted = encrypt_data(&decoded, master_key.as_bytes(), &rng)?;
-                let new_value = format!("enc:{}", STANDARD.encode(encrypted));
-
-                if let Some(cred) = self.credentials.get_mut(&service) {
-                    cred.value = new_value;
-                    cred.updated_at = chrono::Utc::now();
-                    migrated += 1;
-                }
-            }
-        }
-
-        if migrated > 0 {
-            self.save().await?;
-        }
-
-        Ok(migrated)
-    }
-
     /// Mask a credential value for display.
     pub fn mask_value(value: &str) -> String {
         if value.len() <= 4 {
@@ -365,17 +373,14 @@ impl CredentialStore {
 
     /// Check if this credential is encrypted.
     pub fn is_encrypted(credential: &Credential) -> bool {
-        credential.value.starts_with("enc:")
+        credential.value.starts_with(ENC_PREFIX)
     }
 
-    pub fn get_oauth2(
-        &self,
-        service: &str,
-    ) -> Option<&crate::integrations::oauth2::OAuth2Credential> {
+    pub fn get_oauth2(&self, service: &str) -> Option<&OAuth2Credential> {
         self.oauth2_credentials.get(service)
     }
 
-    pub fn set_oauth2(&mut self, credential: crate::integrations::oauth2::OAuth2Credential) {
+    pub fn set_oauth2(&mut self, credential: OAuth2Credential) {
         self.oauth2_credentials
             .insert(credential.service.clone(), credential);
     }
@@ -383,6 +388,110 @@ impl CredentialStore {
     pub fn list_oauth2(&self) -> Vec<&str> {
         self.oauth2_credentials.keys().map(|s| s.as_str()).collect()
     }
+}
+
+/// Resolve the encryption key: `R8R_ENCRYPTION_KEY` first, then the key file.
+/// With `create`, a missing key file is generated.
+fn resolve_key(
+    key_path: &Path,
+    key_env: Option<&str>,
+    create: bool,
+) -> Result<Option<SecureMasterKey>> {
+    if let Some(env) = key_env {
+        let env = env.trim();
+        let bytes = match hex::decode(env) {
+            Ok(b) if b.len() == KEY_LEN => b,
+            _ => ring::digest::digest(&ring::digest::SHA256, env.as_bytes())
+                .as_ref()
+                .to_vec(),
+        };
+        return Ok(Some(SecureMasterKey(bytes)));
+    }
+
+    match std::fs::read_to_string(key_path) {
+        Ok(content) => {
+            let bytes = hex::decode(content.trim())
+                .ok()
+                .filter(|b| b.len() == KEY_LEN)
+                .ok_or_else(|| {
+                    Error::Storage(format!(
+                        "{} is not a valid key (expected {} hex characters)",
+                        key_path.display(),
+                        KEY_LEN * 2
+                    ))
+                })?;
+            Ok(Some(SecureMasterKey(bytes)))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if create {
+                create_key_file(key_path).map(Some)
+            } else {
+                Ok(None)
+            }
+        }
+        Err(e) => Err(Error::Storage(format!(
+            "Failed to read {}: {}",
+            key_path.display(),
+            e
+        ))),
+    }
+}
+
+/// Generate a random key and write it, owner-only, without overwriting an
+/// existing file.
+fn create_key_file(key_path: &Path) -> Result<SecureMasterKey> {
+    use std::io::Write;
+
+    let mut bytes = vec![0u8; KEY_LEN];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| Error::Storage("Failed to generate encryption key".to_string()))?;
+
+    if let Some(parent) = key_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| Error::Storage(format!("Failed to create directory: {}", e)))?;
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(CREDENTIAL_FILE_MODE);
+    }
+    match options.open(key_path) {
+        Ok(mut f) => {
+            let mut hex_key = hex::encode(&bytes);
+            let written = writeln!(f, "{hex_key}");
+            hex_key.zeroize();
+            written.map_err(|e| {
+                Error::Storage(format!("Failed to write {}: {}", key_path.display(), e))
+            })?;
+            Ok(SecureMasterKey(bytes))
+        }
+        // Another process created it first; use theirs.
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            bytes.zeroize();
+            resolve_key(key_path, None, false)?
+                .ok_or_else(|| Error::Storage("Encryption key file vanished".to_string()))
+        }
+        Err(e) => Err(Error::Storage(format!(
+            "Failed to create {}: {}",
+            key_path.display(),
+            e
+        ))),
+    }
+}
+
+fn encrypt_value(plaintext: &[u8], key: &SecureMasterKey, rng: &SystemRandom) -> Result<String> {
+    let encrypted = encrypt_data(plaintext, key.as_bytes(), rng)?;
+    Ok(format!("{ENC_PREFIX}{}", STANDARD.encode(encrypted)))
+}
+
+fn decrypt_value(value: &str, key: &SecureMasterKey) -> std::result::Result<String, ()> {
+    let encoded = value.strip_prefix(ENC_PREFIX).ok_or(())?;
+    let encrypted = STANDARD.decode(encoded).map_err(|_| ())?;
+    let plain = decrypt_data(&encrypted, key.as_bytes())?;
+    String::from_utf8(plain).map_err(|_| ())
 }
 
 async fn read_file(path: &Path, label: &str) -> Result<String> {
@@ -471,20 +580,192 @@ fn decrypt_data(ciphertext: &[u8], key: &[u8]) -> std::result::Result<Vec<u8>, (
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_credential_roundtrip() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut store = CredentialStore {
-            path_override: Some(tmp.path().join("credentials.json")),
+    const HEX_KEY: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
+    fn store_at(dir: &Path) -> CredentialStore {
+        CredentialStore {
+            path_override: Some(dir.join("credentials.json")),
             ..CredentialStore::default()
-        };
+        }
+    }
+
+    fn raw_file(dir: &Path) -> String {
+        std::fs::read_to_string(dir.join("credentials.json")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn set_encrypts_and_creates_owner_only_key_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = store_at(tmp.path());
         store
             .set("test-service", Some("api_key"), "secret123")
             .await
             .unwrap();
 
-        let value = store.get("test-service").unwrap();
-        assert_eq!(value, Some("secret123".to_string()));
+        assert_eq!(
+            store.get("test-service").unwrap().as_deref(),
+            Some("secret123")
+        );
+        let raw = raw_file(tmp.path());
+        assert!(!raw.contains("secret123"));
+        assert!(!raw.contains(&STANDARD.encode("secret123")));
+        assert!(raw.contains("\"enc:"));
+
+        let key_file = tmp.path().join(KEY_FILE_NAME);
+        assert_eq!(std::fs::read_to_string(&key_file).unwrap().trim().len(), 64);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&key_file).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
+
+    #[tokio::test]
+    async fn reload_decrypts_with_key_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        store_at(tmp.path()).set("svc", None, "v1").await.unwrap();
+
+        let store = CredentialStore::load_at(tmp.path().join("credentials.json"), None)
+            .await
+            .unwrap();
+        assert_eq!(store.get("svc").unwrap().as_deref(), Some("v1"));
+    }
+
+    #[tokio::test]
+    async fn env_key_is_used_and_no_key_file_is_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("credentials.json");
+        let mut store = CredentialStore::load_at(path.clone(), Some(HEX_KEY.into()))
+            .await
+            .unwrap();
+        store.set("svc", None, "v1").await.unwrap();
+        assert!(!tmp.path().join(KEY_FILE_NAME).exists());
+
+        let store = CredentialStore::load_at(path.clone(), Some(HEX_KEY.into()))
+            .await
+            .unwrap();
+        assert_eq!(store.get("svc").unwrap().as_deref(), Some("v1"));
+
+        // A passphrase (not 64 hex chars) also works, hashed to a key.
+        let path = tmp.path().join("other.json");
+        let mut store = CredentialStore::load_at(path.clone(), Some("correct horse".into()))
+            .await
+            .unwrap();
+        store.set("other", None, "v2").await.unwrap();
+        let store = CredentialStore::load_at(path, Some("correct horse".into()))
+            .await
+            .unwrap();
+        assert_eq!(store.get("other").unwrap().as_deref(), Some("v2"));
+    }
+
+    #[tokio::test]
+    async fn missing_or_wrong_key_gives_clear_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("credentials.json");
+        let mut store = CredentialStore::load_at(path.clone(), Some(HEX_KEY.into()))
+            .await
+            .unwrap();
+        store.set("svc", None, "v1").await.unwrap();
+
+        // No env key and no key file: listing works, reading explains why not.
+        let store = CredentialStore::load_at(path.clone(), None).await.unwrap();
+        assert_eq!(store.list().len(), 1);
+        let err = store.get("svc").unwrap_err().to_string();
+        assert!(err.contains(ENCRYPTION_KEY_ENV), "{err}");
+
+        let mut store = CredentialStore::load_at(path.clone(), Some("wrong".into()))
+            .await
+            .unwrap();
+        let err = store.get("svc").unwrap_err().to_string();
+        assert!(err.contains("not the one it was encrypted with"), "{err}");
+
+        // Writing with the wrong key would split the store across two keys.
+        let before = raw_file(tmp.path());
+        let err = store.set("new", None, "v2").await.unwrap_err().to_string();
+        assert!(err.contains("not the one it was encrypted with"), "{err}");
+        assert_eq!(raw_file(tmp.path()), before);
+    }
+
+    #[tokio::test]
+    async fn legacy_base64_and_plaintext_oauth2_are_encrypted_on_load() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("credentials.json");
+        let now = chrono::Utc::now().to_rfc3339();
+        let legacy = format!(
+            r#"{{
+  "credentials": {{
+    "old": {{"service": "old", "key": null, "value": "{}", "created_at": "{now}", "updated_at": "{now}"}}
+  }},
+  "oauth2_credentials": {{
+    "gsheets": {{"service": "gsheets", "provider": "google", "access_token": "ya29.TOKEN",
+      "refresh_token": "1//REFRESH", "expires_at": null, "token_type": "Bearer",
+      "scopes": [], "created_at": "{now}", "updated_at": "{now}"}}
+  }}
+}}"#,
+            STANDARD.encode("legacy_secret")
+        );
+        std::fs::write(&path, legacy).unwrap();
+
+        let store = CredentialStore::load_at(path.clone(), None).await.unwrap();
+        assert_eq!(store.get("old").unwrap().as_deref(), Some("legacy_secret"));
+        assert_eq!(
+            store.get_oauth2("gsheets").unwrap().access_token,
+            "ya29.TOKEN"
+        );
+
+        let raw = raw_file(tmp.path());
+        assert!(!raw.contains(&STANDARD.encode("legacy_secret")));
+        assert!(!raw.contains("ya29.TOKEN") && !raw.contains("1//REFRESH"));
+        assert!(raw.contains("oauth2_encrypted"));
+
+        let store = CredentialStore::load_at(path, None).await.unwrap();
+        assert_eq!(store.get("old").unwrap().as_deref(), Some("legacy_secret"));
+        assert_eq!(
+            store
+                .get_oauth2("gsheets")
+                .unwrap()
+                .refresh_token
+                .as_deref(),
+            Some("1//REFRESH")
+        );
+    }
+
+    #[tokio::test]
+    async fn without_the_key_writes_are_refused_instead_of_starting_a_new_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("credentials.json");
+        let mut store = CredentialStore::load_at(path.clone(), Some(HEX_KEY.into()))
+            .await
+            .unwrap();
+        store.set("svc", None, "v1").await.unwrap();
+        store.set_oauth2(crate::integrations::oauth2::OAuth2Credential {
+            service: "gsheets".into(),
+            provider: "google".into(),
+            access_token: "tok".into(),
+            refresh_token: None,
+            expires_at: None,
+            token_type: "Bearer".into(),
+            scopes: vec![],
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        });
+        store.save().await.unwrap();
+        let before = raw_file(tmp.path());
+
+        let mut store = CredentialStore::load_at(path.clone(), None).await.unwrap();
+        assert!(store.get_oauth2("gsheets").is_none());
+        let err = store.set("new", None, "v2").await.unwrap_err().to_string();
+        assert!(err.contains(ENCRYPTION_KEY_ENV), "{err}");
+        assert!(store.delete("svc").await.is_err());
+        assert_eq!(raw_file(tmp.path()), before);
+        assert!(!tmp.path().join(KEY_FILE_NAME).exists());
+
+        let store = CredentialStore::load_at(path, Some(HEX_KEY.into()))
+            .await
+            .unwrap();
+        assert_eq!(store.get("svc").unwrap().as_deref(), Some("v1"));
+        assert_eq!(store.get_oauth2("gsheets").unwrap().access_token, "tok");
     }
 
     #[test]
@@ -498,67 +779,8 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
         let rng = SystemRandom::new();
-        let key = [0u8; 32]; // Test key
-        let plaintext = b"Hello, World!";
-
-        let encrypted = encrypt_data(plaintext, &key, &rng).unwrap();
-        let decrypted = decrypt_data(&encrypted, &key).unwrap();
-
-        assert_eq!(decrypted, plaintext);
-    }
-
-    #[tokio::test]
-    async fn test_encrypted_credential_roundtrip() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut store = CredentialStore {
-            master_key: Some(SecureMasterKey::new(vec![0u8; 32])),
-            path_override: Some(tmp.path().join("credentials.json")),
-            ..CredentialStore::default()
-        };
-
-        store
-            .set("encrypted-service", None, "encrypted_secret")
-            .await
-            .unwrap();
-
-        // Verify it's encrypted
-        let cred = store.credentials.get("encrypted-service").unwrap();
-        assert!(cred.value.starts_with("enc:"));
-
-        // Verify we can decrypt
-        let value = store.get("encrypted-service").unwrap();
-        assert_eq!(value, Some("encrypted_secret".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_migration() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut store = CredentialStore {
-            path_override: Some(tmp.path().join("credentials.json")),
-            ..CredentialStore::default()
-        };
-
-        // Create a legacy credential (no master key)
-        store
-            .set("legacy-service", None, "legacy_secret")
-            .await
-            .unwrap();
-
-        // Verify it's NOT encrypted
-        let cred = store.credentials.get("legacy-service").unwrap();
-        assert!(!cred.value.starts_with("enc:"));
-
-        // Set master key and migrate
-        store.master_key = Some(SecureMasterKey::new(vec![0u8; 32]));
-        let migrated = store.migrate_to_encrypted().await.unwrap();
-        assert_eq!(migrated, 1);
-
-        // Verify it's now encrypted
-        let cred = store.credentials.get("legacy-service").unwrap();
-        assert!(cred.value.starts_with("enc:"));
-
-        // Verify we can still decrypt
-        let value = store.get("legacy-service").unwrap();
-        assert_eq!(value, Some("legacy_secret".to_string()));
+        let key = [0u8; 32];
+        let encrypted = encrypt_data(b"Hello, World!", &key, &rng).unwrap();
+        assert_eq!(decrypt_data(&encrypted, &key).unwrap(), b"Hello, World!");
     }
 }

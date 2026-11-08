@@ -43,6 +43,7 @@ All r8r environment variables use the `R8R_` prefix.
 | `R8R_HEALTH_API_KEY` | (none) | API key for /api/health and /api/metrics |
 | `R8R_API_KEY` | (none) | API key for `/api/*`; required when listening on a non-loopback address |
 | `R8R_ALLOW_UNAUTHENTICATED` | `false` | Allow a non-loopback address without `R8R_API_KEY` (trusted networks only) |
+| `R8R_ENCRYPTION_KEY` | (generated `encryption.key`) | Key for stored credentials; 64 hex chars, or any passphrase (hashed). Back it up |
 | `R8R_MONITOR_TOKEN` | (none) | WebSocket monitor authentication token (falls back to `R8R_API_KEY`) |
 | `R8R_MONITOR_PUBLIC` | `false` | Allow unauthenticated WebSocket access |
 | `R8R_TRUST_REQUEST_ID` | `false` | Trust incoming X-Request-ID headers |
