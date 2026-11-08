@@ -15,11 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Dashboard API key prompt** — when the server requires `R8R_API_KEY`, the dashboard asks for it and sends it with every request. The key is kept in session storage, so it is forgotten when the tab closes.
+- **`r8r server --workflows <dir>`** loads every workflow YAML in a directory at startup, updating any existing workflow with the same name. Files that aren't valid workflows (such as `docker-compose.yml`) are skipped with a message. The README, landing page and docs quick start already used this flag, but it didn't exist, so the first command failed.
 - **`r8r server --host`**, and `--port` now falls back to `R8R_SERVER_PORT` / `server.port` in the config file (both were read before but ignored).
 
 ### Changed
 
 - **Breaking for Docker users:** the images now set `R8R_SERVER_HOST=0.0.0.0`, so they need `-e R8R_API_KEY=...` to start. `docker-compose.yml`, `deploy/docker-compose.cloud.yml`, `scripts/deploy-cloud.sh`, `scripts/deploy-on-vps.sh` and the cloud deploy workflow now require the key.
+
+### Fixed
+
+- **`input.name` works in transform expressions and node conditions.** `input`, `data` and earlier node outputs were handed to Rhai as JSON strings, so every documented expression that reads a field (`input.items.len()`, `condition: "input.amount > 100"`, the README's hello-world) failed with `Unknown property ... for type 'string'`. They are now real Rhai maps and arrays. `from_json(input)` still works and returns the value unchanged. One visible difference: interpolating a whole object (`${input}`) prints Rhai's map format instead of JSON; use `to_json(input)` for JSON.
 
 ## [0.8.3] - 2026-10-27
 

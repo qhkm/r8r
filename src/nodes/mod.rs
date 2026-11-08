@@ -41,7 +41,7 @@ mod summarize;
 mod switch;
 mod telegram;
 pub mod template;
-mod transform;
+pub(crate) mod transform;
 mod types;
 mod variables;
 mod wait;

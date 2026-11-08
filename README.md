@@ -333,7 +333,7 @@ r8r on an NVIDIA Jetson runs workflows that combine sensor input with local LLM 
 ```bash
 # Server
 r8r server --workflows ./workflows    # Start server
-r8r dev --workflows ./workflows       # Hot-reload mode
+r8r dev workflow.yaml                 # Hot-reload one workflow
 
 # Interactive REPL
 r8r                                   # Open interactive REPL

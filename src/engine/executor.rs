@@ -2997,14 +2997,7 @@ fn evaluate_condition(condition: &str, node_input: &Value, ctx: &NodeContext) ->
     let engine = rhai::Engine::new();
     let mut scope = rhai::Scope::new();
 
-    let input_json = serde_json::to_string(node_input).unwrap_or_default();
-    scope.push("input", input_json.clone());
-    scope.push("data", input_json);
-
-    for (node_id, output) in ctx.node_outputs.iter() {
-        let output_json = serde_json::to_string(output).unwrap_or_default();
-        scope.push(node_id.replace('-', "_"), output_json);
-    }
+    crate::nodes::transform::push_json_scope(&mut scope, node_input, ctx.node_outputs.iter());
 
     engine
         .eval_with_scope::<bool>(&mut scope, condition)
@@ -5730,5 +5723,14 @@ nodes:
             .unwrap();
 
         assert_eq!(execution.status, ExecutionStatus::Failed);
+    }
+
+    #[test]
+    fn condition_reads_input_properties() {
+        let ctx = NodeContext::new("exec-1", "wf");
+        let input = serde_json::json!({"status": 200, "amount": 150});
+        assert!(evaluate_condition("input.status == 200", &input, &ctx).unwrap());
+        assert!(evaluate_condition("data.amount > 100", &input, &ctx).unwrap());
+        assert!(!evaluate_condition("input.amount > 1000", &input, &ctx).unwrap());
     }
 }

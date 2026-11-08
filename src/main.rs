@@ -41,6 +41,10 @@ enum Commands {
         /// Disable web UI (API only)
         #[arg(long)]
         no_ui: bool,
+        /// Load every workflow YAML in this directory at startup.
+        /// Existing workflows with the same name are updated.
+        #[arg(short, long, value_name = "DIR")]
+        workflows: Option<std::path::PathBuf>,
         /// Allow listening on a non-loopback address without R8R_API_KEY.
         /// Only for trusted, isolated networks. Also R8R_ALLOW_UNAUTHENTICATED=true.
         #[arg(long)]
@@ -722,8 +726,9 @@ async fn run_command(
             host,
             port,
             no_ui,
+            workflows,
             allow_unauthenticated,
-        }) => cmd_server(host, port, no_ui, allow_unauthenticated).await?,
+        }) => cmd_server(host, port, no_ui, workflows, allow_unauthenticated).await?,
         Some(Commands::Dev { file }) => cmd_dev(&file).await?,
         Some(Commands::Credentials { action }) => match action {
             CredentialActions::Set {
@@ -1629,6 +1634,7 @@ async fn cmd_server(
     host: Option<String>,
     port: Option<u16>,
     _no_ui: bool,
+    workflows_dir: Option<std::path::PathBuf>,
     allow_unauthenticated: bool,
 ) -> anyhow::Result<()> {
     use r8r::api::{
@@ -1676,6 +1682,24 @@ async fn cmd_server(
 
     let storage = get_storage()?;
     let registry = Arc::new(build_registry());
+
+    if let Some(dir) = &workflows_dir {
+        let report =
+            r8r::workflow::load_workflows_from_dir(dir, storage.as_ref(), &registry).await?;
+        for (path, reason) in &report.skipped {
+            eprintln!("skipped {}: {reason}", path.display());
+        }
+        if report.loaded.is_empty() {
+            eprintln!("No workflows loaded from {}", dir.display());
+        } else {
+            println!(
+                "Loaded {} workflow(s) from {}: {}",
+                report.loaded.len(),
+                dir.display(),
+                report.loaded.join(", ")
+            );
+        }
+    }
 
     // Create shutdown coordinator
     let shutdown = Arc::new(ShutdownCoordinator::new());
