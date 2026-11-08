@@ -20,6 +20,7 @@ docker run -d \
   --name r8r \
   -p 8080:8080 \
   -v r8r-data:/data \
+  -e R8R_API_KEY="$(openssl rand -hex 32)" \
   -e RUST_LOG=r8r=info \
   r8r:latest
 ```
@@ -41,6 +42,7 @@ services:
     environment:
       - RUST_LOG=r8r=info
       - R8R_DB=/data/r8r.db
+      - R8R_API_KEY=${R8R_API_KEY:?set R8R_API_KEY}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "r8r", "workflows", "list"]
@@ -57,6 +59,7 @@ volumes:
 Start with:
 
 ```bash
+export R8R_API_KEY="$(openssl rand -hex 32)"   # keep it: the dashboard and API need it
 docker compose up -d
 docker compose logs -f  # View logs
 ```
@@ -71,11 +74,13 @@ Key environment variables for production:
 | `R8R_DB` | `/data/r8r.db` | Database path (Docker) |
 | `R8R_DATABASE_PATH` | `~/.local/share/r8r/r8r.db` | Database path (native) |
 | `R8R_SERVER_PORT` | `8080` | HTTP port |
-| `R8R_SERVER_HOST` | `127.0.0.1` | Bind address |
+| `R8R_SERVER_HOST` | `127.0.0.1` | Bind address (a non-loopback address requires `R8R_API_KEY`) |
 | `R8R_CORS_ORIGINS` | `http://localhost:3000` | Allowed CORS origins (comma-separated) |
 | `R8R_MAX_CONCURRENT_REQUESTS` | `100` | Request concurrency limit |
 | `R8R_MAX_REQUEST_BODY_BYTES` | `1048576` | Max request body (1MB) |
-| `R8R_MONITOR_TOKEN` | (none) | WebSocket auth token |
+| `R8R_API_KEY` | (none) | API key for `/api/*`; **required** in Docker and on any non-loopback address |
+| `R8R_ALLOW_UNAUTHENTICATED` | `false` | Allow a non-loopback address without `R8R_API_KEY` (trusted networks only) |
+| `R8R_MONITOR_TOKEN` | (none) | WebSocket auth token (falls back to `R8R_API_KEY`) |
 | `R8R_HEALTH_API_KEY` | (none) | API key for health endpoints |
 
 See [Environment Variables](/reference/environment) for the full list.

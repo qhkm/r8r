@@ -15,6 +15,7 @@ Required:
   --ssh-key <path>           SSH private key file
   --image <image>            Container image (e.g. ghcr.io/acme/r8r:abcdef)
   --monitor-token <token>    R8R_MONITOR_TOKEN for /api/monitor auth
+  --api-key <key>            R8R_API_KEY protecting /api/* (e.g. openssl rand -hex 32)
 
 Optional:
   --ssh-port <port>          SSH port (default: 22)
@@ -22,7 +23,6 @@ Optional:
   --r8r-port <port>          Exposed API port (default: 8080)
   --bootstrap                Install Docker + Compose on Debian/Ubuntu VPS first
   --skip-health-check        Skip remote API/UI health checks after deploy
-  --api-key <key>            R8R_API_KEY to protect /api/*
   --cors-origins <origins>   Comma-separated CORS origins
   --rust-log <level>         RUST_LOG (default: r8r=info)
   --volume-name <name>       Docker volume name (default: r8r-data)
@@ -144,7 +144,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$HOST" || -z "$USER" || -z "$SSH_KEY" || -z "$IMAGE" || -z "$MONITOR_TOKEN" ]]; then
+if [[ -z "$HOST" || -z "$USER" || -z "$SSH_KEY" || -z "$IMAGE" || -z "$MONITOR_TOKEN" || -z "$API_KEY" ]]; then
   echo "error: missing required arguments" >&2
   usage
   exit 1

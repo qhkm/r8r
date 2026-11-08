@@ -31,11 +31,20 @@ enum Commands {
     },
     /// Start the server (API + scheduler)
     Server {
-        #[arg(short, long, default_value = "8080")]
-        port: u16,
+        /// Address to listen on [default: 127.0.0.1, or R8R_SERVER_HOST].
+        /// A non-loopback address requires R8R_API_KEY.
+        #[arg(long)]
+        host: Option<String>,
+        /// Port to listen on [default: 8080, or R8R_SERVER_PORT]
+        #[arg(short, long)]
+        port: Option<u16>,
         /// Disable web UI (API only)
         #[arg(long)]
         no_ui: bool,
+        /// Allow listening on a non-loopback address without R8R_API_KEY.
+        /// Only for trusted, isolated networks. Also R8R_ALLOW_UNAUTHENTICATED=true.
+        #[arg(long)]
+        allow_unauthenticated: bool,
     },
     /// Development mode (watch + hot reload)
     Dev {
@@ -709,7 +718,12 @@ async fn run_command(
             WorkflowActions::ExportAll { output } => cmd_workflows_export_all(&output).await?,
             WorkflowActions::Dag { name, order } => cmd_workflows_dag(&name, order).await?,
         },
-        Some(Commands::Server { port, no_ui }) => cmd_server(port, no_ui).await?,
+        Some(Commands::Server {
+            host,
+            port,
+            no_ui,
+            allow_unauthenticated,
+        }) => cmd_server(host, port, no_ui, allow_unauthenticated).await?,
         Some(Commands::Dev { file }) => cmd_dev(&file).await?,
         Some(Commands::Credentials { action }) => match action {
             CredentialActions::Set {
@@ -1611,9 +1625,15 @@ async fn cmd_workflows_dag(name: &str, show_order: bool) -> anyhow::Result<()> {
 // Server Commands
 // ============================================================================
 
-async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
+async fn cmd_server(
+    host: Option<String>,
+    port: Option<u16>,
+    _no_ui: bool,
+    allow_unauthenticated: bool,
+) -> anyhow::Result<()> {
     use r8r::api::{
-        ApiAuthConfig, AppState, Monitor, MonitoredAppState, api_auth_middleware,
+        ApiAuthConfig, AppState, Exposure, Monitor, MonitoredAppState,
+        allow_unauthenticated_from_env, api_auth_middleware, api_key_from_env, check_exposure,
         create_api_routes, create_concurrency_limit, create_cors_layer, create_monitored_routes,
         create_request_body_limit,
     };
@@ -1624,6 +1644,35 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     };
     use std::sync::Arc;
     use tower_http::trace::TraceLayer;
+
+    // Resolve the listen address and check it before starting anything else.
+    let server_config = r8r::config::Config::load().server;
+    let host = host.unwrap_or(server_config.host);
+    let port = port.unwrap_or(server_config.port);
+    let bind_addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .map_err(|e| anyhow::anyhow!("cannot resolve listen address {host}:{port}: {e}"))?
+        .collect();
+    let exposure = check_exposure(
+        &bind_addrs,
+        api_key_from_env().is_some(),
+        allow_unauthenticated || allow_unauthenticated_from_env(),
+    )
+    .map_err(|msg| anyhow::anyhow!(msg))?;
+    if exposure == Exposure::UnauthenticatedNetwork {
+        tracing::warn!(
+            "listening on {host}:{port} WITHOUT authentication (--allow-unauthenticated). \
+             Anyone who can reach it can run workflows and use stored credentials."
+        );
+        eprintln!(
+            "WARNING: r8r is reachable on {host}:{port} with no authentication. Set R8R_API_KEY to protect it."
+        );
+    }
+    let display_host = if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host.clone()
+    };
 
     let storage = get_storage()?;
     let registry = Arc::new(build_registry());
@@ -1782,7 +1831,12 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     // Add bridge WebSocket routes for ZeptoClaw communication
     app = app.merge(r8r::bridge::websocket::create_bridge_routes(bridge.clone()));
 
-    println!("r8r server running on http://0.0.0.0:{}", port);
+    println!("r8r server running on http://{}:{}", display_host, port);
+    if api_key_from_env().is_some() {
+        println!("Auth: R8R_API_KEY required for /api/*");
+    } else {
+        println!("Auth: none (set R8R_API_KEY to require a key)");
+    }
     println!();
     println!("Scheduler: {} cron job(s) active", job_count);
     println!("Event subscriber: {}", event_status);
@@ -1802,13 +1856,14 @@ async fn cmd_server(port: u16, _no_ui: bool) -> anyhow::Result<()> {
     println!();
     println!("Webhooks: /webhooks/:workflow_name (see workflow definitions)");
     if !_no_ui {
-        println!("Dashboard: http://0.0.0.0:{}/ (Web UI)", port);
+        println!("Dashboard: http://{}:{}/ (Web UI)", display_host, port);
     }
     println!();
     println!("Press Ctrl+C to stop");
 
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = tokio::net::TcpListener::bind(bind_addrs.as_slice())
+        .await
+        .map_err(|e| anyhow::anyhow!("cannot listen on {display_host}:{port}: {e}"))?;
 
     // Start the server with graceful shutdown
     let server = axum::serve(listener, app);

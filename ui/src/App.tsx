@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import WorkflowEditor from './components/WorkflowEditor'
+import { apiFetch, setApiKey, UNAUTHORIZED_EVENT } from './lib/api'
 import '@fontsource/public-sans/latin-400.css'
 import '@fontsource/public-sans/latin-500.css'
 import '@fontsource/public-sans/latin-600.css'
@@ -84,6 +85,50 @@ const TAB_META: Record<DashboardTab, { label: string; subtitle: string }> = {
   },
 }
 
+function ApiKeyDialog({ onSubmit }: { onSubmit: (key: string) => void }) {
+  const [value, setValue] = useState('')
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+      <form
+        className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
+        onSubmit={(event) => {
+          event.preventDefault()
+          const key = value.trim()
+          if (key) {
+            onSubmit(key)
+          }
+        }}
+      >
+        <h2 className="text-base font-semibold text-slate-900">API key required</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          This server is protected by <code className="font-mono text-xs">R8R_API_KEY</code>. Enter it to
+          continue. It is kept only until you close this tab.
+        </p>
+        <label htmlFor="r8r-api-key" className="mt-4 block text-xs font-medium text-slate-700">
+          API key
+        </label>
+        <input
+          id="r8r-api-key"
+          type="password"
+          autoComplete="current-password"
+          autoFocus
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+        />
+        <button
+          type="submit"
+          disabled={!value.trim()}
+          className="mt-4 w-full rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Unlock dashboard
+        </button>
+      </form>
+    </div>
+  )
+}
+
 function Dashboard() {
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview')
   const [workflows, setWorkflows] = useState<Workflow[]>([])
@@ -94,18 +139,30 @@ function Dashboard() {
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
+  const [needsApiKey, setNeedsApiKey] = useState(false)
+
+  useEffect(() => {
+    const onUnauthorized = () => setNeedsApiKey(true)
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
+  }, [])
 
   const loadDashboard = useCallback(async () => {
     setLoading(true)
     try {
       const [workflowRes, executionRes, approvalRes, auditRes] = await Promise.all([
-        fetch('/api/workflows'),
-        fetch('/api/executions?limit=25'),
-        fetch('/api/approvals?limit=25'),
-        fetch('/api/audit?limit=25'),
+        apiFetch('/api/workflows'),
+        apiFetch('/api/executions?limit=25'),
+        apiFetch('/api/approvals?limit=25'),
+        apiFetch('/api/audit?limit=25'),
       ])
 
-      if (!workflowRes.ok || !executionRes.ok || !approvalRes.ok || !auditRes.ok) {
+      const responses = [workflowRes, executionRes, approvalRes, auditRes]
+      if (responses.some((res) => res.status === 401)) {
+        setError('This server requires an API key.')
+        return
+      }
+      if (responses.some((res) => !res.ok)) {
         throw new Error('One or more API requests failed')
       }
 
@@ -200,7 +257,7 @@ function Dashboard() {
   const runWorkflow = async (workflowName: string) => {
     setBusyAction(`run:${workflowName}`)
     try {
-      const response = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}/execute`, {
+      const response = await apiFetch(`/api/workflows/${encodeURIComponent(workflowName)}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ input: {}, wait: false }),
@@ -222,7 +279,7 @@ function Dashboard() {
   const decideApproval = async (approvalId: string, decision: 'approve' | 'reject') => {
     setBusyAction(`approval:${approvalId}:${decision}`)
     try {
-      const response = await fetch(`/api/approvals/${encodeURIComponent(approvalId)}/decide`, {
+      const response = await apiFetch(`/api/approvals/${encodeURIComponent(approvalId)}/decide`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -669,6 +726,16 @@ function Dashboard() {
           </main>
         </div>
       </div>
+
+      {needsApiKey && (
+        <ApiKeyDialog
+          onSubmit={(key) => {
+            setApiKey(key)
+            setNeedsApiKey(false)
+            void loadDashboard()
+          }}
+        />
+      )}
 
       {toast && (
         <div className="fixed bottom-4 right-4 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 shadow-lg">

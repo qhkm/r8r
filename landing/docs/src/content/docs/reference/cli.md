@@ -16,13 +16,15 @@ r8r <command> [options]
 Start the API server with scheduler and web dashboard:
 
 ```bash
-r8r server [--port 8080] [--no-ui]
+r8r server [--host 127.0.0.1] [--port 8080] [--no-ui] [--allow-unauthenticated]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--port`, `-p` | `8080` | HTTP port to listen on |
+| `--host` | `127.0.0.1` (`R8R_SERVER_HOST`) | Address to listen on. A non-loopback address requires `R8R_API_KEY` |
+| `--port`, `-p` | `8080` (`R8R_SERVER_PORT`) | HTTP port to listen on |
 | `--no-ui` | false | Disable the web dashboard (API only) |
+| `--allow-unauthenticated` | false | Listen on a non-loopback address without `R8R_API_KEY`. Trusted, isolated networks only |
 
 ### dev
 

@@ -249,13 +249,20 @@ pub struct ApiAuthConfig {
 impl Default for ApiAuthConfig {
     fn default() -> Self {
         Self {
-            api_key: std::env::var("R8R_API_KEY").ok().filter(|k| !k.is_empty()),
+            api_key: super::exposure::api_key_from_env(),
         }
     }
 }
 
 /// Public paths that bypass API authentication.
 const API_AUTH_PUBLIC_PATHS: &[&str] = &["/api/health", "/api/metrics", "/api/openapi.json"];
+
+/// Paths that authenticate themselves, so the header check here is skipped.
+///
+/// `/api/monitor` is a WebSocket. Browsers cannot set an `Authorization`
+/// header on a WebSocket, so the handler accepts `?token=` as well and falls
+/// back to `R8R_API_KEY` when `R8R_MONITOR_TOKEN` is unset.
+const API_AUTH_SELF_AUTHENTICATED_PATHS: &[&str] = &["/api/monitor"];
 
 /// Middleware that optionally requires authentication for all API endpoints.
 ///
@@ -268,7 +275,9 @@ const API_AUTH_PUBLIC_PATHS: &[&str] = &["/api/health", "/api/metrics", "/api/op
 /// - `Authorization: ApiKey <api_key>`
 ///
 /// Environment:
-/// - R8R_API_KEY: API key for all API endpoints (default: none, no auth required)
+/// - R8R_API_KEY: API key for all API endpoints. When unset, requests pass
+///   through; `r8r server` only allows that on a loopback address (see
+///   `exposure::check_exposure`).
 pub async fn api_auth_middleware(
     State(config): State<ApiAuthConfig>,
     request: Request<Body>,
@@ -287,8 +296,10 @@ pub async fn api_auth_middleware(
         return next.run(request).await;
     }
 
-    // Skip public API paths
-    if API_AUTH_PUBLIC_PATHS.iter().any(|p| path.starts_with(p)) {
+    // Skip public API paths, and paths that check credentials themselves
+    if API_AUTH_PUBLIC_PATHS.iter().any(|p| path.starts_with(p))
+        || API_AUTH_SELF_AUTHENTICATED_PATHS.contains(&path)
+    {
         return next.run(request).await;
     }
 

@@ -83,21 +83,23 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
           chmod +x scripts/deploy-cloud.sh
+          if [ -z "${R8R_API_KEY:-}" ]; then
+            echo "::error::Set the R8R_API_KEY repository secret; r8r refuses to serve a public address without it."
+            exit 1
+          fi
           args=(
             --host "$DEPLOY_HOST"
             --user "$DEPLOY_USER"
             --ssh-key "$HOME/.ssh/id_ed25519"
             --image "$IMAGE_REF"
             --monitor-token "$R8R_MONITOR_TOKEN"
+            --api-key "$R8R_API_KEY"
             --registry-username "$GHCR_USERNAME"
             --registry-token "$GHCR_TOKEN"
           )
 
           if [ -n "${DEPLOY_SSH_PORT:-}" ]; then
             args+=(--ssh-port "$DEPLOY_SSH_PORT")
-          fi
-          if [ -n "${R8R_API_KEY:-}" ]; then
-            args+=(--api-key "$R8R_API_KEY")
           fi
           if [ -n "${R8R_CORS_ORIGINS:-}" ]; then
             args+=(--cors-origins "$R8R_CORS_ORIGINS")

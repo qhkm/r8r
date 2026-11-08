@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **`r8r server` no longer listens on every interface without authentication.** It now listens on `127.0.0.1` by default (`--host` / `R8R_SERVER_HOST` to change it), and refuses to start on a non-loopback address unless `R8R_API_KEY` is set. Before, it always bound `0.0.0.0` and let every request through when no key was configured, so anyone who could reach the port could create and run workflows and use stored credentials. `--allow-unauthenticated` (or `R8R_ALLOW_UNAUTHENTICATED=true`) restores the old behaviour for trusted, isolated networks.
+- **`/api/monitor` falls back to `R8R_API_KEY`** when `R8R_MONITOR_TOKEN` is unset, matching the bridge WebSocket, so one key protects every endpoint. It also accepts the key as an `Authorization: Bearer` header.
+
+### Added
+
+- **Dashboard API key prompt** — when the server requires `R8R_API_KEY`, the dashboard asks for it and sends it with every request. The key is kept in session storage, so it is forgotten when the tab closes.
+- **`r8r server --host`**, and `--port` now falls back to `R8R_SERVER_PORT` / `server.port` in the config file (both were read before but ignored).
+
+### Changed
+
+- **Breaking for Docker users:** the images now set `R8R_SERVER_HOST=0.0.0.0`, so they need `-e R8R_API_KEY=...` to start. `docker-compose.yml`, `deploy/docker-compose.cloud.yml`, `scripts/deploy-cloud.sh`, `scripts/deploy-on-vps.sh` and the cloud deploy workflow now require the key.
+
 ## [0.8.3] - 2026-10-27
 
 ### Added
@@ -361,6 +377,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive security audit with 335+ tests
 - AGPL-3.0 license with dual licensing option
 
+[Unreleased]: https://github.com/qhkm/r8r/compare/v0.8.3...HEAD
 [0.8.3]: https://github.com/qhkm/r8r/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/qhkm/r8r/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/qhkm/r8r/compare/v0.8.0...v0.8.1

@@ -11,7 +11,7 @@ services:
       - R8R_DB=/data/r8r.db
       - RUST_LOG=${RUST_LOG:-r8r=info}
       - R8R_MONITOR_TOKEN=${R8R_MONITOR_TOKEN}
-      - R8R_API_KEY=${R8R_API_KEY}
+      - R8R_API_KEY=${R8R_API_KEY:?R8R_API_KEY is required}
       - R8R_CORS_ORIGINS=${R8R_CORS_ORIGINS}
     healthcheck:
       test: ["CMD", "r8r", "workflows", "list"]
