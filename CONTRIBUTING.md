@@ -23,7 +23,7 @@ You only need to sign once. All future contributions are covered.
 
 ### Prerequisites
 
-- Rust 1.75+ (install via [rustup](https://rustup.rs/))
+- [rustup](https://rustup.rs/). The repo pins its Rust version in `rust-toolchain.toml`, and rustup installs it automatically the first time you run `cargo` here.
 - Git
 
 ### Build

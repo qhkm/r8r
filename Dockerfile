@@ -7,7 +7,8 @@
 # =============================================================================
 # Stage 1: Build
 # =============================================================================
-FROM rust:1.85-slim-bookworm AS builder
+# Keep in step with rust-toolchain.toml.
+FROM rust:1.99.1-slim-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -18,7 +19,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy manifests first for dependency caching
-COPY Cargo.toml Cargo.lock* ./
+COPY Cargo.toml Cargo.lock* rust-toolchain.toml ./
 
 # Create dummy src to build dependencies
 RUN mkdir -p src/bin && \
@@ -29,8 +30,10 @@ RUN mkdir -p src/bin && \
 # Build dependencies (cached layer)
 RUN cargo build --release && rm -rf src
 
-# Copy actual source
+# Copy actual source, plus files compiled into the binary with include_str!
 COPY src ./src
+COPY assets ./assets
+COPY examples ./examples
 
 # Touch files to ensure rebuild
 RUN touch src/main.rs src/lib.rs src/bin/r8r-mcp.rs
