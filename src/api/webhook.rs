@@ -18,11 +18,10 @@
 //! ```yaml
 //! triggers:
 //!   - type: webhook
-//!     config:
-//!       path: /hooks/github
-//!       signature:
-//!         type: github
-//!         secret: ${GITHUB_WEBHOOK_SECRET}
+//!     path: /hooks/github
+//!     signature:
+//!       scheme: github
+//!       secret_env: GITHUB_WEBHOOK_SECRET
 //! ```
 
 use ring::hmac;
@@ -192,9 +191,12 @@ fn verify_stripe_signature(
 
     // Compute expected signature
     // Stripe uses: HMAC-SHA256(secret, timestamp + "." + payload)
-    let signed_payload = format!("{}.{}", timestamp, String::from_utf8_lossy(body));
+    // Sign the raw bytes: a lossy UTF-8 copy would change non-UTF-8 bodies.
     let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
-    let computed = hmac::sign(&key, signed_payload.as_bytes());
+    let mut ctx = hmac::Context::with_key(&key);
+    ctx.update(format!("{}.", timestamp).as_bytes());
+    ctx.update(body);
+    let computed = ctx.sign();
 
     // Check against any v1 signature
     for sig in &signatures {
@@ -244,9 +246,11 @@ fn verify_slack_signature(
         .map_err(|_| Error::Validation("Invalid signature hex encoding".to_string()))?;
 
     // Compute signature
-    let signed_payload = format!("v0:{}:{}", timestamp, String::from_utf8_lossy(body));
     let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
-    let computed = hmac::sign(&key, signed_payload.as_bytes());
+    let mut ctx = hmac::Context::with_key(&key);
+    ctx.update(format!("v0:{}:", timestamp).as_bytes());
+    ctx.update(body);
+    let computed = ctx.sign();
 
     // Constant-time comparison
     if computed.as_ref().ct_eq(&expected_bytes).unwrap_u8() != 1 {
@@ -446,6 +450,30 @@ mod tests {
         };
 
         assert!(verify_signature(&config, &signature, body, Some(&timestamp)).is_ok());
+    }
+
+    #[test]
+    fn test_stripe_signature_non_utf8_body() {
+        let secret = "whsec_test_secret";
+        let body: &[u8] = &[0xff, 0xfe, b'{', b'}'];
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Stripe signs the raw bytes of `<timestamp>.<body>`.
+        let mut payload = format!("{}.", timestamp).into_bytes();
+        payload.extend_from_slice(body);
+        let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
+        let sig = hex::encode(hmac::sign(&key, &payload).as_ref());
+
+        let config = SignatureConfig {
+            scheme: SignatureScheme::Stripe,
+            secret: secret.to_string(),
+            timestamp_tolerance: 300,
+        };
+        let header = format!("t={},v1={}", timestamp, sig);
+        assert!(verify_signature(&config, &header, body, None).is_ok());
     }
 
     #[test]

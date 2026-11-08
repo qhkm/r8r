@@ -7,6 +7,8 @@
 //! Webhook trigger handler.
 //!
 //! Handles HTTP webhook triggers for workflows with debouncing support.
+//! When a trigger sets `signature`, every request must carry a valid
+//! signature; anything else is rejected before the workflow runs.
 
 use axum::{
     Json, Router,
@@ -21,10 +23,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
-use crate::api::AppState;
+use crate::api::{AppState, SignatureConfig, SignatureScheme, verify_signature};
 use crate::nodes::NodeRegistry;
 use crate::storage::Storage;
-use crate::workflow::{DebounceConfig, HeaderFilter, Trigger, parse_workflow};
+use crate::workflow::{DebounceConfig, HeaderFilter, Trigger, WebhookSignature, parse_workflow};
+
+/// Header Slack sends the signed timestamp in.
+const SLACK_TIMESTAMP_HEADER: &str = "x-slack-request-timestamp";
+/// Default maximum age of a signed timestamp (Stripe, Slack).
+const DEFAULT_SIGNATURE_TOLERANCE_SECS: u64 = 300;
 
 /// Maximum allowed length for header filter regex patterns (ReDoS guard).
 const MAX_HEADER_PATTERN_LEN: usize = 128;
@@ -107,8 +114,21 @@ pub async fn create_webhook_routes(
                 debounce,
                 header_filter,
                 response_mode,
+                signature,
             } = trigger
             {
+                // Fail closed: never expose an endpoint whose signature
+                // settings are broken.
+                if let Some(sig) = &signature
+                    && let Err(e) = sig.validate()
+                {
+                    error!(
+                        "Webhook for workflow '{}' not registered: {}",
+                        workflow.name, e
+                    );
+                    continue;
+                }
+
                 let route_path = path
                     .clone()
                     .unwrap_or_else(|| format!("/webhooks/{}", workflow.name.clone()));
@@ -139,6 +159,7 @@ pub async fn create_webhook_routes(
                 // Extract values for logging before moving into closure
                 let has_debounce = debounce.is_some();
                 let has_header_filter = compiled_filters.is_some();
+                let signature_scheme = signature.as_ref().map(|s| s.scheme.to_ascii_lowercase());
 
                 // Validate: debounce + response_mode: output is invalid
                 let effective_response_mode = if has_debounce
@@ -165,6 +186,7 @@ pub async fn create_webhook_routes(
                     let debounce_config = debounce.clone();
                     let header_filters = compiled_filters.clone();
                     let resp_mode = response_mode_clone.clone();
+                    let signature = signature.clone();
                     async move {
                         handle_webhook(
                             state,
@@ -176,6 +198,7 @@ pub async fn create_webhook_routes(
                             debounce_config,
                             header_filters,
                             resp_mode,
+                            signature.as_ref(),
                         )
                         .await
                     }
@@ -192,8 +215,12 @@ pub async fn create_webhook_routes(
                 };
 
                 info!(
-                    "Registered webhook: {} {} (debounce: {}, header_filter: {})",
-                    route_method, route_path, has_debounce, has_header_filter
+                    "Registered webhook: {} {} (debounce: {}, header_filter: {}, signature: {})",
+                    route_method,
+                    route_path,
+                    has_debounce,
+                    has_header_filter,
+                    signature_scheme.as_deref().unwrap_or("none")
                 );
                 webhook_count += 1;
             }
@@ -216,8 +243,16 @@ async fn handle_webhook(
     debounce_config: Option<DebounceConfig>,
     header_filters: Option<Vec<CompiledHeaderFilter>>,
     response_mode: Option<String>,
-) -> impl IntoResponse + use<> {
+    signature: Option<&WebhookSignature>,
+) -> axum::response::Response {
     info!("Webhook triggered for workflow '{}'", workflow_name);
+
+    // Signature first: nothing else should look at an unauthenticated request.
+    if let Some(sig) = signature
+        && let Err(response) = check_signature(sig, &headers, &body, workflow_name).await
+    {
+        return response;
+    }
 
     // Check header filters first
     if let Some(filters) = header_filters
@@ -295,6 +330,93 @@ async fn handle_webhook(
     )
     .await
     .into_response()
+}
+
+/// Verify the request signature. Returns the error response to send when the
+/// request must be rejected.
+async fn check_signature(
+    sig: &WebhookSignature,
+    headers: &HeaderMap,
+    body: &[u8],
+    workflow_name: &str,
+) -> Result<(), axum::response::Response> {
+    let secret = match resolve_signature_secret(sig).await {
+        Ok(secret) => secret,
+        Err(e) => {
+            error!(
+                "Webhook for '{}' rejected: signature secret unavailable: {}",
+                workflow_name, e
+            );
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Webhook signature secret is not configured"})),
+            )
+                .into_response());
+        }
+    };
+
+    // validate() ran at registration, so the scheme parses.
+    let scheme: SignatureScheme = sig.scheme.parse().unwrap_or(SignatureScheme::Generic);
+    let header_name = sig
+        .header
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_else(|| scheme.header_name().to_string());
+
+    let unauthorized = || {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Invalid webhook signature"})),
+        )
+            .into_response()
+    };
+
+    let Some(signature_header) = headers.get(&header_name).and_then(|v| v.to_str().ok()) else {
+        warn!(
+            "Webhook for '{}' rejected: missing {} header",
+            workflow_name, header_name
+        );
+        return Err(unauthorized());
+    };
+
+    let config = SignatureConfig {
+        scheme,
+        secret,
+        timestamp_tolerance: sig
+            .tolerance_seconds
+            .unwrap_or(DEFAULT_SIGNATURE_TOLERANCE_SECS),
+    };
+    let timestamp = headers
+        .get(SLACK_TIMESTAMP_HEADER)
+        .and_then(|v| v.to_str().ok());
+
+    verify_signature(&config, signature_header, body, timestamp).map_err(|e| {
+        warn!("Webhook for '{}' rejected: {}", workflow_name, e);
+        unauthorized()
+    })
+}
+
+/// Read the shared secret from the environment or the credential store.
+/// Resolved per request so a rotated secret takes effect without a restart.
+async fn resolve_signature_secret(sig: &WebhookSignature) -> Result<String, String> {
+    let secret = if let Some(var) = &sig.secret_env {
+        std::env::var(var).map_err(|_| format!("environment variable {} is not set", var))?
+    } else if let Some(name) = &sig.secret_credential {
+        crate::credentials::CredentialStore::load()
+            .await
+            .map_err(|e| e.to_string())?
+            .get(name)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("credential '{}' not found", name))?
+    } else {
+        return Err("no secret source configured".to_string());
+    };
+
+    // An empty HMAC key is trivially forgeable.
+    if secret.is_empty() {
+        return Err("secret is empty".to_string());
+    }
+    Ok(secret)
 }
 
 /// Check if header filters match the incoming request.
@@ -585,5 +707,214 @@ mod tests {
         });
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("ReDoS guard"));
+    }
+
+    // ── Signature verification, end to end through the router ──────────
+
+    mod signature {
+        use std::sync::Arc;
+
+        use axum::body::Body;
+        use axum::http::Request;
+        use chrono::Utc;
+        use tower::ServiceExt;
+
+        use super::super::*;
+        use crate::api::compute_signature;
+        use crate::engine::PauseRegistry;
+        use crate::shutdown::ShutdownCoordinator;
+        use crate::storage::{SqliteStorage, StoredWorkflow};
+
+        const BODY: &str = r#"{"action":"opened"}"#;
+
+        /// Each test uses its own variable, so no test reads another's value.
+        fn set_env(name: &str, value: &str) {
+            // SAFETY: test-only; every test sets a distinct variable name.
+            unsafe { std::env::set_var(name, value) };
+        }
+
+        async fn router_for(workflow_yaml: &str) -> (Router, Arc<dyn Storage>) {
+            let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open_in_memory().unwrap());
+            let now = Utc::now();
+            storage
+                .save_workflow(&StoredWorkflow {
+                    id: "wf-hook".to_string(),
+                    name: "hook".to_string(),
+                    definition: workflow_yaml.to_string(),
+                    enabled: true,
+                    created_at: now,
+                    updated_at: now,
+                })
+                .await
+                .unwrap();
+            let registry = Arc::new(NodeRegistry::new());
+            let state = AppState {
+                storage: storage.clone(),
+                registry: registry.clone(),
+                monitor: None,
+                shutdown: Arc::new(ShutdownCoordinator::new()),
+                pause_registry: PauseRegistry::new(),
+                event_backend: None,
+                bridge: None,
+            };
+            let router = create_webhook_routes(storage.clone(), registry)
+                .await
+                .with_state(state);
+            (router, storage)
+        }
+
+        fn workflow(signature: &str) -> String {
+            format!(
+                "name: hook\ntriggers:\n  - type: webhook\n    signature:\n{}\nnodes:\n  - id: echo\n    type: transform\n    config:\n      expression: 'input'\n",
+                signature
+                    .lines()
+                    .map(|l| format!("      {}", l))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        }
+
+        async fn post(router: &Router, headers: &[(&str, &str)]) -> StatusCode {
+            let mut req = Request::builder()
+                .method("POST")
+                .uri("/webhooks/hook")
+                .header("content-type", "application/json");
+            for (k, v) in headers {
+                req = req.header(*k, *v);
+            }
+            router
+                .clone()
+                .oneshot(req.body(Body::from(BODY)).unwrap())
+                .await
+                .unwrap()
+                .status()
+        }
+
+        async fn executions(storage: &Arc<dyn Storage>) -> usize {
+            storage.list_executions("hook", 100).await.unwrap().len()
+        }
+
+        #[tokio::test]
+        async fn github_signature_required() {
+            set_env("R8R_TEST_WH_GITHUB", "s3cret");
+            let (router, storage) =
+                router_for(&workflow("scheme: github\nsecret_env: R8R_TEST_WH_GITHUB")).await;
+
+            assert_eq!(post(&router, &[]).await, StatusCode::UNAUTHORIZED);
+            let forged = compute_signature("wrong-secret", BODY.as_bytes());
+            assert_eq!(
+                post(&router, &[("X-Hub-Signature-256", &forged)]).await,
+                StatusCode::UNAUTHORIZED
+            );
+            assert_eq!(
+                executions(&storage).await,
+                0,
+                "rejected requests must not run"
+            );
+
+            let good = compute_signature("s3cret", BODY.as_bytes());
+            assert_eq!(
+                post(&router, &[("X-Hub-Signature-256", &good)]).await,
+                StatusCode::OK
+            );
+            assert_eq!(executions(&storage).await, 1);
+        }
+
+        #[tokio::test]
+        async fn generic_scheme_uses_configured_header() {
+            set_env("R8R_TEST_WH_GENERIC", "k");
+            let (router, _) = router_for(&workflow(
+                "scheme: generic\nsecret_env: R8R_TEST_WH_GENERIC\nheader: X-My-Sig",
+            ))
+            .await;
+            let good = compute_signature("k", BODY.as_bytes());
+            assert_eq!(
+                post(&router, &[("X-Signature", &good)]).await,
+                StatusCode::UNAUTHORIZED
+            );
+            assert_eq!(post(&router, &[("x-my-sig", &good)]).await, StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn slack_signature_and_replay_window() {
+            set_env("R8R_TEST_WH_SLACK", "slack-key");
+            let (router, _) =
+                router_for(&workflow("scheme: slack\nsecret_env: R8R_TEST_WH_SLACK")).await;
+            let sign = |ts: u64| {
+                let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"slack-key");
+                let sig = ring::hmac::sign(&key, format!("v0:{}:{}", ts, BODY).as_bytes());
+                format!("v0={}", hex::encode(sig.as_ref()))
+            };
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+
+            let fresh = sign(now);
+            assert_eq!(
+                post(
+                    &router,
+                    &[
+                        ("X-Slack-Signature", &fresh),
+                        ("X-Slack-Request-Timestamp", &now.to_string())
+                    ]
+                )
+                .await,
+                StatusCode::OK
+            );
+            let old = now - 3600;
+            let stale = sign(old);
+            assert_eq!(
+                post(
+                    &router,
+                    &[
+                        ("X-Slack-Signature", &stale),
+                        ("X-Slack-Request-Timestamp", &old.to_string())
+                    ]
+                )
+                .await,
+                StatusCode::UNAUTHORIZED
+            );
+        }
+
+        #[tokio::test]
+        async fn missing_secret_fails_closed() {
+            // R8R_TEST_WH_UNSET is never set.
+            let (router, storage) =
+                router_for(&workflow("scheme: github\nsecret_env: R8R_TEST_WH_UNSET")).await;
+            let sig = compute_signature("", BODY.as_bytes());
+            assert_eq!(
+                post(&router, &[("X-Hub-Signature-256", &sig)]).await,
+                StatusCode::INTERNAL_SERVER_ERROR
+            );
+            assert_eq!(executions(&storage).await, 0);
+        }
+
+        #[tokio::test]
+        async fn empty_secret_fails_closed() {
+            set_env("R8R_TEST_WH_EMPTY", "");
+            let (router, _) =
+                router_for(&workflow("scheme: github\nsecret_env: R8R_TEST_WH_EMPTY")).await;
+            let sig = compute_signature("", BODY.as_bytes());
+            assert_eq!(
+                post(&router, &[("X-Hub-Signature-256", &sig)]).await,
+                StatusCode::INTERNAL_SERVER_ERROR
+            );
+        }
+
+        #[tokio::test]
+        async fn broken_settings_do_not_register_route() {
+            let (router, _) = router_for(&workflow("scheme: gitlab\nsecret_env: X")).await;
+            assert_eq!(post(&router, &[]).await, StatusCode::NOT_FOUND);
+        }
+
+        #[tokio::test]
+        async fn unsigned_webhook_still_works() {
+            let (router, _) = router_for(
+                "name: hook\ntriggers:\n  - type: webhook\nnodes:\n  - id: echo\n    type: transform\n    config:\n      expression: 'input'\n",
+            )
+            .await;
+            assert_eq!(post(&router, &[]).await, StatusCode::OK);
+        }
     }
 }

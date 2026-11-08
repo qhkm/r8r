@@ -54,10 +54,10 @@ triggers:
 ```
 
 Supported schemes:
-- **github**: Validates `X-Hub-Signature-256` header
-- **stripe**: Validates Stripe webhook signatures
-- **slack**: Validates Slack request signatures
-- **generic**: HMAC-SHA256 with configurable header
+- **github**: HMAC-SHA256 of the body in `X-Hub-Signature-256` (`sha256=<hex>`)
+- **stripe**: `Stripe-Signature` (`t=<timestamp>,v1=<hex>`), with a replay window
+- **slack**: `X-Slack-Signature` plus `X-Slack-Request-Timestamp`, with a replay window
+- **generic**: HMAC-SHA256 of the body as hex (optionally `sha256=`-prefixed) in `X-Signature`, or the header named by `header`
 
 You can also reference stored credentials:
 
@@ -66,6 +66,23 @@ You can also reference stored credentials:
       scheme: github
       secret_credential: github-webhook  # From r8r credentials store
 ```
+
+All signature settings:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `scheme` | yes | `github`, `stripe`, `slack` or `generic` |
+| `secret_env` | one of | Environment variable holding the shared secret |
+| `secret_credential` | one of | Stored credential holding the shared secret |
+| `header` | no | Signature header for `generic` (default `X-Signature`) |
+| `tolerance_seconds` | no | Maximum timestamp age for `stripe` and `slack` (default 300) |
+
+How requests are handled:
+- The signature is checked before header filters, debouncing or anything else. A missing or invalid signature gets `401` and the workflow does not run.
+- If the secret can't be read (variable unset or empty, credential missing), every request gets `500` and the workflow does not run. The endpoint never falls back to accepting unsigned requests.
+- The secret is read on each request, so a rotated secret takes effect without restarting the server.
+- Incomplete settings (no secret source, both sources, an unknown scheme, or an unknown field such as a misspelled `secret_env`) are rejected when the workflow is saved. A webhook whose settings are invalid is not registered at all.
+- `github` and `generic` signatures carry no timestamp, so they can't prevent a captured request from being replayed. Use idempotency or `debounce` when that matters.
 
 ### Event
 

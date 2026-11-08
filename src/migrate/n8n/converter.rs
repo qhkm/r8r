@@ -211,6 +211,7 @@ fn extract_triggers(nodes: &[N8nNode], name_map: &HashMap<String, String>) -> Ve
                     debounce: None,
                     header_filter: None,
                     response_mode: None,
+                    signature: None,
                 }
             }
             "cron" | "scheduleTrigger" | "intervalTrigger" => {

@@ -138,6 +138,10 @@ pub enum Trigger {
         /// Response mode: "full" (default) returns execution metadata, "output" returns raw workflow output
         #[serde(default)]
         response_mode: Option<String>,
+        /// Request signature verification. When set, requests without a valid
+        /// signature are rejected before the workflow runs.
+        #[serde(default)]
+        signature: Option<WebhookSignature>,
     },
     /// Event-based trigger (from another workflow or external system)
     Event {
@@ -156,6 +160,69 @@ pub enum Trigger {
         #[serde(default)]
         routing: Option<Vec<EventRouting>>,
     },
+}
+
+/// Signature verification settings for a webhook trigger.
+///
+/// ```yaml
+/// signature:
+///   scheme: github                     # github | stripe | slack | generic
+///   secret_env: GITHUB_WEBHOOK_SECRET  # or: secret_credential: github-webhook
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebhookSignature {
+    /// Signature scheme: `github`, `stripe`, `slack` or `generic`.
+    pub scheme: String,
+    /// Environment variable holding the shared secret.
+    #[serde(default)]
+    pub secret_env: Option<String>,
+    /// Name of a stored credential holding the shared secret.
+    #[serde(default)]
+    pub secret_credential: Option<String>,
+    /// Header carrying the signature (`generic` scheme only; default `X-Signature`).
+    #[serde(default)]
+    pub header: Option<String>,
+    /// Maximum age of a signed timestamp in seconds (`stripe` and `slack`; default 300).
+    #[serde(default)]
+    pub tolerance_seconds: Option<u64>,
+}
+
+impl WebhookSignature {
+    /// Check the settings are complete and consistent.
+    pub fn validate(&self) -> Result<(), String> {
+        let scheme = self.scheme.to_ascii_lowercase();
+        if !["github", "stripe", "slack", "generic", "hmac"].contains(&scheme.as_str()) {
+            return Err(format!(
+                "unknown signature scheme '{}' (expected github, stripe, slack or generic)",
+                self.scheme
+            ));
+        }
+        match (&self.secret_env, &self.secret_credential) {
+            (None, None) => {
+                return Err("signature needs secret_env or secret_credential".to_string());
+            }
+            (Some(_), Some(_)) => {
+                return Err("signature takes secret_env or secret_credential, not both".to_string());
+            }
+            (Some(v), None) | (None, Some(v)) if v.trim().is_empty() => {
+                return Err("signature secret source is empty".to_string());
+            }
+            _ => {}
+        }
+        if self.header.is_some() && scheme != "generic" && scheme != "hmac" {
+            return Err(format!(
+                "signature header can only be set for the generic scheme, not '{}'",
+                self.scheme
+            ));
+        }
+        if let Some(h) = &self.header
+            && axum::http::HeaderName::from_bytes(h.as_bytes()).is_err()
+        {
+            return Err(format!("invalid signature header name '{}'", h));
+        }
+        Ok(())
+    }
 }
 
 /// Header filter condition for webhook triggers.

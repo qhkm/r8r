@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::types::{OnErrorAction, Workflow};
+use super::types::{OnErrorAction, Trigger, Workflow};
 use crate::error::{Error, Result};
 
 /// Maximum allowed length for workflow and node names.
@@ -177,6 +177,19 @@ pub fn validate_workflow(workflow: &Workflow) -> Result<()> {
         }
     }
 
+    // Webhook signature settings must be complete: a half-configured
+    // signature would otherwise leave the endpoint open.
+    for trigger in &workflow.triggers {
+        if let Trigger::Webhook {
+            signature: Some(sig),
+            ..
+        } = trigger
+        {
+            sig.validate()
+                .map_err(|e| Error::Validation(format!("Webhook trigger: {}", e)))?;
+        }
+    }
+
     Ok(())
 }
 
@@ -266,6 +279,55 @@ fn has_cycle(workflow: &Workflow) -> bool {
 mod tests {
     use super::*;
     use crate::workflow::parse_workflow;
+
+    fn webhook_workflow(signature: &str) -> String {
+        format!(
+            "name: hook\ntriggers:\n  - type: webhook\n    signature:\n{}\nnodes:\n  - id: a\n    type: transform\n",
+            signature
+                .lines()
+                .map(|l| format!("      {}", l))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    }
+
+    #[test]
+    fn webhook_signature_valid() {
+        let wf =
+            parse_workflow(&webhook_workflow("scheme: github\nsecret_env: GH_SECRET")).unwrap();
+        assert!(validate_workflow(&wf).is_ok());
+    }
+
+    #[test]
+    fn webhook_signature_rejects_incomplete_settings() {
+        for (sig, expected) in [
+            ("scheme: github", "secret_env or secret_credential"),
+            (
+                "scheme: github\nsecret_env: A\nsecret_credential: b",
+                "not both",
+            ),
+            ("scheme: gitlab\nsecret_env: A", "unknown signature scheme"),
+            ("scheme: github\nsecret_env: ' '", "empty"),
+            (
+                "scheme: github\nsecret_env: A\nheader: X-Sig",
+                "generic scheme",
+            ),
+            (
+                "scheme: generic\nsecret_env: A\nheader: 'bad header'",
+                "invalid signature header",
+            ),
+        ] {
+            let wf = parse_workflow(&webhook_workflow(sig)).unwrap();
+            let err = validate_workflow(&wf).unwrap_err().to_string();
+            assert!(err.contains(expected), "{sig:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn webhook_signature_unknown_field_is_a_parse_error() {
+        // A typo such as `secret:` must not be silently dropped.
+        assert!(parse_workflow(&webhook_workflow("scheme: github\nsecret: hunter2")).is_err());
+    }
 
     #[test]
     fn test_validate_empty_name() {

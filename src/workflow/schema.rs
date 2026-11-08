@@ -135,8 +135,19 @@ pub fn workflow_schema() -> Value {
                             },
                             "secret_credential": {
                                 "type": "string"
+                            },
+                            "header": {
+                                "type": "string",
+                                "description": "Signature header for the generic scheme"
+                            },
+                            "tolerance_seconds": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "description": "Maximum timestamp age for stripe and slack"
                             }
-                        }
+                        },
+                        "required": ["scheme"],
+                        "additionalProperties": false
                     }
                 },
                 "additionalProperties": true
