@@ -51,8 +51,9 @@ curl -sSf https://r8r.sh/install.sh | sh
 # Pin a specific release if needed
 curl -sSf https://r8r.sh/install.sh | R8R_VERSION=v0.8.3 sh
 
-# Or use Docker
-docker run -d -p 8080:8080 -v r8r-data:/data ghcr.io/qhkm/r8r
+# Or use Docker (an API key is required when the server is reachable from the network)
+docker run -d -p 8080:8080 -v r8r-data:/data \
+  -e R8R_API_KEY="$(openssl rand -hex 32)" ghcr.io/qhkm/r8r
 
 # Or via Cargo (requires Rust; installs the `r8r` and `r8r-mcp` commands)
 cargo install r8r
@@ -63,6 +64,17 @@ cargo build --release
 ```
 
 The install script resolves the latest release automatically and falls back to `R8R_VERSION` when you want to pin a version.
+
+### Authentication
+
+`r8r server` listens on `127.0.0.1:8080` by default, so only your machine can reach it and no key is needed. To listen on the network, set an API key first:
+
+```bash
+export R8R_API_KEY="$(openssl rand -hex 32)"
+r8r server --host 0.0.0.0
+```
+
+With `R8R_API_KEY` set, every `/api/*` call needs `Authorization: Bearer <key>`, the dashboard asks for the key, and the `/api/monitor` WebSocket accepts it as `?token=<key>`. The server refuses to start on a non-loopback address without a key; `--allow-unauthenticated` overrides that, for trusted, isolated networks only. Webhook endpoints (`/webhooks/*`) stay public, because the callers are outside services.
 
 Then create and run a workflow:
 

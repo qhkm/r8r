@@ -61,6 +61,9 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # Set environment
 ENV R8R_DB=/data/r8r.db
 ENV RUST_LOG=r8r=info
+# Containers must listen on all interfaces; r8r then refuses to start
+# without R8R_API_KEY (pass -e R8R_API_KEY=...). See README "Authentication".
+ENV R8R_SERVER_HOST=0.0.0.0
 
 # Expose default port
 EXPOSE 8080

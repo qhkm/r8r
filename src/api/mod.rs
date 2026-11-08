@@ -6,6 +6,7 @@
  */
 //! HTTP API server for r8r.
 
+mod exposure;
 mod middleware;
 mod openapi;
 mod webhook;
@@ -13,6 +14,7 @@ mod websocket;
 #[cfg(feature = "whatsapp-inbound")]
 mod whatsapp;
 
+pub use exposure::{Exposure, allow_unauthenticated_from_env, api_key_from_env, check_exposure};
 pub use middleware::{
     ApiAuthConfig, HealthAuthConfig, REQUEST_ID_HEADER, RequestId, access_log_middleware,
     api_auth_middleware, health_auth_middleware, request_id_middleware,

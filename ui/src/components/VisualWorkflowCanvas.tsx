@@ -12,6 +12,7 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import TriggerEditor from './TriggerEditor'
+import { apiFetch } from '../lib/api'
 import {
   buildDefinitionFromCanvas,
   parseDefinitionToCanvas,
@@ -135,7 +136,7 @@ export default function VisualWorkflowCanvas() {
   const openLoader = async () => {
     setFeedback(null)
     try {
-      const response = await fetch('/api/workflows')
+      const response = await apiFetch('/api/workflows')
       if (!response.ok) {
         const body = (await response.json().catch(() => ({}))) as { error?: { message?: string } }
         throw new Error(body.error?.message ?? 'Failed to list workflows')
@@ -152,7 +153,7 @@ export default function VisualWorkflowCanvas() {
     setLoadingWorkflow(name)
     setFeedback(null)
     try {
-      const response = await fetch(`/api/workflows/${encodeURIComponent(name)}`)
+      const response = await apiFetch(`/api/workflows/${encodeURIComponent(name)}`)
       if (!response.ok) {
         const body = (await response.json().catch(() => ({}))) as { error?: { message?: string } }
         throw new Error(body.error?.message ?? 'Failed to load workflow')
@@ -181,7 +182,7 @@ export default function VisualWorkflowCanvas() {
     setFeedback(null)
     try {
       const safeName = sanitizeWorkflowName(workflowName)
-      const response = await fetch('/api/workflows', {
+      const response = await apiFetch('/api/workflows', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

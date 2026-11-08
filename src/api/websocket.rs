@@ -94,8 +94,14 @@ fn is_monitor_auth_required() -> bool {
 }
 
 /// Get the expected monitor token from environment.
+///
+/// `R8R_MONITOR_TOKEN` wins; otherwise the API key protects the monitor too,
+/// so one `R8R_API_KEY` secures every endpoint.
 fn get_monitor_token() -> Option<String> {
-    std::env::var("R8R_MONITOR_TOKEN").ok()
+    std::env::var("R8R_MONITOR_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty())
+        .or_else(super::exposure::api_key_from_env)
 }
 
 /// Validate the monitor authentication token.
@@ -117,8 +123,11 @@ fn validate_monitor_token(provided: Option<&str>) -> bool {
                 == 0
         }
         (None, _) => {
-            // No token configured - allow access but log warning
-            warn!("R8R_MONITOR_TOKEN not set - WebSocket monitor is unprotected!");
+            // No token configured - allow access but log warning.
+            // `r8r server` refuses non-loopback addresses in this state.
+            warn!(
+                "Neither R8R_MONITOR_TOKEN nor R8R_API_KEY is set - WebSocket monitor is unprotected!"
+            );
             true
         }
         (Some(_), None) => false,
@@ -236,13 +245,22 @@ pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<MonitoredAppState>,
     Query(query): Query<MonitorQuery>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    // Validate authentication token
-    if !validate_monitor_token(query.token.as_deref()) {
+    // Validate authentication token: `?token=` (browsers) or an
+    // `Authorization: Bearer|ApiKey` header (other clients).
+    let header_token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|h| {
+            h.strip_prefix("Bearer ")
+                .or_else(|| h.strip_prefix("ApiKey "))
+        });
+    if !validate_monitor_token(query.token.as_deref().or(header_token)) {
         warn!("WebSocket connection rejected: invalid or missing token");
         return (
             axum::http::StatusCode::UNAUTHORIZED,
-            "Invalid or missing authentication token. Set R8R_MONITOR_TOKEN and pass ?token=<value>",
+            "Invalid or missing authentication token. Pass ?token=<R8R_MONITOR_TOKEN or R8R_API_KEY>",
         )
             .into_response();
     }

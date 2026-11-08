@@ -1,6 +1,7 @@
 # r8r Docker Compose
 #
 # Usage:
+#   export R8R_API_KEY="$(openssl rand -hex 32)"   # required
 #   docker compose up -d        # Start r8r server
 #   docker compose logs -f      # View logs
 #   docker compose down         # Stop
@@ -21,6 +22,7 @@ services:
     environment:
       - RUST_LOG=r8r=info
       - R8R_DB=/data/r8r.db
+      - R8R_API_KEY=${R8R_API_KEY:?set R8R_API_KEY, e.g. export R8R_API_KEY="$(openssl rand -hex 32)"}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "r8r", "workflows", "list"]

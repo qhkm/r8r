@@ -71,11 +71,36 @@ Use `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `R8R_LLM_API_KEY`, or the credential 
 
 ## Security Settings
 
+### `R8R_API_KEY`
+
+**Required**: Yes when the server listens on a non-loopback address
+
+**Description**: API key for every `/api/*` endpoint except `/api/health`, `/api/metrics` and `/api/openapi.json`. Clients send `Authorization: Bearer <key>` (or `ApiKey <key>`). The dashboard prompts for it. It also protects `/api/monitor` and the bridge WebSocket when `R8R_MONITOR_TOKEN` / `R8R_BRIDGE_TOKEN` are unset.
+
+`r8r server` refuses to start on a non-loopback address (for example `0.0.0.0`) when this is unset, unless `--allow-unauthenticated` or `R8R_ALLOW_UNAUTHENTICATED=true` is given. The Docker images listen on `0.0.0.0`, so they need it.
+
+**Example**:
+```bash
+export R8R_API_KEY=$(openssl rand -hex 32)
+```
+
+### `R8R_ALLOW_UNAUTHENTICATED`
+
+**Default**: `false`
+
+**Description**: Lets `r8r server` listen on a non-loopback address without `R8R_API_KEY`. Anyone who can reach the port can then create and run workflows and use stored credentials. Only for trusted, isolated networks. Same as `--allow-unauthenticated`.
+
+### `R8R_SERVER_HOST` / `R8R_SERVER_PORT`
+
+**Default**: `127.0.0.1` / `8080`
+
+**Description**: Address and port `r8r server` listens on. `--host` and `--port` override them.
+
 ### `R8R_MONITOR_TOKEN`
 
-**Required**: No (unless `R8R_MONITOR_PUBLIC` is not set to `true`)
+**Required**: No. Falls back to `R8R_API_KEY` when unset.
 
-**Description**: Authentication token for WebSocket monitoring endpoint (`/api/monitor`). Clients must provide this token via the `?token=<value>` query parameter.
+**Description**: Authentication token for WebSocket monitoring endpoint (`/api/monitor`). Clients provide it as the `?token=<value>` query parameter or an `Authorization: Bearer <value>` header. When neither this nor `R8R_API_KEY` is set, the monitor is open (only possible on a loopback address, or with `--allow-unauthenticated`).
 
 **Security Note**: Keep this token secret. Use a strong random value in production.
 

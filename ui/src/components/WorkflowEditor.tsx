@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import VisualWorkflowCanvas from './VisualWorkflowCanvas'
+import { apiFetch } from '../lib/api'
 
 type TriggerMode = 'manual' | 'hourly' | 'daily' | 'weekly'
 type AlertMode = 'none' | 'dashboard' | 'email' | 'slack'
@@ -252,7 +253,7 @@ export default function WorkflowEditor() {
     setFeedback(null)
 
     try {
-      const response = await fetch('/api/workflows', {
+      const response = await apiFetch('/api/workflows', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

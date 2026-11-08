@@ -49,12 +49,14 @@ docker run -d \
   --name r8r \
   -p 8080:8080 \
   -v r8r-data:/data \
+  -e R8R_API_KEY="$(openssl rand -hex 32)" \
   r8r:latest
 ```
 
 Or use Docker Compose:
 
 ```bash
+export R8R_API_KEY="$(openssl rand -hex 32)"
 docker compose up -d
 ```
 
