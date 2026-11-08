@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dashboard API key prompt** — when the server requires `R8R_API_KEY`, the dashboard asks for it and sends it with every request. The key is kept in session storage, so it is forgotten when the tab closes.
 - **`r8r server --workflows <dir>`** loads every workflow YAML in a directory at startup, updating any existing workflow with the same name. Files that aren't valid workflows (such as `docker-compose.yml`) are skipped with a message. The README, landing page and docs quick start already used this flag, but it didn't exist, so the first command failed.
 - **`r8r server --host`**, and `--port` now falls back to `R8R_SERVER_PORT` / `server.port` in the config file (both were read before but ignored).
+- **`r8r integrations import`** — generates an integration definition from an OpenAPI 3.x spec (JSON or YAML, local file or URL). Path, query and header parameters become typed params, JSON and form bodies are flattened into one param per field, local `$ref`s and `allOf` are resolved, and bearer, basic, API-key and OAuth2 authorization-code security schemes are carried over. Prints YAML to stdout, or writes it with `--output`, or installs it into the user integrations directory with `--install`. `--tag` limits the import to tagged operations; deprecated operations are skipped.
 
 ### Changed
 

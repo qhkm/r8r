@@ -9,6 +9,7 @@ pub mod definition;
 pub mod loader;
 pub mod node;
 pub mod oauth2;
+pub mod openapi;
 pub mod validator;
 
 pub use definition::IntegrationDefinition;

@@ -578,6 +578,29 @@ enum IntegrationsCommand {
         #[arg(long, default_value = "{}")]
         params: String,
     },
+    /// Generate an integration definition from an OpenAPI 3 spec (file or URL)
+    Import {
+        /// Path or http(s) URL of an OpenAPI 3.x spec (JSON or YAML)
+        spec: String,
+        /// Integration name (default: derived from info.title)
+        #[arg(long)]
+        name: Option<String>,
+        /// Base URL override (default: servers[0].url)
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Only import operations with this tag (repeatable)
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+        /// Write the YAML to this file instead of stdout
+        #[arg(long, short = 'o', conflicts_with = "install")]
+        output: Option<std::path::PathBuf>,
+        /// Install into the user integrations directory
+        #[arg(long)]
+        install: bool,
+        /// Overwrite an existing file
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -844,6 +867,17 @@ async fn run_command(
                 operation,
                 params,
             } => cmd_integrations_test(&service, &operation, &params)?,
+            IntegrationsCommand::Import {
+                spec,
+                name,
+                base_url,
+                tags,
+                output,
+                install,
+                force,
+            } => {
+                cmd_integrations_import(&spec, name, base_url, tags, output, install, force).await?
+            }
         },
         Some(Commands::Migrate { command }) => match command {
             MigrateCommand::N8n {
@@ -4557,6 +4591,82 @@ fn cmd_integrations_validate(file: &std::path::Path) -> anyhow::Result<()> {
             std::process::exit(1);
         }
     }
+}
+
+async fn cmd_integrations_import(
+    spec_src: &str,
+    name: Option<String>,
+    base_url: Option<String>,
+    tags: Vec<String>,
+    output: Option<std::path::PathBuf>,
+    install: bool,
+    force: bool,
+) -> anyhow::Result<()> {
+    use r8r::integrations::openapi::{ImportOptions, convert, parse_spec, to_yaml};
+
+    let is_url = spec_src.starts_with("http://") || spec_src.starts_with("https://");
+    let text = if is_url {
+        let resp = reqwest::Client::new()
+            .get(spec_src)
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await?
+            .error_for_status()?;
+        resp.text().await?
+    } else {
+        std::fs::read_to_string(spec_src)
+            .map_err(|e| anyhow::anyhow!("Cannot read {}: {}", spec_src, e))?
+    };
+
+    let spec = parse_spec(&text).map_err(anyhow::Error::msg)?;
+    let opts = ImportOptions {
+        name,
+        base_url,
+        tags,
+        source_url: is_url.then(|| spec_src.to_string()),
+    };
+    let result = convert(&spec, &opts).map_err(anyhow::Error::msg)?;
+    for w in &result.warnings {
+        eprintln!("warning: {}", w);
+    }
+    let yaml = to_yaml(&result.definition).map_err(anyhow::Error::msg)?;
+
+    let target = if install {
+        let name = &result.definition.name;
+        if name.contains('/') || name.contains('\\') || name.starts_with('.') {
+            anyhow::bail!("Invalid integration name '{}'", name);
+        }
+        Some(
+            r8r::config::Config::config_dir()
+                .join("integrations")
+                .join(format!("{}.yaml", name)),
+        )
+    } else {
+        output
+    };
+
+    match target {
+        Some(path) => {
+            if path.exists() && !force {
+                anyhow::bail!(
+                    "{} already exists (use --force to overwrite)",
+                    path.display()
+                );
+            }
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&path, &yaml)?;
+            eprintln!(
+                "\u{2713} Wrote {} ({} operations) to {}",
+                result.definition.name,
+                result.definition.operations.len(),
+                path.display()
+            );
+        }
+        None => print!("{}", yaml),
+    }
+    Ok(())
 }
 
 fn cmd_integrations_test(service: &str, operation: &str, params_json: &str) -> anyhow::Result<()> {
