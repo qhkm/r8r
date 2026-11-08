@@ -1,0 +1,8 @@
+# One Rust version for local development, CI and the Docker build, so a new
+# compiler or Clippy release only lands when this file is bumped on purpose.
+# The minimum version for users building from crates.io is `rust-version` in
+# Cargo.toml.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

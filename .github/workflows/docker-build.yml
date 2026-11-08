@@ -1,0 +1,58 @@
+name: Docker build
+
+# Builds the source Dockerfile (used by `docker build .` and docker-compose).
+# Release images use Dockerfile.release with prebuilt binaries, so without
+# this job nothing would notice the source build breaking.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker-entrypoint.sh
+      - rust-toolchain.toml
+      - Cargo.toml
+      - Cargo.lock
+      - assets/**
+      - examples/**
+      - .github/workflows/docker-build.yml
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker-entrypoint.sh
+      - rust-toolchain.toml
+      - Cargo.toml
+      - Cargo.lock
+  # New include_str! paths under src/ don't trigger the filters above.
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build source image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - name: Build
+        run: docker buildx build --load -t r8r:ci .
+      - name: Smoke test
+        run: |
+          docker run --rm r8r:ci r8r --version
+          # Without an API key the container must refuse to start (it listens on 0.0.0.0).
+          if docker run --rm r8r:ci; then
+            echo "expected the server to refuse to start without R8R_API_KEY" >&2
+            exit 1
+          fi
+          docker run -d --name r8r -p 8080:8080 -e R8R_API_KEY=ci-key r8r:ci
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/api/health && break
+            sleep 1
+          done
+          curl -sf http://localhost:8080/api/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/workflows)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer ci-key' http://localhost:8080/api/workflows)" = 200
+          docker rm -f r8r

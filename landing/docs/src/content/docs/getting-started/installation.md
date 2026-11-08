@@ -21,7 +21,7 @@ The installer auto-detects your platform, resolves the latest GitHub release by 
 
 ## Build from Source
 
-r8r requires Rust 1.70 or later.
+r8r requires Rust 1.89 or later.
 
 ```bash
 git clone https://github.com/qhkm/r8r.git

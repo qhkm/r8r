@@ -2,6 +2,8 @@
 name = "r8r"
 version = "0.8.3"
 edition = "2024"
+# Minimum Rust to build r8r (uuid 1.29 needs 1.89). Development uses rust-toolchain.toml.
+rust-version = "1.89"
 description = "Agent-first Rust workflow automation engine"
 license = "AGPL-3.0-only AND Apache-2.0"
 repository = "https://github.com/qhkm/r8r"
