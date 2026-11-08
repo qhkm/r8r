@@ -13,6 +13,7 @@
 
 mod cache;
 mod dag;
+mod dir_loader;
 mod parameters;
 mod parser;
 mod schema;
@@ -21,6 +22,7 @@ mod validator;
 
 pub use cache::{CacheStats, WorkflowCache};
 pub use dag::{WorkflowDag, WorkflowDependency, map_workflow_outputs};
+pub use dir_loader::{DirLoadReport, load_workflows_from_dir};
 pub use parameters::{
     ParameterInfo, get_parameter_info, merge_params, parse_cli_params, validate_parameters,
 };

@@ -41,6 +41,9 @@ impl TransformNode {
                 rhai::Dynamic::UNIT
             }
         });
+        // `input` and node outputs are already Rhai values. Older workflows call
+        // `from_json(input)` from when they were JSON strings, so pass them through.
+        engine.register_fn("from_json", |v: rhai::Dynamic| -> rhai::Dynamic { v });
 
         engine
     }
@@ -89,6 +92,22 @@ fn dynamic_to_json(v: rhai::Dynamic) -> serde_json::Value {
     } else {
         // Fallback: convert to string
         serde_json::Value::String(v.to_string())
+    }
+}
+
+/// Bind `input`, `data` (an alias) and each earlier node's output
+/// (as `node_id` with `-` replaced by `_`) as Rhai values, so scripts can write
+/// `input.name` or `fetch_data.items.len()`.
+pub(crate) fn push_json_scope<'a>(
+    scope: &mut rhai::Scope,
+    input: &serde_json::Value,
+    node_outputs: impl Iterator<Item = (&'a String, &'a serde_json::Value)>,
+) {
+    let input = json_to_dynamic(input.clone());
+    scope.push("input", input.clone());
+    scope.push("data", input);
+    for (node_id, output) in node_outputs {
+        scope.push(node_id.replace('-', "_"), json_to_dynamic(output.clone()));
     }
 }
 
@@ -152,16 +171,7 @@ impl Node for TransformNode {
         let engine = Self::create_engine();
         let mut scope = Scope::new();
 
-        // Add input as JSON string (Rhai can parse it)
-        let input_json = serde_json::to_string(&ctx.input).unwrap_or_default();
-        scope.push("input", input_json.clone());
-        scope.push("data", input_json);
-
-        // Add previous node outputs
-        for (node_id, output) in ctx.node_outputs.iter() {
-            let output_json = serde_json::to_string(output).unwrap_or_default();
-            scope.push(node_id.replace('-', "_"), output_json);
-        }
+        push_json_scope(&mut scope, &ctx.input, ctx.node_outputs.iter());
 
         // Evaluate expression
         let result: rhai::Dynamic = engine
@@ -219,8 +229,33 @@ mod tests {
         let ctx = NodeContext::new("exec-1", "test").with_input(json!({"name": "John"}));
 
         let result = node.execute(&config, &ctx).await.unwrap();
-        // Input is passed as JSON string
-        assert!(result.data.is_string() || result.data.is_object());
+        assert_eq!(result.data, json!({"name": "John"}));
+    }
+
+    #[tokio::test]
+    async fn test_transform_reads_input_properties() {
+        let node = TransformNode::new();
+        let config = json!({
+            "expression": r#""Hello, " + (input.name ?? "World") + "!""#
+        });
+        let ctx = NodeContext::new("exec-1", "test").with_input(json!({"name": "Agent"}));
+        let result = node.execute(&config, &ctx).await.unwrap();
+        assert_eq!(result.data, "Hello, Agent!");
+
+        let ctx = NodeContext::new("exec-1", "test").with_input(json!({}));
+        let result = node.execute(&config, &ctx).await.unwrap();
+        assert_eq!(result.data, "Hello, World!");
+    }
+
+    #[tokio::test]
+    async fn test_transform_from_json_still_works() {
+        let node = TransformNode::new();
+        let config = json!({
+            "expression": "let d = from_json(input); d.items.len()"
+        });
+        let ctx = NodeContext::new("exec-1", "test").with_input(json!({"items": [1, 2, 3]}));
+        let result = node.execute(&config, &ctx).await.unwrap();
+        assert_eq!(result.data, 3);
     }
 
     #[tokio::test]
