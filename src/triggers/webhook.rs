@@ -251,7 +251,7 @@ async fn handle_webhook(
     if let Some(sig) = signature
         && let Err(response) = check_signature(sig, &headers, &body, workflow_name).await
     {
-        return response;
+        return *response;
     }
 
     // Check header filters first
@@ -339,7 +339,7 @@ async fn check_signature(
     headers: &HeaderMap,
     body: &[u8],
     workflow_name: &str,
-) -> Result<(), axum::response::Response> {
+) -> Result<(), Box<axum::response::Response>> {
     let secret = match resolve_signature_secret(sig).await {
         Ok(secret) => secret,
         Err(e) => {
@@ -347,11 +347,13 @@ async fn check_signature(
                 "Webhook for '{}' rejected: signature secret unavailable: {}",
                 workflow_name, e
             );
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Webhook signature secret is not configured"})),
-            )
-                .into_response());
+            return Err(Box::new(
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "Webhook signature secret is not configured"})),
+                )
+                    .into_response(),
+            ));
         }
     };
 
@@ -376,7 +378,7 @@ async fn check_signature(
             "Webhook for '{}' rejected: missing {} header",
             workflow_name, header_name
         );
-        return Err(unauthorized());
+        return Err(Box::new(unauthorized()));
     };
 
     let config = SignatureConfig {
@@ -392,7 +394,7 @@ async fn check_signature(
 
     verify_signature(&config, signature_header, body, timestamp).map_err(|e| {
         warn!("Webhook for '{}' rejected: {}", workflow_name, e);
-        unauthorized()
+        Box::new(unauthorized())
     })
 }
 
