@@ -4,8 +4,8 @@
 # Each node demonstrates a different provider configuration.
 #
 # Prerequisites:
-#   r8r credentials set openai <your-openai-key>
-#   r8r credentials set anthropic <your-anthropic-key>
+#   r8r credentials set openai --value <your-openai-key> --allowed-hosts api.openai.com
+#   r8r credentials set anthropic --value <your-anthropic-key> --allowed-hosts api.anthropic.com
 #   # Ollama: ollama serve && ollama pull llama3
 
 name: multi-provider-agent

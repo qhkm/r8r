@@ -7,8 +7,8 @@
 # Pattern: agent (extraction) + db persistence + dashboard-ready output.
 #
 # Prerequisites:
-#   r8r credentials set openai <your-openai-key>
-#   r8r credentials set google-sheets <your-sheets-token>
+#   r8r credentials set openai --value <your-openai-key> --allowed-hosts api.openai.com
+#   r8r credentials set google-sheets --value <your-sheets-token> --allowed-hosts sheets.googleapis.com
 
 name: compliance-evidence-mapping
 description: Map audit evidence to compliance requirements

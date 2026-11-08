@@ -92,7 +92,8 @@ With the generated key file, encryption protects a copied or backed-up `credenti
 Manage credentials with:
 
 ```bash
-r8r credentials set <service> --value <secret>
+r8r credentials set <service> --value <secret> --allowed-hosts <host,...>
+r8r credentials scope <service> --allowed-hosts <host,...>
 r8r credentials list
 r8r credentials delete <service>
 ```

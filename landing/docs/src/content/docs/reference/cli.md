@@ -182,10 +182,20 @@ Manage encrypted credential storage.
 #### credentials set
 
 ```bash
-r8r credentials set <service> [--key key] [--value value]
+r8r credentials set <service> [--key key] [--value value] (--allowed-hosts <host,...> | --any-host)
 ```
 
 If `--value` is omitted, reads from stdin.
+
+A new credential must say where it may be sent. Nodes that send a credential to a URL from the workflow (`http`, `agent` and `summarize` with a custom endpoint) refuse any other host, so a workflow written by an AI agent or imported from elsewhere cannot send a secret to a server of its choosing. `*.example.com` matches any subdomain of `example.com`. `--any-host` opts out explicitly. Updating an existing credential keeps its hosts unless you pass new ones.
+
+#### credentials scope
+
+```bash
+r8r credentials scope <service> (--allowed-hosts <host,...> | --any-host)
+```
+
+Changes where an existing credential may be sent. Credentials saved by r8r 0.8.3 and earlier have no hosts: they still work, but every use logs a warning until you scope them.
 
 #### credentials list
 
@@ -193,7 +203,7 @@ If `--value` is omitted, reads from stdin.
 r8r credentials list
 ```
 
-Lists stored credentials with masked values.
+Lists stored credentials with the hosts each may be sent to, and flags unscoped ones.
 
 #### credentials delete
 

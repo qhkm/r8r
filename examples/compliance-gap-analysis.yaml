@@ -7,8 +7,8 @@
 # Pattern: agent (gap detection) + transform (backlog shaping) + export.
 #
 # Prerequisites:
-#   r8r credentials set openai <your-openai-key>
-#   r8r credentials set airtable <your-airtable-token>   # optional, backlog
+#   r8r credentials set openai --value <your-openai-key> --allowed-hosts api.openai.com
+#   r8r credentials set airtable --value <your-airtable-token> --allowed-hosts api.airtable.com   # optional, backlog
 
 name: compliance-gap-analysis
 description: Automate compliance gap analysis into a remediation backlog

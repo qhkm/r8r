@@ -90,6 +90,10 @@ pub struct NodeContext {
     pub oauth2_credentials:
         Arc<std::collections::HashMap<String, crate::integrations::oauth2::OAuth2Credential>>,
 
+    /// Hosts each credential may be sent to (keyed by service name).
+    pub credential_scopes:
+        Arc<std::collections::HashMap<String, crate::credentials::CredentialScope>>,
+
     /// Storage for sub-workflow execution (optional)
     pub storage: Option<Arc<dyn Storage>>,
 
@@ -128,6 +132,7 @@ impl NodeContext {
             item_index: None,
             credentials: Arc::new(std::collections::HashMap::new()),
             oauth2_credentials: Arc::new(std::collections::HashMap::new()),
+            credential_scopes: Arc::new(std::collections::HashMap::new()),
             storage: None,
             registry: None,
         }
@@ -172,9 +177,65 @@ impl NodeContext {
         self
     }
 
+    /// Set credential scopes.
+    pub fn with_credential_scopes(
+        mut self,
+        scopes: std::collections::HashMap<String, crate::credentials::CredentialScope>,
+    ) -> Self {
+        self.credential_scopes = Arc::new(scopes);
+        self
+    }
+
     /// Get a credential by service name.
     pub fn get_credential(&self, service: &str) -> Option<&String> {
         self.credentials.get(service)
+    }
+
+    /// Check that credential `service` may be sent to `url`.
+    ///
+    /// Call this before sending a credential to a URL that comes from the
+    /// workflow. Credentials without a scope (saved before scoping existed)
+    /// are allowed with a warning.
+    pub fn check_credential_url(&self, service: &str, url: &str) -> crate::error::Result<()> {
+        let host = reqwest::Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.trim_matches(['[', ']']).to_string()))
+            .ok_or_else(|| {
+                crate::error::Error::Node(format!(
+                    "Cannot send credential '{service}': '{url}' has no host"
+                ))
+            })?;
+
+        match self.credential_scopes.get(service) {
+            Some(scope) if !scope.is_unscoped() => {
+                if scope.allows_host(&host) {
+                    Ok(())
+                } else {
+                    Err(crate::error::Error::Node(format!(
+                        "Credential '{service}' may not be sent to {host}: it is limited to {}. \
+                         If this host is expected, allow it with: \
+                         r8r credentials scope {service} --allowed-hosts {}",
+                        scope.describe(),
+                        scope
+                            .allowed_hosts
+                            .iter()
+                            .cloned()
+                            .chain([host.to_ascii_lowercase()])
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    )))
+                }
+            }
+            _ => {
+                tracing::warn!(
+                    credential = service,
+                    host = %host,
+                    "credential has no allowed hosts, so it can be sent anywhere. \
+                     Limit it with: r8r credentials scope {service} --allowed-hosts {host}"
+                );
+                Ok(())
+            }
+        }
     }
 
     /// Add a node output.
@@ -199,6 +260,7 @@ impl NodeContext {
             item_index: Some(index),
             credentials: self.credentials.clone(),
             oauth2_credentials: self.oauth2_credentials.clone(),
+            credential_scopes: self.credential_scopes.clone(),
             storage: self.storage.clone(),
             registry: self.registry.clone(),
         }

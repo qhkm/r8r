@@ -443,6 +443,15 @@ enum CredentialActions {
         /// Credential value (or read from stdin)
         #[arg(short, long)]
         value: Option<String>,
+        #[command(flatten)]
+        scope: CredentialScopeArgs,
+    },
+    /// Change which hosts a credential may be sent to
+    Scope {
+        /// Service name
+        service: String,
+        #[command(flatten)]
+        scope: CredentialScopeArgs,
     },
     /// List configured credentials
     List,
@@ -451,6 +460,32 @@ enum CredentialActions {
         /// Service name
         service: String,
     },
+}
+
+/// Where a credential may be sent. Required for new credentials.
+#[derive(clap::Args, Debug)]
+#[group(multiple = false)]
+struct CredentialScopeArgs {
+    /// Hosts this credential may be sent to, comma-separated
+    /// (e.g. api.github.com or *.example.com)
+    #[arg(long, value_delimiter = ',', value_name = "HOSTS")]
+    allowed_hosts: Vec<String>,
+    /// Allow sending this credential to any host
+    #[arg(long)]
+    any_host: bool,
+}
+
+impl CredentialScopeArgs {
+    fn to_scope(&self) -> anyhow::Result<Option<r8r::credentials::CredentialScope>> {
+        use r8r::credentials::CredentialScope;
+        if self.any_host {
+            Ok(Some(CredentialScope::any()))
+        } else if self.allowed_hosts.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(CredentialScope::hosts(&self.allowed_hosts)?))
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -500,6 +535,15 @@ enum SecretsActions {
         /// Credential value (or read from stdin)
         #[arg(short, long)]
         value: Option<String>,
+        #[command(flatten)]
+        scope: CredentialScopeArgs,
+    },
+    /// Change which hosts a secret may be sent to
+    Scope {
+        /// Service name
+        service: String,
+        #[command(flatten)]
+        scope: CredentialScopeArgs,
     },
     /// List configured secrets
     List,
@@ -758,7 +802,23 @@ async fn run_command(
                 service,
                 key,
                 value,
-            } => cmd_credentials_set(&service, key.as_deref(), value.as_deref(), output).await?,
+                scope,
+            } => {
+                cmd_credentials_set(
+                    &service,
+                    key.as_deref(),
+                    value.as_deref(),
+                    scope.to_scope()?,
+                    output,
+                )
+                .await?
+            }
+            CredentialActions::Scope { service, scope } => {
+                let scope = scope.to_scope()?.ok_or_else(|| {
+                    anyhow::anyhow!("Pass --allowed-hosts <host,...> or --any-host")
+                })?;
+                cmd_credentials_scope(&service, scope, output).await?
+            }
             CredentialActions::List => cmd_credentials_list(output).await?,
             CredentialActions::Delete { service } => cmd_credentials_delete(&service).await?,
         },
@@ -820,7 +880,23 @@ async fn run_command(
                 service,
                 key,
                 value,
-            } => cmd_credentials_set(&service, key.as_deref(), value.as_deref(), output).await?,
+                scope,
+            } => {
+                cmd_credentials_set(
+                    &service,
+                    key.as_deref(),
+                    value.as_deref(),
+                    scope.to_scope()?,
+                    output,
+                )
+                .await?
+            }
+            SecretsActions::Scope { service, scope } => {
+                let scope = scope.to_scope()?.ok_or_else(|| {
+                    anyhow::anyhow!("Pass --allowed-hosts <host,...> or --any-host")
+                })?;
+                cmd_credentials_scope(&service, scope, output).await?
+            }
             SecretsActions::List => cmd_credentials_list(output).await?,
             SecretsActions::Delete { service } => cmd_credentials_delete(&service).await?,
         },
@@ -2041,11 +2117,22 @@ async fn cmd_credentials_set(
     service: &str,
     key: Option<&str>,
     value: Option<&str>,
+    scope: Option<r8r::credentials::CredentialScope>,
     output: &r8r::cli::output::Output,
 ) -> anyhow::Result<()> {
     use r8r::credentials::CredentialStore;
     use serde::Serialize;
     use std::io::{self, BufRead};
+
+    // Check the scope rule before prompting for a value.
+    let mut store = CredentialStore::load().await?;
+    if scope.is_none() && !store.list().iter().any(|c| c.service == service) {
+        anyhow::bail!(
+            "New credentials must say which hosts they may be sent to.\n  \
+             r8r credentials set {service} --allowed-hosts api.example.com\n  \
+             r8r credentials set {service} --any-host      (allow every host)"
+        );
+    }
 
     // Get value from argument or stdin
     let credential_value = match value {
@@ -2063,8 +2150,8 @@ async fn cmd_credentials_set(
         anyhow::bail!("Credential value cannot be empty");
     }
 
-    let mut store = CredentialStore::load().await?;
-    store.set(service, key, &credential_value).await?;
+    store.set(service, key, &credential_value, scope).await?;
+    let hosts = store.scopes()[service].describe();
 
     if output.is_json() {
         #[derive(Serialize)]
@@ -2072,12 +2159,14 @@ async fn cmd_credentials_set(
             ok: bool,
             service: &'a str,
             key: Option<&'a str>,
+            hosts: &'a str,
         }
 
         let result = CredentialSetResult {
             ok: true,
             service,
             key,
+            hosts: &hosts,
         };
         println!("{}", serde_json::to_string_pretty(&result)?);
         return Ok(());
@@ -2087,6 +2176,7 @@ async fn cmd_credentials_set(
     if let Some(k) = key {
         println!("  Key: {}", k);
     }
+    println!("  Hosts: {}", hosts);
 
     output.suggest(&[
         ("r8r doctor", "verify your setup"),
@@ -2114,6 +2204,7 @@ async fn cmd_credentials_list(output: &r8r::cli::output::Output) -> anyhow::Resu
     struct CredentialSummary {
         service: String,
         key: String,
+        hosts: String,
         updated_at: String,
     }
 
@@ -2122,14 +2213,56 @@ async fn cmd_credentials_list(output: &r8r::cli::output::Output) -> anyhow::Resu
         .map(|c| CredentialSummary {
             service: c.service.clone(),
             key: c.key.as_deref().unwrap_or("-").to_string(),
+            hosts: c.scope.describe(),
             updated_at: c.updated_at.format("%Y-%m-%d %H:%M").to_string(),
         })
         .collect();
 
-    output.list(&["SERVICE", "KEY", "UPDATED"], &summaries, |s| {
-        vec![s.service.clone(), s.key.clone(), s.updated_at.clone()]
+    output.list(&["SERVICE", "KEY", "HOSTS", "UPDATED"], &summaries, |s| {
+        vec![
+            s.service.clone(),
+            s.key.clone(),
+            s.hosts.clone(),
+            s.updated_at.clone(),
+        ]
     });
 
+    let unscoped: Vec<&str> = credentials
+        .iter()
+        .filter(|c| c.scope.is_unscoped())
+        .map(|c| c.service.as_str())
+        .collect();
+    if !unscoped.is_empty() && !output.is_json() {
+        eprintln!(
+            "\nUnscoped credentials can be sent to any host. Limit them with:\n  \
+             r8r credentials scope <service> --allowed-hosts <host,...>\n  ({})",
+            unscoped.join(", ")
+        );
+    }
+
+    Ok(())
+}
+
+async fn cmd_credentials_scope(
+    service: &str,
+    scope: r8r::credentials::CredentialScope,
+    output: &r8r::cli::output::Output,
+) -> anyhow::Result<()> {
+    use r8r::credentials::CredentialStore;
+
+    let mut store = CredentialStore::load().await?;
+    let hosts = scope.describe();
+    if !store.set_scope(service, scope).await? {
+        anyhow::bail!("Credential '{service}' not found");
+    }
+    if output.is_json() {
+        println!(
+            "{}",
+            serde_json::json!({"ok": true, "service": service, "hosts": hosts})
+        );
+    } else {
+        println!("\u{2713} Credential '{service}' may be sent to: {hosts}");
+    }
     Ok(())
 }
 

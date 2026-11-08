@@ -63,6 +63,115 @@ impl SecureMasterKey {
     }
 }
 
+/// Where a credential may be sent.
+///
+/// Nodes that send a credential to a URL taken from the workflow (`http`,
+/// `agent` and `summarize` with a custom
+/// endpoint) refuse hosts outside this list, so a workflow written by an AI
+/// agent or imported from elsewhere cannot send a secret to a server of its
+/// choosing.
+///
+/// Credentials saved by r8r 0.8.3 and earlier have neither field set. They
+/// still work, with a warning on every use, until a scope is added.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CredentialScope {
+    /// Host names, lowercase. `*.example.com` matches any subdomain of
+    /// `example.com` (not `example.com` itself).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_hosts: Vec<String>,
+    /// Explicitly allow every host.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub any_host: bool,
+}
+
+impl CredentialScope {
+    /// Scope to the given host patterns, validating each one.
+    pub fn hosts<I, S>(hosts: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut allowed_hosts = Vec::new();
+        for host in hosts {
+            let host = normalize_host_pattern(host.as_ref())?;
+            if !allowed_hosts.contains(&host) {
+                allowed_hosts.push(host);
+            }
+        }
+        if allowed_hosts.is_empty() {
+            return Err(Error::Config(
+                "--allowed-hosts needs at least one host".to_string(),
+            ));
+        }
+        Ok(Self {
+            allowed_hosts,
+            any_host: false,
+        })
+    }
+
+    /// Allow every host.
+    pub fn any() -> Self {
+        Self {
+            allowed_hosts: Vec::new(),
+            any_host: true,
+        }
+    }
+
+    /// True for credentials saved before scoping existed.
+    pub fn is_unscoped(&self) -> bool {
+        !self.any_host && self.allowed_hosts.is_empty()
+    }
+
+    /// Whether this scope lets the credential be sent to `host`.
+    /// Unscoped credentials are allowed (callers warn).
+    pub fn allows_host(&self, host: &str) -> bool {
+        if self.any_host || self.is_unscoped() {
+            return true;
+        }
+        let host = host.trim_end_matches('.').to_ascii_lowercase();
+        self.allowed_hosts
+            .iter()
+            .any(|pattern| match pattern.strip_prefix("*.") {
+                Some(domain) => host
+                    .strip_suffix(domain)
+                    .is_some_and(|rest| rest.len() > 1 && rest.ends_with('.')),
+                None => *pattern == host,
+            })
+    }
+
+    /// Short description for listings and error messages.
+    pub fn describe(&self) -> String {
+        if self.any_host {
+            "any host".to_string()
+        } else if self.allowed_hosts.is_empty() {
+            "unscoped".to_string()
+        } else {
+            self.allowed_hosts.join(", ")
+        }
+    }
+}
+
+/// Validate and normalize one `--allowed-hosts` entry.
+fn normalize_host_pattern(raw: &str) -> Result<String> {
+    let host = raw.trim().trim_end_matches('.').to_ascii_lowercase();
+    let bare = host.strip_prefix("*.").unwrap_or(&host);
+    let valid = !bare.is_empty()
+        && bare.contains(|c: char| c.is_ascii_alphanumeric())
+        && bare
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+        && !bare.starts_with('.')
+        && !bare.contains("..");
+    if !valid {
+        return Err(Error::Config(format!(
+            "'{}' is not a host name. Use a bare host such as api.github.com or *.example.com \
+             (no scheme, port or path), or --any-host to allow every host",
+            raw.trim()
+        )));
+    }
+    Ok(host)
+}
+
 /// A stored credential.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Credential {
@@ -73,6 +182,9 @@ pub struct Credential {
     pub value: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Hosts this credential may be sent to.
+    #[serde(flatten)]
+    pub scope: CredentialScope,
 }
 
 /// On-disk layout of `credentials.json`.
@@ -293,7 +405,27 @@ impl CredentialStore {
     }
 
     /// Set a credential.
-    pub async fn set(&mut self, service: &str, key: Option<&str>, value: &str) -> Result<()> {
+    ///
+    /// `scope` is required for a new credential. For an existing one, `None`
+    /// keeps its current scope.
+    pub async fn set(
+        &mut self,
+        service: &str,
+        key: Option<&str>,
+        value: &str,
+        scope: Option<CredentialScope>,
+    ) -> Result<()> {
+        let scope = match (scope, self.credentials.get(service)) {
+            (Some(scope), _) => scope,
+            (None, Some(existing)) => existing.scope.clone(),
+            (None, None) => {
+                return Err(Error::Config(format!(
+                    "New credentials must say which hosts they may be sent to. Pass \
+                     --allowed-hosts <host,...> (for example: r8r credentials set {service} \
+                     --allowed-hosts api.example.com), or --any-host to allow every host"
+                )));
+            }
+        };
         let now = chrono::Utc::now();
         let master_key = self.ensure_key()?;
         let encoded_value = encrypt_value(value.as_bytes(), &master_key, &SystemRandom::new())?;
@@ -308,10 +440,31 @@ impl CredentialStore {
                 .map(|c| c.created_at)
                 .unwrap_or(now),
             updated_at: now,
+            scope,
         };
 
         self.credentials.insert(service.to_string(), credential);
         self.save().await
+    }
+
+    /// Change where an existing credential may be sent. Returns `false` if
+    /// there is no such credential.
+    pub async fn set_scope(&mut self, service: &str, scope: CredentialScope) -> Result<bool> {
+        let Some(cred) = self.credentials.get_mut(service) else {
+            return Ok(false);
+        };
+        cred.scope = scope;
+        cred.updated_at = chrono::Utc::now();
+        self.save().await?;
+        Ok(true)
+    }
+
+    /// Scope of every stored credential, keyed by service name.
+    pub fn scopes(&self) -> HashMap<String, CredentialScope> {
+        self.credentials
+            .iter()
+            .map(|(name, cred)| (name.clone(), cred.scope.clone()))
+            .collect()
     }
 
     /// Get a credential value (decrypted).
@@ -598,7 +751,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut store = store_at(tmp.path());
         store
-            .set("test-service", Some("api_key"), "secret123")
+            .set(
+                "test-service",
+                Some("api_key"),
+                "secret123",
+                Some(CredentialScope::any()),
+            )
             .await
             .unwrap();
 
@@ -624,7 +782,10 @@ mod tests {
     #[tokio::test]
     async fn reload_decrypts_with_key_file() {
         let tmp = tempfile::tempdir().unwrap();
-        store_at(tmp.path()).set("svc", None, "v1").await.unwrap();
+        store_at(tmp.path())
+            .set("svc", None, "v1", Some(CredentialScope::any()))
+            .await
+            .unwrap();
 
         let store = CredentialStore::load_at(tmp.path().join("credentials.json"), None)
             .await
@@ -639,7 +800,10 @@ mod tests {
         let mut store = CredentialStore::load_at(path.clone(), Some(HEX_KEY.into()))
             .await
             .unwrap();
-        store.set("svc", None, "v1").await.unwrap();
+        store
+            .set("svc", None, "v1", Some(CredentialScope::any()))
+            .await
+            .unwrap();
         assert!(!tmp.path().join(KEY_FILE_NAME).exists());
 
         let store = CredentialStore::load_at(path.clone(), Some(HEX_KEY.into()))
@@ -652,7 +816,10 @@ mod tests {
         let mut store = CredentialStore::load_at(path.clone(), Some("correct horse".into()))
             .await
             .unwrap();
-        store.set("other", None, "v2").await.unwrap();
+        store
+            .set("other", None, "v2", Some(CredentialScope::any()))
+            .await
+            .unwrap();
         let store = CredentialStore::load_at(path, Some("correct horse".into()))
             .await
             .unwrap();
@@ -666,7 +833,10 @@ mod tests {
         let mut store = CredentialStore::load_at(path.clone(), Some(HEX_KEY.into()))
             .await
             .unwrap();
-        store.set("svc", None, "v1").await.unwrap();
+        store
+            .set("svc", None, "v1", Some(CredentialScope::any()))
+            .await
+            .unwrap();
 
         // No env key and no key file: listing works, reading explains why not.
         let store = CredentialStore::load_at(path.clone(), None).await.unwrap();
@@ -682,7 +852,11 @@ mod tests {
 
         // Writing with the wrong key would split the store across two keys.
         let before = raw_file(tmp.path());
-        let err = store.set("new", None, "v2").await.unwrap_err().to_string();
+        let err = store
+            .set("new", None, "v2", Some(CredentialScope::any()))
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("not the one it was encrypted with"), "{err}");
         assert_eq!(raw_file(tmp.path()), before);
     }
@@ -738,7 +912,10 @@ mod tests {
         let mut store = CredentialStore::load_at(path.clone(), Some(HEX_KEY.into()))
             .await
             .unwrap();
-        store.set("svc", None, "v1").await.unwrap();
+        store
+            .set("svc", None, "v1", Some(CredentialScope::any()))
+            .await
+            .unwrap();
         store.set_oauth2(crate::integrations::oauth2::OAuth2Credential {
             service: "gsheets".into(),
             provider: "google".into(),
@@ -755,7 +932,11 @@ mod tests {
 
         let mut store = CredentialStore::load_at(path.clone(), None).await.unwrap();
         assert!(store.get_oauth2("gsheets").is_none());
-        let err = store.set("new", None, "v2").await.unwrap_err().to_string();
+        let err = store
+            .set("new", None, "v2", Some(CredentialScope::any()))
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(err.contains(ENCRYPTION_KEY_ENV), "{err}");
         assert!(store.delete("svc").await.is_err());
         assert_eq!(raw_file(tmp.path()), before);
@@ -766,6 +947,82 @@ mod tests {
             .unwrap();
         assert_eq!(store.get("svc").unwrap().as_deref(), Some("v1"));
         assert_eq!(store.get_oauth2("gsheets").unwrap().access_token, "tok");
+    }
+
+    #[tokio::test]
+    async fn new_credentials_need_a_scope_and_updates_keep_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = store_at(tmp.path());
+
+        let err = store
+            .set("gh", None, "t1", None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("--allowed-hosts"), "{err}");
+
+        let scope = CredentialScope::hosts(["api.github.com"]).unwrap();
+        store
+            .set("gh", None, "t1", Some(scope.clone()))
+            .await
+            .unwrap();
+        store.set("gh", None, "t2", None).await.unwrap();
+        assert_eq!(store.get("gh").unwrap().as_deref(), Some("t2"));
+        assert_eq!(store.scopes()["gh"], scope);
+
+        assert!(store.set_scope("gh", CredentialScope::any()).await.unwrap());
+        assert!(
+            !store
+                .set_scope("missing", CredentialScope::any())
+                .await
+                .unwrap()
+        );
+
+        let store = CredentialStore::load_at(tmp.path().join("credentials.json"), None)
+            .await
+            .unwrap();
+        assert!(store.scopes()["gh"].any_host);
+    }
+
+    #[test]
+    fn legacy_credentials_load_as_unscoped() {
+        let cred: Credential = serde_json::from_str(
+            r#"{"service":"s","key":null,"value":"enc:x","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        assert!(cred.scope.is_unscoped());
+        assert!(cred.scope.allows_host("anything.example"));
+    }
+
+    #[test]
+    fn host_matching() {
+        let scope = CredentialScope::hosts(["API.GitHub.com", "*.example.com"]).unwrap();
+        assert_eq!(scope.allowed_hosts, vec!["api.github.com", "*.example.com"]);
+        assert!(scope.allows_host("api.github.com"));
+        assert!(scope.allows_host("API.GITHUB.COM."));
+        assert!(scope.allows_host("a.example.com"));
+        assert!(scope.allows_host("a.b.example.com"));
+        assert!(!scope.allows_host("example.com"));
+        assert!(!scope.allows_host("evilexample.com"));
+        assert!(!scope.allows_host("github.com"));
+        assert!(!scope.allows_host("api.github.com.evil.io"));
+
+        for bad in [
+            "https://api.github.com",
+            "api.github.com/x",
+            "host:443",
+            "*",
+            "",
+            "a..b",
+            "*.",
+            ".x.com",
+        ] {
+            assert!(
+                CredentialScope::hosts([bad]).is_err(),
+                "{bad} should be rejected"
+            );
+        }
+        assert!(CredentialScope::hosts(Vec::<String>::new()).is_err());
     }
 
     #[test]

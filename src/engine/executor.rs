@@ -504,6 +504,7 @@ impl Executor {
             .with_input(input)
             .with_correlation_id(&correlation_id)
             .with_credentials(credentials)
+            .with_credential_scopes(load_credential_scopes().await)
             .with_oauth2_credentials(
                 load_workflow_oauth2_credentials(workflow)
                     .await
@@ -762,6 +763,7 @@ impl Executor {
                             item_index: None,
                             credentials: ctx.credentials.clone(),
                             oauth2_credentials: ctx.oauth2_credentials.clone(),
+                            credential_scopes: ctx.credential_scopes.clone(),
                             storage: ctx.storage.clone(),
                             registry: ctx.registry.clone(),
                         };
@@ -1210,6 +1212,7 @@ impl Executor {
                     item_index: None,
                     credentials: ctx.credentials.clone(),
                     oauth2_credentials: ctx.oauth2_credentials.clone(),
+                    credential_scopes: ctx.credential_scopes.clone(),
                     storage: ctx.storage.clone(),
                     registry: ctx.registry.clone(),
                 };
@@ -1693,6 +1696,7 @@ impl Executor {
         let mut ctx = NodeContext::new(&execution_id, &workflow.name)
             .with_input(input)
             .with_credentials(credentials)
+            .with_credential_scopes(load_credential_scopes().await)
             .with_oauth2_credentials(
                 load_workflow_oauth2_credentials(workflow)
                     .await
@@ -2100,6 +2104,7 @@ impl Executor {
                     item_index: None,
                     credentials: ctx.credentials.clone(),
                     oauth2_credentials: ctx.oauth2_credentials.clone(),
+                    credential_scopes: ctx.credential_scopes.clone(),
                     storage: ctx.storage.clone(),
                     registry: ctx.registry.clone(),
                 };
@@ -2720,6 +2725,7 @@ impl Executor {
             variables: parent_ctx.variables.clone(),
             credentials: parent_ctx.credentials.clone(),
             oauth2_credentials: parent_ctx.oauth2_credentials.clone(),
+            credential_scopes: parent_ctx.credential_scopes.clone(),
             correlation_id: parent_ctx.correlation_id.clone(),
             item_index: None,
             storage: parent_ctx.storage.clone(),
@@ -3412,6 +3418,17 @@ fn emit_node_terminal_event(monitor: Option<&Arc<Monitor>>, node_exec: &NodeExec
 
 /// Load credentials required by the workflow nodes.
 ///
+/// Hosts each stored credential may be sent to. Reading scopes needs no key.
+async fn load_credential_scopes() -> HashMap<String, crate::credentials::CredentialScope> {
+    match CredentialStore::load().await {
+        Ok(store) => store.scopes(),
+        Err(e) => {
+            warn!("Failed to load credential scopes: {}", e);
+            HashMap::new()
+        }
+    }
+}
+
 /// Scans all nodes for `credential` config fields and loads
 /// the corresponding credentials from the credential store.
 async fn load_workflow_credentials(workflow: &Workflow) -> Result<HashMap<String, String>> {

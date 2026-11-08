@@ -7,7 +7,7 @@
 # Pattern: sandbox + vision + checklist template.
 #
 # Prerequisites:
-#   r8r credentials set openai <your-openai-key>
+#   r8r credentials set openai --value <your-openai-key> --allowed-hosts api.openai.com
 #   # Sandbox image with python + pymupdf/ocr installed (see sandbox-python.yaml)
 
 name: compliance-document-check

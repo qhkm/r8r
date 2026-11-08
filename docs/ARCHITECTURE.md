@@ -686,7 +686,7 @@ r8r server --no-ui            # API only
 r8r dev order-notification.yaml  # Watch mode, hot reload
 
 # Credentials
-r8r credentials set whatsapp --token xxx
+r8r credentials set whatsapp --value xxx --allowed-hosts graph.facebook.com
 r8r credentials list
 ```
 

@@ -9,8 +9,8 @@
 # maps to affected requirement IDs with structured output.
 #
 # Prerequisites:
-#   r8r credentials set openai <your-openai-key>
-#   r8r credentials set google-sheets <your-sheets-token>   # KB/registry
+#   r8r credentials set openai --value <your-openai-key> --allowed-hosts api.openai.com
+#   r8r credentials set google-sheets --value <your-sheets-token> --allowed-hosts sheets.googleapis.com   # KB/registry
 
 name: compliance-regulation-impact
 description: Regulation update → affected requirements + impacted profiles
