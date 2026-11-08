@@ -9,7 +9,7 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
@@ -81,6 +81,15 @@ struct EmailConfig {
     #[serde(default)]
     api_key: Option<String>,
 
+    /// Mailgun sending domain (default: the domain of `from`)
+    #[serde(default)]
+    mailgun_domain: Option<String>,
+
+    /// Mailgun API base URL (default `https://api.mailgun.net`; EU accounts
+    /// use `https://api.eu.mailgun.net`)
+    #[serde(default)]
+    mailgun_base_url: Option<String>,
+
     /// Credential name for API key or SMTP password
     #[serde(default)]
     credential: Option<String>,
@@ -106,6 +115,18 @@ fn default_provider() -> String {
     "smtp".to_string()
 }
 
+/// Providers that are documented but not implemented. Returning an error
+/// beats reporting a message as sent when nothing went out.
+fn unsupported_provider(provider: &str) -> Option<String> {
+    match provider {
+        "smtp" => Some(
+            "SMTP sending is not implemented yet. Set `provider` to resend, sendgrid or mailgun"
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
 #[async_trait]
 impl Node for EmailNode {
     fn node_type(&self) -> &str {
@@ -114,6 +135,18 @@ impl Node for EmailNode {
 
     fn description(&self) -> &str {
         "Send emails via SMTP or API providers"
+    }
+
+    fn validate_config(&self, config: &Value) -> Result<()> {
+        let provider = config
+            .get("provider")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(default_provider);
+        match unsupported_provider(&provider) {
+            Some(reason) => Err(Error::Validation(reason)),
+            None => Ok(()),
+        }
     }
 
     async fn execute(&self, config: &Value, ctx: &NodeContext) -> Result<NodeResult> {
@@ -137,7 +170,9 @@ impl Node for EmailNode {
         );
 
         match config.provider.as_str() {
-            "smtp" => send_smtp(&config).await,
+            "smtp" => Err(Error::Node(
+                unsupported_provider("smtp").unwrap_or_default(),
+            )),
             "sendgrid" => send_sendgrid(&config, api_key).await,
             "resend" => send_resend(&config, api_key).await,
             "mailgun" => send_mailgun(&config, api_key).await,
@@ -147,26 +182,6 @@ impl Node for EmailNode {
             ))),
         }
     }
-}
-
-async fn send_smtp(config: &EmailConfig) -> Result<NodeResult> {
-    let host = config.smtp_host.as_deref().unwrap_or("localhost");
-    let port = config.smtp_port.unwrap_or(587);
-
-    // Note: Full SMTP implementation would require lettre crate
-    // This is a placeholder that shows the intended behavior
-    warn!("SMTP sending requires the 'lettre' crate - returning mock response");
-
-    Ok(NodeResult::new(json!({
-        "success": true,
-        "provider": "smtp",
-        "host": host,
-        "port": port,
-        "to": config.to.to_vec(),
-        "subject": config.subject,
-        "message_id": format!("<{}@{}>", uuid::Uuid::new_v4(), host),
-        "note": "SMTP requires lettre crate for actual sending"
-    })))
 }
 
 async fn send_sendgrid(config: &EmailConfig, api_key: Option<String>) -> Result<NodeResult> {
@@ -287,18 +302,77 @@ async fn send_resend(config: &EmailConfig, api_key: Option<String>) -> Result<No
 }
 
 async fn send_mailgun(config: &EmailConfig, api_key: Option<String>) -> Result<NodeResult> {
-    let _api_key = api_key.ok_or_else(|| Error::Node("Mailgun requires api_key".to_string()))?;
+    let api_key = api_key.ok_or_else(|| Error::Node("Mailgun requires api_key".to_string()))?;
+    let domain = match &config.mailgun_domain {
+        Some(d) => d.clone(),
+        None => address_domain(&config.from).ok_or_else(|| {
+            Error::Node("Mailgun needs mailgun_domain (could not read a domain from `from`)".into())
+        })?,
+    };
+    let base = config
+        .mailgun_base_url
+        .as_deref()
+        .unwrap_or("https://api.mailgun.net")
+        .trim_end_matches('/');
 
-    // Mailgun uses form data, not JSON
-    warn!("Mailgun integration requires domain configuration");
+    let response = reqwest::Client::new()
+        .post(format!("{}/v3/{}/messages", base, domain))
+        .basic_auth("api", Some(&api_key))
+        .form(&mailgun_form(config))
+        .send()
+        .await
+        .map_err(|e| Error::Node(format!("Mailgun request failed: {}", e)))?;
 
-    Ok(NodeResult::new(json!({
-        "success": true,
-        "provider": "mailgun",
-        "to": config.to.to_vec(),
-        "subject": config.subject,
-        "note": "Mailgun requires domain in API endpoint"
-    })))
+    let status = response.status();
+    let response_body: Value = response.json().await.unwrap_or(json!({}));
+    if status.is_success() {
+        Ok(NodeResult::new(json!({
+            "success": true,
+            "provider": "mailgun",
+            "id": response_body["id"],
+            "to": config.to.to_vec(),
+        })))
+    } else {
+        Err(Error::Node(format!(
+            "Mailgun error ({}): {}",
+            status, response_body
+        )))
+    }
+}
+
+/// Form fields for Mailgun's `POST /v3/{domain}/messages`.
+fn mailgun_form(config: &EmailConfig) -> Vec<(&'static str, String)> {
+    let mut form = vec![
+        ("from", config.from.clone()),
+        ("subject", config.subject.clone()),
+    ];
+    form.extend(config.to.to_vec().into_iter().map(|a| ("to", a)));
+    if let Some(cc) = &config.cc {
+        form.extend(cc.to_vec().into_iter().map(|a| ("cc", a)));
+    }
+    if let Some(bcc) = &config.bcc {
+        form.extend(bcc.to_vec().into_iter().map(|a| ("bcc", a)));
+    }
+    if let Some(text) = &config.body {
+        form.push(("text", text.clone()));
+    }
+    if let Some(html) = &config.html {
+        form.push(("html", html.clone()));
+    }
+    if let Some(reply_to) = &config.reply_to {
+        form.push(("h:Reply-To", reply_to.clone()));
+    }
+    form
+}
+
+/// `Acme <hi@mail.acme.com>` or `hi@mail.acme.com` -> `mail.acme.com`.
+fn address_domain(address: &str) -> Option<String> {
+    let addr = match (address.rfind('<'), address.rfind('>')) {
+        (Some(open), Some(close)) if open < close => &address[open + 1..close],
+        _ => address,
+    };
+    let domain = addr.trim().rsplit_once('@')?.1.trim();
+    (!domain.is_empty()).then(|| domain.to_string())
 }
 
 #[cfg(test)]
@@ -331,5 +405,73 @@ mod tests {
 
         let parsed: EmailConfig = serde_json::from_value(config).unwrap();
         assert_eq!(parsed.to.to_vec().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn smtp_is_refused_not_faked() {
+        let node = EmailNode::new();
+        let config = json!({"provider": "smtp", "from": "a@x.test", "to": "b@x.test", "subject": "hi", "body": "x"});
+        let err = node.validate_config(&config).unwrap_err().to_string();
+        assert!(err.contains("SMTP sending is not implemented"), "{err}");
+        let ctx = NodeContext::new("exec-1", "test");
+        assert!(node.execute(&config, &ctx).await.is_err());
+    }
+
+    #[test]
+    fn default_provider_is_refused_too() {
+        let node = EmailNode::new();
+        let config = json!({"from": "a@x.test", "to": "b@x.test", "subject": "hi"});
+        assert!(node.validate_config(&config).is_err());
+        let config =
+            json!({"provider": "resend", "from": "a@x.test", "to": "b@x.test", "subject": "hi"});
+        assert!(node.validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn mailgun_domain_from_address() {
+        assert_eq!(
+            address_domain("Acme <hi@mail.acme.com>").as_deref(),
+            Some("mail.acme.com")
+        );
+        assert_eq!(address_domain("hi@acme.com").as_deref(), Some("acme.com"));
+        assert_eq!(address_domain("no-at-sign"), None);
+    }
+
+    #[test]
+    fn mailgun_form_fields() {
+        let config: EmailConfig = serde_json::from_value(json!({
+            "provider": "mailgun",
+            "from": "a@x.test",
+            "to": ["b@x.test", "c@x.test"],
+            "bcc": "d@x.test",
+            "subject": "hi",
+            "body": "text",
+            "reply_to": "r@x.test"
+        }))
+        .unwrap();
+        let form = mailgun_form(&config);
+        let get = |k: &str| {
+            form.iter()
+                .filter(|(f, _)| *f == k)
+                .map(|(_, v)| v.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(get("to"), ["b@x.test", "c@x.test"]);
+        assert_eq!(get("bcc"), ["d@x.test"]);
+        assert_eq!(get("text"), ["text"]);
+        assert_eq!(get("h:Reply-To"), ["r@x.test"]);
+        assert!(get("html").is_empty());
+    }
+
+    #[tokio::test]
+    async fn mailgun_reports_http_errors() {
+        // Nothing listens on port 9: the send must fail, not claim success.
+        let node = EmailNode::new();
+        let config = json!({
+            "provider": "mailgun", "api_key": "k", "from": "a@x.test", "to": "b@x.test",
+            "subject": "hi", "body": "x", "mailgun_base_url": "http://127.0.0.1:9"
+        });
+        let ctx = NodeContext::new("exec-1", "test");
+        assert!(node.execute(&config, &ctx).await.is_err());
     }
 }

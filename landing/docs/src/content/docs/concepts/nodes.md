@@ -67,10 +67,10 @@ Every node requires an `id` and `type`:
 
 | Type | Purpose |
 |------|---------|
-| `email` | Send emails (SMTP, SendGrid, Resend, Mailgun) |
+| `email` | Send emails via Resend, SendGrid or Mailgun (SMTP not yet supported) |
 | `slack` | Send Slack messages |
-| `database` | Execute SQL queries (SQLite, PostgreSQL, MySQL) |
-| `s3` | S3-compatible object storage operations |
+| `database` | Execute SQL queries on SQLite (PostgreSQL and MySQL not yet supported) |
+| `s3` | Unsigned S3 requests: public buckets and endpoints without auth (request signing not yet supported) |
 
 ### Utility
 

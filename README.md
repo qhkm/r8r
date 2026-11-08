@@ -241,10 +241,10 @@ r8r-mcp
 | **`agent`** | **AI reasoning — call OpenAI, Anthropic, Ollama, or any LLM** |
 | **`sandbox`** | **Execute Python, Node, or Bash in isolated environments** |
 | `subworkflow` | Nested workflow execution |
-| `email` | Send emails (SMTP, SendGrid, Resend, Mailgun) |
+| `email` | Send emails via Resend, SendGrid or Mailgun (SMTP not yet supported) |
 | `slack` | Slack messaging |
-| `database` | SQL query execution (SQLite, PostgreSQL, MySQL) |
-| `s3` | S3 object storage operations |
+| `database` | SQL query execution on SQLite (PostgreSQL and MySQL not yet supported) |
+| `s3` | Unsigned S3 requests: public buckets and endpoints without auth (request signing not yet supported) |
 | `switch` | Multi-branch conditional routing |
 | `if` | Binary conditional |
 | `filter` | Filter data by conditions |

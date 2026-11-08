@@ -135,7 +135,7 @@ impl TemplateRegistry {
                     },
                     TemplateVariable {
                         name: "email_provider".to_string(),
-                        description: "Email provider (resend, sendgrid, smtp)".to_string(),
+                        description: "Email provider (resend, sendgrid, mailgun)".to_string(),
                         var_type: "string".to_string(),
                         required: false,
                         default: Some("resend".to_string()),

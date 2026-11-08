@@ -119,6 +119,11 @@ fn default_presign_expiry() -> u64 {
     3600
 }
 
+const SIGNING_UNSUPPORTED: &str = "Signed S3 requests are not implemented yet, so access keys \
+     would not be used. Remove the credentials to access a public bucket or an endpoint that \
+     needs no signing, or use an http node with a presigned URL";
+const PRESIGN_UNSUPPORTED: &str = "The S3 'presign' operation is not implemented yet";
+
 #[async_trait]
 impl Node for S3Node {
     fn node_type(&self) -> &str {
@@ -129,29 +134,31 @@ impl Node for S3Node {
         "Perform S3 object storage operations"
     }
 
-    async fn execute(&self, config: &Value, ctx: &NodeContext) -> Result<NodeResult> {
+    fn validate_config(&self, config: &Value) -> Result<()> {
+        if config.get("operation").and_then(Value::as_str) == Some("presign") {
+            return Err(Error::Validation(PRESIGN_UNSUPPORTED.to_string()));
+        }
+        if ["access_key_id", "secret_access_key", "credential"]
+            .iter()
+            .any(|k| config.get(*k).is_some_and(|v| !v.is_null()))
+        {
+            return Err(Error::Validation(SIGNING_UNSUPPORTED.to_string()));
+        }
+        Ok(())
+    }
+
+    async fn execute(&self, config: &Value, _ctx: &NodeContext) -> Result<NodeResult> {
         let config: S3Config = serde_json::from_value(config.clone())
             .map_err(|e| Error::Node(format!("Invalid S3 config: {}", e)))?;
 
-        // Resolve credentials
-        let (access_key, secret_key) = if let Some(cred_name) = &config.credential {
-            // Credential format: "access_key:secret_key"
-            if let Some(cred) = ctx.credentials.get(cred_name) {
-                let parts: Vec<&str> = cred.splitn(2, ':').collect();
-                if parts.len() == 2 {
-                    (Some(parts[0].to_string()), Some(parts[1].to_string()))
-                } else {
-                    (Some(cred.clone()), None)
-                }
-            } else {
-                (None, None)
-            }
-        } else {
-            (
-                config.access_key_id.clone(),
-                config.secret_access_key.clone(),
-            )
-        };
+        // Request signing is not implemented: refuse rather than send the
+        // request unsigned when the workflow expects it to be authenticated.
+        if config.credential.is_some()
+            || config.access_key_id.is_some()
+            || config.secret_access_key.is_some()
+        {
+            return Err(Error::Node(SIGNING_UNSUPPORTED.to_string()));
+        }
 
         debug!(
             operation = %config.operation,
@@ -161,13 +168,13 @@ impl Node for S3Node {
         );
 
         match config.operation.as_str() {
-            "get" | "download" => s3_get(&config, access_key, secret_key).await,
-            "put" | "upload" => s3_put(&config, access_key, secret_key).await,
-            "delete" => s3_delete(&config, access_key, secret_key).await,
-            "list" => s3_list(&config, access_key, secret_key).await,
-            "copy" => s3_copy(&config, access_key, secret_key).await,
-            "head" => s3_head(&config, access_key, secret_key).await,
-            "presign" => s3_presign(&config, access_key, secret_key).await,
+            "get" | "download" => s3_get(&config).await,
+            "put" | "upload" => s3_put(&config).await,
+            "delete" => s3_delete(&config).await,
+            "list" => s3_list(&config).await,
+            "copy" => s3_copy(&config).await,
+            "head" => s3_head(&config).await,
+            "presign" => Err(Error::Node(PRESIGN_UNSUPPORTED.to_string())),
             _ => Err(Error::Node(format!(
                 "Unknown S3 operation: {}",
                 config.operation
@@ -176,11 +183,7 @@ impl Node for S3Node {
     }
 }
 
-async fn s3_get(
-    config: &S3Config,
-    access_key: Option<String>,
-    secret_key: Option<String>,
-) -> Result<NodeResult> {
+async fn s3_get(config: &S3Config) -> Result<NodeResult> {
     let key = config
         .key
         .as_ref()
@@ -190,12 +193,9 @@ async fn s3_get(
     let url = build_s3_url(config, key);
 
     let client = reqwest::Client::new();
-    let mut request = client.get(&url);
+    let request = client.get(&url);
 
     // Add AWS signature (simplified - production should use proper AWS SigV4)
-    if let (Some(ak), Some(sk)) = (&access_key, &secret_key) {
-        request = add_aws_auth(request, "GET", &config.bucket, key, &config.region, ak, sk);
-    }
 
     let response = request
         .send()
@@ -243,11 +243,7 @@ async fn s3_get(
     }
 }
 
-async fn s3_put(
-    config: &S3Config,
-    access_key: Option<String>,
-    secret_key: Option<String>,
-) -> Result<NodeResult> {
+async fn s3_put(config: &S3Config) -> Result<NodeResult> {
     let key = config
         .key
         .as_ref()
@@ -271,14 +267,10 @@ async fn s3_put(
         .unwrap_or("application/octet-stream");
 
     let client = reqwest::Client::new();
-    let mut request = client
+    let request = client
         .put(&url)
         .header("Content-Type", content_type)
         .body(body.clone());
-
-    if let (Some(ak), Some(sk)) = (&access_key, &secret_key) {
-        request = add_aws_auth(request, "PUT", &config.bucket, key, &config.region, ak, sk);
-    }
 
     let response = request
         .send()
@@ -311,11 +303,7 @@ async fn s3_put(
     }
 }
 
-async fn s3_delete(
-    config: &S3Config,
-    access_key: Option<String>,
-    secret_key: Option<String>,
-) -> Result<NodeResult> {
+async fn s3_delete(config: &S3Config) -> Result<NodeResult> {
     let key = config
         .key
         .as_ref()
@@ -324,19 +312,7 @@ async fn s3_delete(
     let url = build_s3_url(config, key);
 
     let client = reqwest::Client::new();
-    let mut request = client.delete(&url);
-
-    if let (Some(ak), Some(sk)) = (&access_key, &secret_key) {
-        request = add_aws_auth(
-            request,
-            "DELETE",
-            &config.bucket,
-            key,
-            &config.region,
-            ak,
-            sk,
-        );
-    }
+    let request = client.delete(&url);
 
     let response = request
         .send()
@@ -360,11 +336,7 @@ async fn s3_delete(
     }
 }
 
-async fn s3_list(
-    config: &S3Config,
-    access_key: Option<String>,
-    secret_key: Option<String>,
-) -> Result<NodeResult> {
+async fn s3_list(config: &S3Config) -> Result<NodeResult> {
     let mut url = if let Some(endpoint) = &config.endpoint {
         format!("{}/{}", endpoint, config.bucket)
     } else {
@@ -392,11 +364,7 @@ async fn s3_list(
     url.push_str(&format!("&max-keys={}", config.max_keys));
 
     let client = reqwest::Client::new();
-    let mut request = client.get(&url);
-
-    if let (Some(ak), Some(sk)) = (&access_key, &secret_key) {
-        request = add_aws_auth(request, "GET", &config.bucket, "", &config.region, ak, sk);
-    }
+    let request = client.get(&url);
 
     let response = request
         .send()
@@ -427,11 +395,7 @@ async fn s3_list(
     }
 }
 
-async fn s3_copy(
-    config: &S3Config,
-    _access_key: Option<String>,
-    _secret_key: Option<String>,
-) -> Result<NodeResult> {
+async fn s3_copy(config: &S3Config) -> Result<NodeResult> {
     let dest_key = config
         .key
         .as_ref()
@@ -454,11 +418,7 @@ async fn s3_copy(
     })))
 }
 
-async fn s3_head(
-    config: &S3Config,
-    access_key: Option<String>,
-    secret_key: Option<String>,
-) -> Result<NodeResult> {
+async fn s3_head(config: &S3Config) -> Result<NodeResult> {
     let key = config
         .key
         .as_ref()
@@ -467,11 +427,7 @@ async fn s3_head(
     let url = build_s3_url(config, key);
 
     let client = reqwest::Client::new();
-    let mut request = client.head(&url);
-
-    if let (Some(ak), Some(sk)) = (&access_key, &secret_key) {
-        request = add_aws_auth(request, "HEAD", &config.bucket, key, &config.region, ak, sk);
-    }
+    let request = client.head(&url);
 
     let response = request
         .send()
@@ -510,27 +466,6 @@ async fn s3_head(
     }
 }
 
-async fn s3_presign(
-    config: &S3Config,
-    _access_key: Option<String>,
-    _secret_key: Option<String>,
-) -> Result<NodeResult> {
-    let key = config
-        .key
-        .as_ref()
-        .ok_or_else(|| Error::Node("S3 presign requires 'key'".to_string()))?;
-
-    // Note: Proper presigned URL generation requires AWS SigV4
-    Ok(NodeResult::new(json!({
-        "success": true,
-        "operation": "presign",
-        "bucket": config.bucket,
-        "key": key,
-        "expiry_seconds": config.presign_expiry,
-        "note": "Presigned URL generation requires full AWS SDK"
-    })))
-}
-
 fn build_s3_url(config: &S3Config, key: &str) -> String {
     if let Some(endpoint) = &config.endpoint {
         format!("{}/{}/{}", endpoint, config.bucket, key)
@@ -540,20 +475,6 @@ fn build_s3_url(config: &S3Config, key: &str) -> String {
             config.bucket, config.region, key
         )
     }
-}
-
-fn add_aws_auth(
-    request: reqwest::RequestBuilder,
-    _method: &str,
-    _bucket: &str,
-    _key: &str,
-    _region: &str,
-    _access_key: &str,
-    _secret_key: &str,
-) -> reqwest::RequestBuilder {
-    // Note: This is a placeholder. Production implementation should use
-    // aws-sigv4 crate or implement proper AWS Signature Version 4
-    request
 }
 
 fn parse_list_response(xml: &str) -> Vec<Value> {
@@ -677,5 +598,23 @@ mod tests {
 
         let url = build_s3_url(&config, "file.txt");
         assert_eq!(url, "https://minio.example.com/test-bucket/file.txt");
+    }
+
+    #[tokio::test]
+    async fn signed_requests_and_presign_are_refused() {
+        let node = S3Node::new();
+        let ctx = NodeContext::new("exec-1", "test");
+        for config in [
+            json!({"operation": "put", "bucket": "b", "key": "k", "access_key_id": "AK", "secret_access_key": "SK"}),
+            json!({"operation": "get", "bucket": "b", "key": "k", "credential": "aws"}),
+            json!({"operation": "presign", "bucket": "b", "key": "k"}),
+        ] {
+            assert!(node.validate_config(&config).is_err(), "{config}");
+            assert!(node.execute(&config, &ctx).await.is_err(), "{config}");
+        }
+        assert!(
+            node.validate_config(&json!({"operation": "get", "bucket": "b", "key": "k"}))
+                .is_ok()
+        );
     }
 }

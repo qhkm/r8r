@@ -216,17 +216,19 @@ Workflow-scoped state management:
 
 ### email
 
-Send emails via SMTP or API providers:
+Send emails through an API provider:
 
 ```yaml
 - id: send-email
   type: email
   config:
-    provider: resend         # smtp, sendgrid, resend, mailgun
+    provider: resend         # resend, sendgrid or mailgun
     to: user@example.com
     subject: "Report Ready"
     body: "Your report is ready."
 ```
+
+`provider` defaults to `smtp`, which is not implemented yet: a node using it is rejected when the workflow is saved, so always set `provider`. For Mailgun, the sending domain defaults to the domain of `from`; set `mailgun_domain` to override it and `mailgun_base_url: https://api.eu.mailgun.net` for EU accounts.
 
 ### slack
 
@@ -242,16 +244,19 @@ Send Slack messages:
 
 ### database
 
-Execute SQL queries:
+Execute SQL queries against a SQLite database:
 
 ```yaml
 - id: query
   type: database
   config:
-    provider: postgres       # sqlite, postgres, mysql
-    query: "SELECT * FROM users WHERE active = true"
-    connection_string: "{{ env.R8R_DATABASE_URL }}"
+    db_type: sqlite
+    connection_string: "./data/app.db"
+    query: "SELECT * FROM users WHERE active = ?"
+    params: [1]
 ```
+
+PostgreSQL and MySQL are not implemented yet; a node with `db_type: postgres` or `mysql` is rejected when the workflow is saved. For Supabase or PostgREST, use the `supabase` integration or an `http` node.
 
 ### s3
 
@@ -266,6 +271,8 @@ S3-compatible object storage:
     key: "reports/{{ datetime.today }}.json"
     body: "{{ nodes.generate }}"
 ```
+
+Requests are sent unsigned, which works for public buckets and S3-compatible endpoints that don't require auth. AWS request signing and `presign` are not implemented yet, so a node that sets `credential`, `access_key_id` or `secret_access_key`, or uses `presign`, is rejected when the workflow is saved rather than sending requests without its keys.
 
 ## Utility
 

@@ -9,7 +9,7 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::types::{Node, NodeContext, NodeResult};
 use crate::error::{Error, Result};
@@ -84,6 +84,18 @@ fn default_timeout() -> u64 {
     30
 }
 
+/// Database types that are documented but not implemented.
+fn unsupported_db_type(db_type: &str) -> Option<String> {
+    match db_type {
+        "postgres" | "postgresql" | "mysql" => Some(format!(
+            "The database node does not support '{}' yet; only sqlite is implemented. \
+             For Supabase or PostgREST, use the supabase integration or an http node",
+            db_type
+        )),
+        _ => None,
+    }
+}
+
 #[async_trait]
 impl Node for DatabaseNode {
     fn node_type(&self) -> &str {
@@ -92,6 +104,18 @@ impl Node for DatabaseNode {
 
     fn description(&self) -> &str {
         "Execute SQL queries on databases"
+    }
+
+    fn validate_config(&self, config: &Value) -> Result<()> {
+        let db_type = config
+            .get("db_type")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(default_db_type);
+        match unsupported_db_type(&db_type) {
+            Some(reason) => Err(Error::Validation(reason)),
+            None => Ok(()),
+        }
     }
 
     async fn execute(&self, config: &Value, ctx: &NodeContext) -> Result<NodeResult> {
@@ -113,8 +137,9 @@ impl Node for DatabaseNode {
 
         match config.db_type.as_str() {
             "sqlite" => execute_sqlite(&config, connection_string).await,
-            "postgres" => execute_postgres(&config, connection_string).await,
-            "mysql" => execute_mysql(&config, connection_string).await,
+            other if unsupported_db_type(other).is_some() => {
+                Err(Error::Node(unsupported_db_type(other).unwrap_or_default()))
+            }
             _ => Err(Error::Node(format!(
                 "Unknown database type: {}",
                 config.db_type
@@ -266,42 +291,6 @@ fn row_value_to_json(row: &rusqlite::Row, idx: usize) -> Value {
     Value::Null
 }
 
-async fn execute_postgres(
-    config: &DatabaseConfig,
-    connection_string: Option<String>,
-) -> Result<NodeResult> {
-    let _conn_str = connection_string
-        .ok_or_else(|| Error::Node("PostgreSQL requires connection_string".to_string()))?;
-
-    // Note: Full PostgreSQL implementation would require tokio-postgres or sqlx
-    warn!("PostgreSQL support requires tokio-postgres crate");
-
-    Ok(NodeResult::new(json!({
-        "success": true,
-        "db_type": "postgres",
-        "query": config.query,
-        "note": "PostgreSQL requires tokio-postgres or sqlx crate for actual execution"
-    })))
-}
-
-async fn execute_mysql(
-    config: &DatabaseConfig,
-    connection_string: Option<String>,
-) -> Result<NodeResult> {
-    let _conn_str = connection_string
-        .ok_or_else(|| Error::Node("MySQL requires connection_string".to_string()))?;
-
-    // Note: Full MySQL implementation would require mysql_async crate
-    warn!("MySQL support requires mysql_async crate");
-
-    Ok(NodeResult::new(json!({
-        "success": true,
-        "db_type": "mysql",
-        "query": config.query,
-        "note": "MySQL requires mysql_async crate for actual execution"
-    })))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,5 +336,22 @@ mod tests {
         let parsed: DatabaseConfig = serde_json::from_value(config).unwrap();
         assert!(parsed.params.is_some());
         assert_eq!(parsed.params.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn postgres_and_mysql_are_refused_not_faked() {
+        let node = DatabaseNode::new();
+        let ctx = NodeContext::new("exec-1", "test");
+        for db in ["postgres", "mysql"] {
+            let config =
+                json!({"db_type": db, "connection_string": "x://y", "query": "DELETE FROM t"});
+            let err = node.validate_config(&config).unwrap_err().to_string();
+            assert!(err.contains("only sqlite is implemented"), "{err}");
+            assert!(node.execute(&config, &ctx).await.is_err());
+        }
+        assert!(
+            node.validate_config(&json!({"db_type": "sqlite", "query": "SELECT 1"}))
+                .is_ok()
+        );
     }
 }

@@ -789,7 +789,7 @@ nodes:
 
 ### Email
 
-Send emails via SMTP or API providers.
+Send emails through Resend, SendGrid or Mailgun. SMTP is not implemented yet.
 
 **Type**: `email`
 
@@ -800,7 +800,7 @@ nodes:
   - id: send-notification
     type: email
     config:
-      provider: resend  # smtp, sendgrid, resend, mailgun
+      provider: resend  # resend, sendgrid, mailgun
       to: "user@example.com"
       from: "noreply@example.com"
       subject: "Order Confirmation"
@@ -811,7 +811,7 @@ nodes:
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `provider` | string | No | smtp | Email provider: smtp, sendgrid, resend, mailgun |
+| `provider` | string | No | smtp | Email provider: resend, sendgrid or mailgun. The default, `smtp`, is not implemented and is rejected at save time, so set this |
 | `to` | string/array | Yes | - | Recipient email(s) |
 | `from` | string | Yes | - | Sender email |
 | `subject` | string | Yes | - | Email subject |
@@ -821,12 +821,8 @@ nodes:
 | `bcc` | string/array | No | - | BCC recipients |
 | `reply_to` | string | No | - | Reply-to address |
 | `credential` | string | No | - | API key credential name |
-
-**SMTP-specific fields**:
-- `smtp_host` - SMTP server hostname
-- `smtp_port` - SMTP port (default: 587)
-- `smtp_username` - SMTP username
-- `smtp_password` - SMTP password
+| `mailgun_domain` | string | No | domain of `from` | Mailgun sending domain |
+| `mailgun_base_url` | string | No | `https://api.mailgun.net` | Mailgun API base; `https://api.eu.mailgun.net` for EU accounts |
 
 ---
 
@@ -1000,7 +996,7 @@ nodes:
   - id: fetch-users
     type: database
     config:
-      db_type: sqlite  # sqlite, postgres, mysql
+      db_type: sqlite  # only sqlite is implemented
       connection_string: "./data/app.db"
       query: "SELECT * FROM users WHERE status = ?"
       params: ["active"]
@@ -1010,7 +1006,7 @@ nodes:
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `db_type` | string | No | sqlite | Database type: sqlite, postgres, mysql |
+| `db_type` | string | No | sqlite | Database type. Only `sqlite` is implemented; `postgres` and `mysql` are rejected at save time |
 | `connection_string` | string | No | - | Connection string or DSN |
 | `query` | string | Yes | - | SQL query to execute |
 | `params` | array | No | - | Query parameters (positional) |
@@ -1045,7 +1041,7 @@ nodes:
 
 ### S3
 
-Perform S3 object storage operations.
+Perform S3 object storage operations with unsigned requests: public buckets and S3-compatible endpoints that don't require auth. AWS request signing is not implemented yet, so `credential`, `access_key_id`, `secret_access_key` and the `presign` operation are rejected at save time.
 
 **Type**: `s3`
 
@@ -1062,12 +1058,12 @@ nodes:
       content: "{{ input.data }}"
       content_type: "application/json"
       region: us-east-1
-      credential: aws_credentials
+      endpoint: "http://localhost:9000"   # e.g. a MinIO bucket that allows anonymous writes
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `operation` | string | Yes | get, put, delete, list, copy, head, presign |
+| `operation` | string | Yes | get, put, delete, list, copy, head (`presign` is not implemented) |
 | `bucket` | string | Yes | S3 bucket name |
 | `key` | string | No* | Object key (*required for most operations) |
 | `content` | string | No | Content to upload (for put) |
@@ -1077,7 +1073,7 @@ nodes:
 | `max_keys` | number | No | Max keys to return (for list, default: 1000) |
 | `region` | string | No | AWS region (default: us-east-1) |
 | `endpoint` | string | No | Custom endpoint (for MinIO, R2, etc.) |
-| `credential` | string | No | Credential name (format: access_key:secret_key) |
+| `credential` | string | No | Not supported yet: request signing is not implemented |
 
 **Operations**:
 - `get/download` - Download an object
@@ -1086,7 +1082,6 @@ nodes:
 - `list` - List objects in bucket
 - `copy` - Copy object within S3
 - `head` - Get object metadata
-- `presign` - Generate presigned URL
 
 **Output** (get):
 ```json

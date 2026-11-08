@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Nodes no longer report success for work they never did.** The `email` node's `smtp` provider (also its default) and `mailgun` provider, the `database` node's `postgres` and `mysql` types, and the `s3` node's `presign` operation were stubs that returned `success: true` without sending, querying or signing anything, and the `s3` node silently dropped access keys and sent requests unsigned. **Breaking:** these configurations are now rejected when a workflow is saved or loaded, and fail at run time if they slip through: SMTP, PostgreSQL, MySQL, S3 request signing and `presign` are not implemented yet. Set `provider` on email nodes (resend, sendgrid or mailgun); the docs and README no longer list the unimplemented options.
+- **Mailgun actually sends.** The `mailgun` provider now posts to Mailgun's messages API. The sending domain defaults to the domain of `from`; `mailgun_domain` overrides it and `mailgun_base_url` selects the EU region.
 - **`input.name` works in transform expressions and node conditions.** `input`, `data` and earlier node outputs were handed to Rhai as JSON strings, so every documented expression that reads a field (`input.items.len()`, `condition: "input.amount > 100"`, the README's hello-world) failed with `Unknown property ... for type 'string'`. They are now real Rhai maps and arrays. `from_json(input)` still works and returns the value unchanged. One visible difference: interpolating a whole object (`${input}`) prints Rhai's map format instead of JSON; use `to_json(input)` for JSON.
 
 ## [0.8.3] - 2026-10-27
